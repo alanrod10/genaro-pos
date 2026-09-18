@@ -6,30 +6,92 @@ import datetime
 import math 
 
 # ==========================================
-# 1. CONFIGURACIÓN INICIAL Y ESTILOS
+# 1. CONFIGURACIÓN INICIAL Y ESTILOS UI/UX
 # ==========================================
 st.set_page_config(page_title="Genaro POS", page_icon="🛒", layout="wide")
 
 URL_PLANILLA = "https://docs.google.com/spreadsheets/d/1AEsHRAwONhfcATrG7k0gsVmWB1IGlqoHt89_wcT9Uuo/edit?gid=514091242#gid=514091242"
 
 def aplicar_estilos_profesionales():
-    """Inyecta CSS para darle aspecto de aplicación de escritorio, eliminando márgenes y menús por defecto."""
+    """Inyecta CSS avanzado para una UI moderna, tipografía grande y fácil lectura en móviles/mostrador."""
     st.markdown("""
         <style>
-            /* Oculta el menú superior derecho y el pie de página de Streamlit */
+            /* 1. Ocultar elementos de desarrollador y optimizar márgenes */
             #MainMenu {visibility: hidden;}
             footer {visibility: hidden;}
+            header {visibility: hidden;}
             
-            /* Reduce los espacios en blanco superiores para aprovechar la pantalla */
             .block-container {
-                padding-top: 1.5rem !important;
-                padding-bottom: 1rem !important;
+                padding-top: 2rem !important;
+                padding-bottom: 2rem !important;
+                max-width: 98% !important;
             }
             
-            /* Mejora el aspecto de las métricas (números grandes) */
-            div[data-testid="stMetricValue"] {
+            /* 2. Tipografía general de la aplicación */
+            p, label, span, .stMarkdown {
+                font-size: 1.1rem !important;
+                font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            }
+            
+            /* 3. Títulos imponentes y elegantes */
+            h1 {
+                font-size: 2.8rem !important;
+                font-weight: 800 !important;
+                padding-bottom: 0.5rem;
+            }
+            h2 {
                 font-size: 2.2rem !important;
-                color: #2e7b32 !important;
+                font-weight: 700 !important;
+            }
+            h3 {
+                font-size: 1.6rem !important;
+                font-weight: 600 !important;
+            }
+            
+            /* 4. Botones: Diseño táctil (Touch-friendly), altos y con efecto hover */
+            .stButton > button {
+                min-height: 3.5rem;
+                border-radius: 12px !important;
+                font-size: 1.15rem !important;
+                font-weight: 700 !important;
+                letter-spacing: 0.5px;
+                transition: all 0.2s ease-in-out;
+                border: none !important;
+            }
+            .stButton > button:hover {
+                transform: translateY(-3px);
+                box-shadow: 0 6px 15px rgba(0,0,0,0.15);
+                filter: brightness(1.05);
+            }
+            
+            /* 5. Inputs (Cajas de texto y números) más legibles */
+            input[type="text"], input[type="number"] {
+                font-size: 1.25rem !important;
+                padding: 0.7rem !important;
+                border-radius: 8px !important;
+                font-weight: 500 !important;
+            }
+            
+            /* 6. Métricas (TOTAL A COBRAR) Gigantes */
+            div[data-testid="stMetricValue"] {
+                font-size: 3.5rem !important;
+                font-weight: 900 !important;
+                color: #27AE60 !important; /* Verde Esmeralda */
+                line-height: 1.2;
+            }
+            div[data-testid="stMetricLabel"] {
+                font-size: 1.2rem !important;
+                font-weight: 800 !important;
+                text-transform: uppercase;
+                letter-spacing: 1.5px;
+                color: #555555;
+            }
+            
+            /* 7. Alertas y Carteles más suaves */
+            .stAlert {
+                border-radius: 12px !important;
+                font-size: 1.1rem !important;
+                font-weight: 500 !important;
             }
         </style>
     """, unsafe_allow_html=True)
@@ -40,7 +102,6 @@ aplicar_estilos_profesionales()
 # 2. GESTIÓN DEL ESTADO (MEMORIA)
 # ==========================================
 def inicializar_memoria():
-    """Crea todas las variables temporales necesarias desde el inicio para evitar errores."""
     if 'carrito' not in st.session_state:
         st.session_state.carrito = []
     if 'input_monto_carga' not in st.session_state:
@@ -55,22 +116,19 @@ inicializar_memoria()
 # ==========================================
 @st.cache_data(ttl=600)
 def cargar_productos():
-    """Descarga el catálogo y lo guarda en la RAM por 10 minutos para búsquedas ultrarrápidas."""
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         df = conn.read(spreadsheet=URL_PLANILLA, worksheet="DB_PRODUCTOS")
         return df.dropna(subset=['NOMBRE'])
     except Exception as e:
         st.error(f"⚠️ Error al conectar con Google Sheets (Catálogo). Revisa tu conexión. Detalle: {e}")
-        return pd.DataFrame() # Retorna tabla vacía para no romper la app
+        return pd.DataFrame() 
 
 def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
-    """Procesa el carrito, genera el ticket y sube la transacción a las 2 bases de datos."""
     total_venta = sum(item['subtotal'] for item in st.session_state.carrito)
     fecha_actual = datetime.datetime.now()
     ticket_id = "T-" + str(int(fecha_actual.timestamp() * 1000))
     
-    # Asignación inteligente de montos
     if monto_efvo is None and monto_transf is None:
         pago_efvo = total_venta if metodo_pago == "EFECTIVO" else 0
         pago_transf = total_venta if metodo_pago == "TRANSFERENCIA" else 0
@@ -78,7 +136,6 @@ def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
         pago_efvo = monto_efvo
         pago_transf = monto_transf
     
-    # 1. Estructurar DB_MOVIMIENTOS_CAJA
     nueva_venta = pd.DataFrame([{
         "TICKET_ID": ticket_id,
         "FECHA": fecha_actual.strftime("%d/%m/%Y %H:%M:%S"),
@@ -88,7 +145,6 @@ def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
         "ES_NOCTURNO": False
     }])
     
-    # 2. Estructurar DB_HISTORIAL_ITEMS
     items_vendidos = [{
         "TICKET_ID": ticket_id,
         "FECHA": fecha_actual.strftime("%d/%m/%Y %H:%M:%S"),
@@ -101,7 +157,6 @@ def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
     } for item in st.session_state.carrito]
     df_items_nuevos = pd.DataFrame(items_vendidos)
     
-    # 3. Ejecución segura a Google Sheets
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         with st.spinner("💾 Procesando transacción en la nube..."):
@@ -111,7 +166,7 @@ def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
             df_historial = conn.read(spreadsheet=URL_PLANILLA, worksheet="DB_HISTORIAL_ITEMS", ttl=0)
             conn.update(spreadsheet=URL_PLANILLA, worksheet="DB_HISTORIAL_ITEMS", data=pd.concat([df_historial, df_items_nuevos], ignore_index=True))
         
-        st.session_state.carrito = [] # Limpiamos memoria si todo sale bien
+        st.session_state.carrito = [] 
         
     except Exception as e:
         st.error(f"❌ Falló el guardado. El cliente no fue cobrado en el sistema. Error: {e}")
@@ -121,18 +176,16 @@ def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
 # ==========================================
 @st.dialog("Dividir Pago (Mixto)")
 def modal_pago_mixto(total_cobrar):
-    """Ventana emergente para calcular pagos combinados."""
-    st.write(f"El total a cobrar es **${total_cobrar:,.0f}**")
-    monto_transf = st.number_input("Monto en Transferencia:", min_value=0.0, max_value=float(total_cobrar), step=100.0)
+    st.write(f"### El total a cobrar es **${total_cobrar:,.0f}**")
+    monto_transf = st.number_input("Monto ingresado en Transferencia:", min_value=0.0, max_value=float(total_cobrar), step=100.0)
     monto_efvo = total_cobrar - monto_transf
-    st.info(f"💵 Restante en Efectivo: **${monto_efvo:,.0f}**")
+    st.info(f"💵 Restante a cobrar en Efectivo: **${monto_efvo:,.0f}**")
     
-    if st.button("✅ Confirmar Pago", use_container_width=True, type="primary"):
+    if st.button("✅ Confirmar Pago Mixto", use_container_width=True, type="primary"):
         procesar_venta("MIXTO", monto_efvo=monto_efvo, monto_transf=monto_transf)
         st.rerun()
 
 def agregar_al_carrito(nombre, precio):
-    """Agrega un producto o suma 1 si ya existe en la lista."""
     for item in st.session_state.carrito:
         if item['nombre'] == nombre:
             item['cantidad'] += 1.0
@@ -141,14 +194,12 @@ def agregar_al_carrito(nombre, precio):
     st.session_state.carrito.append({'nombre': nombre, 'precio': float(precio), 'cantidad': 1.0, 'subtotal': float(precio)})
 
 def actualizar_desde_cant(i):
-    """Cálculo bidireccional: Modifica el subtotal basado en la cantidad ingresada."""
     nueva_cant = st.session_state[f"cant_{i}"]
     st.session_state.carrito[i]['cantidad'] = nueva_cant
     st.session_state.carrito[i]['subtotal'] = nueva_cant * st.session_state.carrito[i]['precio']
     st.session_state[f"monto_{i}"] = st.session_state.carrito[i]['subtotal']
 
 def actualizar_desde_monto(i):
-    """Cálculo bidireccional: Modifica la cantidad basada en el monto ($) ingresado (Ej: Mignon)."""
     nuevo_monto = st.session_state[f"monto_{i}"]
     st.session_state.carrito[i]['subtotal'] = nuevo_monto
     precio = st.session_state.carrito[i]['precio']
@@ -157,22 +208,21 @@ def actualizar_desde_monto(i):
         st.session_state[f"cant_{i}"] = st.session_state.carrito[i]['cantidad']
 
 def calcular_recargo_automatico():
-    """Redondea el recargo de servicios a múltiplos de 100 por cada $2000."""
     monto = st.session_state.input_monto_carga
     st.session_state.input_monto_adic = float(math.ceil(monto / 2000.0) * 100) if monto > 0 else 0.0
 
 # ==========================================
 # 5. VISTAS Y MÓDULOS (Frontend)
 # ==========================================
-df_productos = cargar_productos() # Se carga globalmente una vez configurado todo
+df_productos = cargar_productos() 
 
 def mostrar_caja():
     st.title("🛒 Caja - Lo de Genaro")
     col_izq, col_der = st.columns([5, 5])
     
     with col_izq:
-        st.subheader("🔍 Buscador")
-        busqueda = st_keyup("Busca un producto:", placeholder="Ej. coc, mignon...", debounce=300)
+        st.subheader("🔍 Buscador de Productos")
+        busqueda = st_keyup("Busca por nombre o marca:", placeholder="Ej. coc, mignon, lays...", debounce=300)
         
         if busqueda:
             resultados = df_productos[df_productos['NOMBRE'].str.contains(busqueda, case=False, na=False)].head(15)
@@ -218,7 +268,7 @@ def mostrar_caja():
                 procesar_venta("EFECTIVO")
                 st.toast("✅ Venta en Efectivo registrada con éxito.", icon="✅")
                 st.rerun()
-            if col_transf.button("📱 Transf", use_container_width=True, type="primary"):
+            if col_transf.button("📱 Transf.", use_container_width=True, type="primary"):
                 procesar_venta("TRANSFERENCIA")
                 st.toast("✅ Venta por Transferencia registrada con éxito.", icon="✅")
                 st.rerun()
@@ -227,7 +277,7 @@ def mostrar_caja():
 
 def mostrar_servicios():
     st.title("📱 Cargas y Servicios")
-    st.write("Registra recargas virtuales o pagos de servicios.")
+    st.write("Registra recargas virtuales o pagos de servicios de forma rápida.")
     
     with st.container(border=True):
         col1, col2 = st.columns(2)
@@ -240,7 +290,7 @@ def mostrar_servicios():
             metodo_pago = st.radio("Método de Pago", ["EFECTIVO", "TRANSFERENCIA", "MIXTO"], horizontal=True)
             
         total_cobrar = monto_carga + monto_adic
-        st.info(f"**💰 Total a cobrar al cliente: ${total_cobrar:,.0f}**")
+        st.info(f"### **💰 Total a cobrar al cliente: ${total_cobrar:,.0f}**")
         
         monto_transf = 0.0
         monto_efvo = 0.0
@@ -291,9 +341,9 @@ def mostrar_admin_productos():
         
         with col_izq:
             with st.container(border=True):
-                st.markdown("### 🔄 BUSCADOR Y ACTUALIZADOR")
+                st.markdown("### 🔄 ACTUALIZADOR RÁPIDO")
                 lista_productos = sorted(df_actual['NOMBRE'].tolist())
-                producto_seleccionado = st.selectbox("BUSCAR PRODUCTO:", [""] + lista_productos)
+                producto_seleccionado = st.selectbox("BUSCAR PRODUCTO A MODIFICAR:", [""] + lista_productos)
                 
                 if producto_seleccionado:
                     datos_prod = df_actual[df_actual['NOMBRE'] == producto_seleccionado].iloc[0]
@@ -302,13 +352,13 @@ def mostrar_admin_productos():
                     st.write("---")
                     c_actual, c_nuevo = st.columns(2)
                     with c_actual:
-                        st.write("**Datos Actuales:**")
+                        st.write("**📝 Datos Actuales:**")
                         st.write(f"**Proveedor:** {datos_prod.get('PROVEEDOR', '-')}")
                         st.write(f"**Costo:** ${float(datos_prod.get('COSTO', 0)):.2f}")
                         st.write(f"**Precio:** ${float(datos_prod.get('PRECIO_DIA', 0)):.2f}")
                         st.write(f"**Margen:** {float(datos_prod.get('MARGEN_%', 0)) * 100:.2f}%")
                     with c_nuevo:
-                        st.write("**Completar solo si cambia:**")
+                        st.write("**✏️ Completar solo si cambia:**")
                         nuevo_prov = st.text_input("Nuevo Proveedor:", value=datos_prod.get('PROVEEDOR', ''))
                         nuevo_costo = st.number_input("Nuevo Costo ($):", value=float(datos_prod.get('COSTO', 0)), min_value=0.0)
                         nuevo_precio = st.number_input("Nuevo Precio ($):", value=float(datos_prod.get('PRECIO_DIA', 0)), min_value=0.0)
@@ -326,7 +376,7 @@ def mostrar_admin_productos():
                             df_actual.at[idx_prod, 'MARGEN_%'] = nuevo_margen_calc
                             df_actual.at[idx_prod, 'FECHA_ACT'] = datetime.datetime.now().strftime("%d/%m/%Y")
                             
-                            with st.spinner("Guardando..."):
+                            with st.spinner("Guardando en la nube..."):
                                 conn.update(spreadsheet=URL_PLANILLA, worksheet="DB_PRODUCTOS", data=df_actual)
                                 st.cache_data.clear() 
                             st.success("¡Producto actualizado exitosamente!")
@@ -346,13 +396,13 @@ def mostrar_admin_productos():
                                 
         with col_der:
             with st.container(border=True):
-                st.markdown("### ➕ ALTA NUEVO PRODUCTO")
+                st.markdown("### ➕ ALTA DE PRODUCTO")
                 n_nombre = st.text_input("NOMBRE:")
                 n_cat = st.selectbox("CATEGORÍA:", categorias_unicas + ["OTRO..."])
                 n_prov = st.selectbox("PROVEEDOR:", proveedores_unicos + ["OTRO..."])
                 n_unidad = st.selectbox("UNIDAD:", ["Unidad", "Kg", "Litro"])
                 n_costo = st.number_input("COSTO ($):", min_value=0.0, key="new_cost")
-                n_precio = st.number_input("PRECIO ($):", min_value=0.0, key="new_price")
+                n_precio = st.number_input("PRECIO VENTA ($):", min_value=0.0, key="new_price")
                 
                 n_margen = (n_precio - n_costo) / n_costo if n_costo > 0 else 0
                 st.info(f"**Margen Estimado: {n_margen * 100:.2f}%**")
@@ -400,7 +450,7 @@ def mostrar_historial():
             columnas_mostrar = ['FECHA', 'TICKET_ID', 'PRODUCTO', 'CANTIDAD', 'SUBTOTAL', 'METODO_PAGO']
             st.dataframe(df_filtrado[columnas_mostrar], use_container_width=True, hide_index=True)
             total_items = df_filtrado['SUBTOTAL'].sum()
-            st.metric(label=f"Total de estos ítems ({fecha_elegida.strftime('%d/%m/%Y')})", value=f"${total_items:,.0f}")
+            st.metric(label=f"Total Filtrado ({fecha_elegida.strftime('%d/%m/%Y')})", value=f"${total_items:,.0f}")
             
     except Exception as e:
         st.error(f"No se pudo cargar el historial. Revisa tu conexión: {e}")
@@ -421,7 +471,6 @@ def mostrar_visor():
         df_hoy_caja = df_caja[df_caja['FECHA_REAL'].dt.date == fecha_elegida]
         df_hoy_cargas = df_cargas[df_cargas['FECHA_REAL'].dt.date == fecha_elegida]
         
-        # Extracción y Cálculo de Métricas Analíticas
         a_efvo = df_hoy_caja['MONTO_EFECTIVO'].sum()
         a_transf = df_hoy_caja['MONTO_TRANSF'].sum()
         a_total = df_hoy_caja['TOTAL_VENTA'].sum()
@@ -455,56 +504,55 @@ def mostrar_visor():
 
         st.write("---")
         
-        # Tarjetas HTML / UI Dashboard
         col_izq, col_espacio, col_der = st.columns([10, 1, 10])
         
         with col_izq:
             st.markdown(f"""
-            <div style="border: 2px solid #3b1be3; border-radius: 6px; margin-bottom: 25px; font-family: sans-serif; background-color: #ffffff; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);">
-                <div style="background-color: #3b1be3; color: white; padding: 8px 15px; font-weight: bold; font-size: 1.1em; letter-spacing: 0.5px;">CAJA A - DRUGSTORE</div>
-                <div style="padding: 15px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px; color: #333;"><span>(+) EFECTIVO:</span><span>${a_efvo:,.0f}</span></div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: #333;"><span>(+) TRANSFERENCIAS:</span><span>${a_transf:,.0f}</span></div>
-                    <hr style="border: 1px solid #eee; margin: 10px 0;">
-                    <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 1.5em; color: black;"><span>TOTAL VENTAS:</span><span>${a_total:,.0f}</span></div>
+            <div style="border: 2px solid #3b1be3; border-radius: 10px; margin-bottom: 25px; font-family: sans-serif; background-color: #ffffff; box-shadow: 0 4px 8px rgba(0,0,0,0.05); overflow: hidden;">
+                <div style="background-color: #3b1be3; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.2em; letter-spacing: 0.5px;">CAJA A - DRUGSTORE</div>
+                <div style="padding: 20px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: #333; font-size: 1.1em;"><span>(+) EFECTIVO:</span><span>${a_efvo:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: #333; font-size: 1.1em;"><span>(+) TRANSFERENCIAS:</span><span>${a_transf:,.0f}</span></div>
+                    <hr style="border: 1px solid #eee; margin: 15px 0;">
+                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: black;"><span>TOTAL VENTAS:</span><span>${a_total:,.0f}</span></div>
                 </div>
-                <div style="display: flex; justify-content: space-between; background-color: #553aeb; color: white; padding: 8px 15px; font-weight: bold;"><span>GANANCIA ESTIMADA (10%):</span><span>${a_ganancia:,.0f}</span></div>
+                <div style="display: flex; justify-content: space-between; background-color: #553aeb; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.1em;"><span>GANANCIA ESTIMADA (10%):</span><span>${a_ganancia:,.0f}</span></div>
             </div>
             """, unsafe_allow_html=True)
             
             st.markdown(f"""
-            <div style="border: 2px solid #418042; border-radius: 6px; margin-bottom: 25px; font-family: sans-serif; background-color: #ffffff; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);">
-                <div style="background-color: #418042; color: white; padding: 8px 15px; font-weight: bold; font-size: 1.1em; letter-spacing: 0.5px;">CAJA C - ADICIONALES (Ganancia)</div>
-                <div style="padding: 15px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px; color: #333;"><span>(+) EFECTIVO:</span><span>${c_efvo:,.0f}</span></div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: #333;"><span>(+) TRANSFERENCIA:</span><span>${c_transf:,.0f}</span></div>
-                    <hr style="border: 1px solid #eee; margin: 10px 0;">
-                    <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 1.5em; color: black;"><span>TOTAL GANANCIA:</span><span>${c_total:,.0f}</span></div>
+            <div style="border: 2px solid #418042; border-radius: 10px; margin-bottom: 25px; font-family: sans-serif; background-color: #ffffff; box-shadow: 0 4px 8px rgba(0,0,0,0.05); overflow: hidden;">
+                <div style="background-color: #418042; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.2em; letter-spacing: 0.5px;">CAJA C - ADICIONALES (Ganancia)</div>
+                <div style="padding: 20px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: #333; font-size: 1.1em;"><span>(+) EFECTIVO:</span><span>${c_efvo:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: #333; font-size: 1.1em;"><span>(+) TRANSFERENCIA:</span><span>${c_transf:,.0f}</span></div>
+                    <hr style="border: 1px solid #eee; margin: 15px 0;">
+                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: black;"><span>TOTAL GANANCIA:</span><span>${c_total:,.0f}</span></div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
         with col_der:
             st.markdown(f"""
-            <div style="border: 2px solid #d68b31; border-radius: 6px; margin-bottom: 25px; font-family: sans-serif; background-color: #ffffff; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);">
-                <div style="background-color: #d68b31; color: white; padding: 8px 15px; font-weight: bold; font-size: 1.1em; letter-spacing: 0.5px;">CAJA B - SUBE (Solo Capital)</div>
-                <div style="padding: 15px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px; color: #333;"><span>(+) INGRESOS EFECTIVO:</span><span>${b_efvo:,.0f}</span></div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: #333;"><span>(+) INGRESOS TRANSF:</span><span>${b_transf:,.0f}</span></div>
-                    <hr style="border: 1px solid #eee; margin: 10px 0;">
-                    <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 1.5em; color: black;"><span>TOTAL (Sin Adic):</span><span>${b_total:,.0f}</span></div>
+            <div style="border: 2px solid #d68b31; border-radius: 10px; margin-bottom: 25px; font-family: sans-serif; background-color: #ffffff; box-shadow: 0 4px 8px rgba(0,0,0,0.05); overflow: hidden;">
+                <div style="background-color: #d68b31; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.2em; letter-spacing: 0.5px;">CAJA B - SUBE (Solo Capital)</div>
+                <div style="padding: 20px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: #333; font-size: 1.1em;"><span>(+) INGRESOS EFECTIVO:</span><span>${b_efvo:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: #333; font-size: 1.1em;"><span>(+) INGRESOS TRANSF:</span><span>${b_transf:,.0f}</span></div>
+                    <hr style="border: 1px solid #eee; margin: 15px 0;">
+                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: black;"><span>TOTAL (Sin Adic):</span><span>${b_total:,.0f}</span></div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
             
             st.markdown(f"""
-            <div style="border: 2px solid #de3c31; border-radius: 6px; margin-bottom: 25px; font-family: sans-serif; background-color: #ffffff; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);">
-                <div style="background-color: #de3c31; color: white; padding: 8px 15px; font-weight: bold; font-size: 1.1em; letter-spacing: 0.5px;">CAJA E - CLARO (Solo Capital)</div>
-                <div style="padding: 15px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px; color: #333;"><span>(+) INGRESOS EFECTIVO:</span><span>${e_efvo:,.0f}</span></div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: #333;"><span>(+) INGRESOS TRANSF:</span><span>${e_transf:,.0f}</span></div>
-                    <hr style="border: 1px solid #eee; margin: 10px 0;">
-                    <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 1.5em; color: black;"><span>TOTAL (Sin Adic):</span><span>${e_total:,.0f}</span></div>
+            <div style="border: 2px solid #de3c31; border-radius: 10px; margin-bottom: 25px; font-family: sans-serif; background-color: #ffffff; box-shadow: 0 4px 8px rgba(0,0,0,0.05); overflow: hidden;">
+                <div style="background-color: #de3c31; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.2em; letter-spacing: 0.5px;">CAJA E - CLARO (Solo Capital)</div>
+                <div style="padding: 20px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: #333; font-size: 1.1em;"><span>(+) INGRESOS EFECTIVO:</span><span>${e_efvo:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: #333; font-size: 1.1em;"><span>(+) INGRESOS TRANSF:</span><span>${e_transf:,.0f}</span></div>
+                    <hr style="border: 1px solid #eee; margin: 15px 0;">
+                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: black;"><span>TOTAL (Sin Adic):</span><span>${e_total:,.0f}</span></div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -515,7 +563,7 @@ def mostrar_visor():
 # ==========================================
 # 6. ENRUTADOR PRINCIPAL (MENÚ LATERAL)
 # ==========================================
-st.sidebar.image("https://cdn-icons-png.flaticon.com/512/3514/3514491.png", width=100) 
+st.sidebar.image("https://cdn-icons-png.flaticon.com/512/3514/3514491.png", width=120) 
 st.sidebar.title("Sistema Genaro")
 
 menu = st.sidebar.radio("Navegación", [
@@ -526,7 +574,6 @@ menu = st.sidebar.radio("Navegación", [
     "📊 Visor (Dashboard)"
 ])
 
-# Despliegue de vistas según selección
 if menu == "🛒 Caja":
     mostrar_caja()
 elif menu == "📱 Servicios":
