@@ -50,11 +50,16 @@ def aplicar_estilos_profesionales():
                 filter: brightness(1.05);
             }
             
-            /* Inputs (SE ELIMINÓ EL PADDING EXTRA PARA QUE NO OCULTE LOS BOTONES +/-) */
-            input[type="text"], input[type="number"] {
+            /* Inputs: Ajuste milimétrico para que aparezcan los botones +/- */
+            input[type="text"] {
                 font-size: 1.25rem !important;
                 border-radius: 8px !important;
                 font-weight: 500 !important;
+            }
+            input[type="number"] {
+                font-size: 1.15rem !important;
+                font-weight: 600 !important;
+                border-radius: 8px !important;
             }
             
             /* Métricas Gigantes */
@@ -202,7 +207,6 @@ def calcular_recargo_automatico():
 def mostrar_caja():
     st.title("🛒 Caja - Lo de Genaro")
     
-    # LAZY LOADING: Solo carga los productos si estás en esta pantalla, para que el sistema abra más rápido.
     df_productos = cargar_productos() 
     
     col_izq, col_der = st.columns([5, 5])
@@ -230,14 +234,14 @@ def mostrar_caja():
             st.info("El carrito está vacío. Busca un producto a la izquierda para comenzar.")
         else:
             total = 0
-            # Aumentamos el ancho de la columna de Cantidad para que quepan los botones +/-
-            h1, h2, h3, h4 = st.columns([3.5, 2.5, 3, 1])
+            # SOLUCIÓN: Cantidad y Monto ahora tienen exactamente el mismo ancho (Proporción 3)
+            h1, h2, h3, h4 = st.columns([4, 3, 3, 1])
             h1.write("**Producto**")
             h2.write("**Cant**")
             h3.write("**Monto $**")
             
             for i, item in enumerate(st.session_state.carrito):
-                c1, c2, c3, c4 = st.columns([3.5, 2.5, 3, 1])
+                c1, c2, c3, c4 = st.columns([4, 3, 3, 1])
                 c1.write(f"{item['nombre']}")
                 
                 c2.number_input("Cant", value=int(item['cantidad']), min_value=1, step=1, 
