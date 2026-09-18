@@ -15,59 +15,53 @@ URL_PLANILLA = "https://docs.google.com/spreadsheets/d/1AEsHRAwONhfcATrG7k0gsVmW
 def aplicar_estilos_profesionales():
     st.markdown("""
         <style>
-            /* Ocultar footer pero mantener el menú de configuraciones */
+            /* Limpieza de la interfaz nativa */
             footer {visibility: hidden;}
             
             .block-container {
-                padding-top: 2rem !important;
+                padding-top: 1.5rem !important;
                 padding-bottom: 2rem !important;
                 max-width: 98% !important;
             }
             
-            /* Tipografía general */
+            /* Tipografía moderna y armónica */
             p, label, span, .stMarkdown {
                 font-size: 1.1rem !important;
                 font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             }
             
-            h1 { font-size: 2.8rem !important; font-weight: 800 !important; padding-bottom: 0.5rem; }
-            h2 { font-size: 2.2rem !important; font-weight: 700 !important; }
-            h3 { font-size: 1.6rem !important; font-weight: 600 !important; }
+            h1 { font-size: 2.5rem !important; font-weight: 800 !important; margin-bottom: 1rem; color: var(--text-color); }
+            h2 { font-size: 2rem !important; font-weight: 700 !important; }
+            h3 { font-size: 1.5rem !important; font-weight: 600 !important; }
             
-            /* Botones: Diseño táctil */
+            /* Botones Premium con animaciones suaves */
             .stButton > button {
-                min-height: 3.5rem;
-                border-radius: 12px !important;
+                border-radius: 10px !important;
                 font-size: 1.15rem !important;
                 font-weight: 700 !important;
                 letter-spacing: 0.5px;
                 transition: all 0.2s ease-in-out;
                 border: none !important;
+                min-height: 3.2rem;
             }
             .stButton > button:hover {
                 transform: translateY(-3px);
                 box-shadow: 0 6px 15px rgba(0,0,0,0.15);
-                filter: brightness(1.05);
+                filter: brightness(1.1);
             }
             
-            /* Inputs: Ajuste milimétrico para que aparezcan los botones +/- */
-            input[type="text"] {
-                font-size: 1.25rem !important;
-                border-radius: 8px !important;
-                font-weight: 500 !important;
-            }
-            input[type="number"] {
-                font-size: 1.15rem !important;
-                font-weight: 600 !important;
-                border-radius: 8px !important;
+            /* Botón de EFECTIVO resaltado en Verde Éxito */
+            button[kind="primary"] {
+                background-color: #27AE60 !important;
+                color: white !important;
             }
             
-            /* Métricas Gigantes */
+            /* Métricas Gigantes (El Total a Cobrar) */
             div[data-testid="stMetricValue"] {
                 font-size: 3.5rem !important;
                 font-weight: 900 !important;
                 color: #27AE60 !important; 
-                line-height: 1.2;
+                line-height: 1.1;
             }
             div[data-testid="stMetricLabel"] {
                 font-size: 1.2rem !important;
@@ -75,7 +69,13 @@ def aplicar_estilos_profesionales():
                 text-transform: uppercase;
                 letter-spacing: 1.5px;
                 color: var(--text-color) !important;
-                opacity: 0.7;
+                opacity: 0.8;
+            }
+            
+            /* Cajas y Alertas */
+            .stAlert {
+                border-radius: 10px !important;
+                font-weight: 500 !important;
             }
         </style>
     """, unsafe_allow_html=True)
@@ -107,7 +107,7 @@ def cargar_productos():
         df = conn.read(spreadsheet=URL_PLANILLA, worksheet="DB_PRODUCTOS")
         return df.dropna(subset=['NOMBRE'])
     except Exception as e:
-        st.error(f"⚠️ Error al conectar con Google Sheets (Catálogo). Revisa tu conexión.")
+        st.error("⚠️ Error de conexión. Revisa tu internet o la base de datos.")
         return pd.DataFrame() 
 
 def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
@@ -145,7 +145,7 @@ def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
     
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        with st.spinner("💾 Procesando transacción en la nube..."):
+        with st.spinner("💾 Guardando transacción en la nube..."):
             df_mov = conn.read(spreadsheet=URL_PLANILLA, worksheet="DB_MOVIMIENTOS_CAJA", ttl=0)
             conn.update(spreadsheet=URL_PLANILLA, worksheet="DB_MOVIMIENTOS_CAJA", data=pd.concat([df_mov, nueva_venta], ignore_index=True))
             
@@ -155,18 +155,20 @@ def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
         st.session_state.carrito = [] 
         
     except Exception as e:
-        st.error(f"❌ Falló el guardado. El cliente no fue cobrado en el sistema.")
+        st.error("❌ Falló el guardado. Verifica tu conexión a internet.")
 
 # ==========================================
 # 4. LÓGICA DE NEGOCIO
 # ==========================================
 @st.dialog("Dividir Pago (Mixto)")
 def modal_pago_mixto(total_cobrar):
-    st.write(f"### El total a cobrar es **${total_cobrar:,.0f}**")
-    monto_transf = st.number_input("Monto ingresado en Transferencia:", min_value=0, max_value=int(total_cobrar), step=100)
+    st.write(f"### Total de la compra: **${total_cobrar:,.0f}**")
+    st.write("---")
+    monto_transf = st.number_input("📱 Monto ingresado en Transferencia:", min_value=0, max_value=int(total_cobrar), step=100)
     monto_efvo = int(total_cobrar - monto_transf)
     st.info(f"💵 Restante a cobrar en Efectivo: **${monto_efvo:,.0f}**")
     
+    st.write("---")
     if st.button("✅ Confirmar Pago Mixto", use_container_width=True, type="primary"):
         procesar_venta("MIXTO", monto_efvo=monto_efvo, monto_transf=monto_transf)
         st.rerun()
@@ -205,76 +207,77 @@ def calcular_recargo_automatico():
 # ==========================================
 
 def mostrar_caja():
-    st.title("🛒 Caja - Lo de Genaro")
-    
+    st.markdown("<h1>🛒 Caja Registradora</h1>", unsafe_allow_html=True)
     df_productos = cargar_productos() 
     
     col_izq, col_der = st.columns([5, 5])
     
     with col_izq:
-        st.subheader("🔍 Buscador de Productos")
-        busqueda = st_keyup("Busca por nombre o marca:", placeholder="Ej. coc, mignon...", debounce=300, key=f"buscador_{st.session_state.search_key}")
-        
-        if busqueda:
-            resultados = df_productos[df_productos['NOMBRE'].str.contains(busqueda, case=False, na=False)].head(15)
-            if resultados.empty:
-                st.warning("No hay coincidencias.")
-            else:
-                for index, row in resultados.iterrows():
-                    c1, c2, c3 = st.columns([6, 2, 3])
-                    c1.write(f"**{row['NOMBRE']}**")
-                    c2.write(f"${int(row['PRECIO_DIA'])}")
-                    if c3.button("➕ Agregar", key=f"btn_add_{index}"):
-                        agregar_al_carrito(row['NOMBRE'], row['PRECIO_DIA'])
-                        st.rerun()
-                        
+        with st.container(border=True):
+            st.subheader("🔍 Buscador de Productos")
+            busqueda = st_keyup("Busca por nombre o marca (Ej. Lays, Coca):", debounce=300, key=f"buscador_{st.session_state.search_key}")
+            
+            if busqueda:
+                resultados = df_productos[df_productos['NOMBRE'].str.contains(busqueda, case=False, na=False)].head(15)
+                if resultados.empty:
+                    st.warning("No hay coincidencias en el catálogo.")
+                else:
+                    for index, row in resultados.iterrows():
+                        c1, c2, c3 = st.columns([5, 2, 3])
+                        c1.write(f"**{row['NOMBRE']}**")
+                        c2.write(f"${int(row['PRECIO_DIA'])}")
+                        if c3.button("➕ Agregar", key=f"btn_add_{index}", use_container_width=True):
+                            agregar_al_carrito(row['NOMBRE'], row['PRECIO_DIA'])
+                            st.rerun()
+                            
     with col_der:
-        st.subheader("🛒 Tu Carrito")
-        if not st.session_state.carrito:
-            st.info("El carrito está vacío. Busca un producto a la izquierda para comenzar.")
-        else:
-            total = 0
-            # SOLUCIÓN: Cantidad y Monto ahora tienen exactamente el mismo ancho (Proporción 3)
-            h1, h2, h3, h4 = st.columns([4, 3, 3, 1])
-            h1.write("**Producto**")
-            h2.write("**Cant**")
-            h3.write("**Monto $**")
-            
-            for i, item in enumerate(st.session_state.carrito):
-                c1, c2, c3, c4 = st.columns([4, 3, 3, 1])
-                c1.write(f"{item['nombre']}")
+        with st.container(border=True):
+            st.subheader("🛒 Tu Carrito")
+            if not st.session_state.carrito:
+                st.info("El carrito está vacío. Agrega productos desde el buscador.")
+            else:
+                total = 0
+                h1, h2, h3, h4 = st.columns([4, 3, 3, 1])
+                h1.write("**Producto**")
+                h2.write("**Cant**")
+                h3.write("**Monto $**")
                 
-                c2.number_input("Cant", value=int(item['cantidad']), min_value=1, step=1, 
-                                key=f"cant_{i}", on_change=actualizar_desde_cant, args=(i,), label_visibility="collapsed")
-                                
-                c3.number_input("Monto", value=int(item['subtotal']), min_value=0, step=100, 
-                                key=f"monto_{i}", on_change=actualizar_desde_monto, args=(i,), label_visibility="collapsed")
-                                
-                if c4.button("❌", key=f"del_{i}"):
-                    st.session_state.carrito.pop(i)
+                for i, item in enumerate(st.session_state.carrito):
+                    c1, c2, c3, c4 = st.columns([4, 3, 3, 1])
+                    c1.write(f"{item['nombre']}")
+                    
+                    c2.number_input("Cant", value=int(item['cantidad']), min_value=1, step=1, 
+                                    key=f"cant_{i}", on_change=actualizar_desde_cant, args=(i,), label_visibility="collapsed")
+                                    
+                    c3.number_input("Monto", value=int(item['subtotal']), min_value=0, step=100, 
+                                    key=f"monto_{i}", on_change=actualizar_desde_monto, args=(i,), label_visibility="collapsed")
+                                    
+                    if c4.button("❌", key=f"del_{i}"):
+                        st.session_state.carrito.pop(i)
+                        st.rerun()
+                    total += item['subtotal']
+                    
+                st.divider()
+                st.metric(label="TOTAL A COBRAR", value=f"${total:,.0f}")
+                
+                col_efvo, col_transf, col_mixto = st.columns(3)
+                if col_efvo.button("💵 Efectivo", use_container_width=True, type="primary"):
+                    procesar_venta("EFECTIVO")
+                    st.toast("✅ Venta en Efectivo registrada.", icon="✅")
                     st.rerun()
-                total += item['subtotal']
-                
-            st.divider()
-            st.metric(label="TOTAL A COBRAR", value=f"${total:,.0f}")
-            
-            col_efvo, col_transf, col_mixto = st.columns(3)
-            if col_efvo.button("💵 Efectivo", use_container_width=True, type="primary"):
-                procesar_venta("EFECTIVO")
-                st.toast("✅ Venta en Efectivo registrada.", icon="✅")
-                st.rerun()
-            if col_transf.button("📱 Transf.", use_container_width=True, type="primary"):
-                procesar_venta("TRANSFERENCIA")
-                st.toast("✅ Venta por Transferencia registrada.", icon="✅")
-                st.rerun()
-            if col_mixto.button("💳 Mixto", use_container_width=True):
-                modal_pago_mixto(total)
+                if col_transf.button("📱 Transf.", use_container_width=True):
+                    procesar_venta("TRANSFERENCIA")
+                    st.toast("✅ Venta por Transferencia registrada.", icon="✅")
+                    st.rerun()
+                if col_mixto.button("💳 Mixto", use_container_width=True):
+                    modal_pago_mixto(total)
 
 def mostrar_servicios():
-    st.title("📱 Cargas y Servicios")
-    st.write("Registra recargas virtuales o pagos de servicios de forma rápida.")
+    st.markdown("<h1>📱 Cargas y Servicios</h1>", unsafe_allow_html=True)
     
     with st.container(border=True):
+        st.write("Registra recargas virtuales o pagos de servicios de forma ágil.")
+        st.write("---")
         col1, col2 = st.columns(2)
         with col1:
             servicio = st.selectbox("Empresa / Servicio", ["Claro", "Personal", "Movistar", "Tuenti", "DIRECTV", "SUBE", "Otro"])
@@ -312,7 +315,7 @@ def mostrar_servicios():
                 }])
                 try:
                     conn = st.connection("gsheets", type=GSheetsConnection)
-                    with st.spinner("Enviando a la nube..."):
+                    with st.spinner("Guardando en el sistema..."):
                         df_cargas = conn.read(spreadsheet=URL_PLANILLA, worksheet="DB_CARGAS", ttl=0)
                         conn.update(spreadsheet=URL_PLANILLA, worksheet="DB_CARGAS", data=pd.concat([df_cargas, nueva_carga], ignore_index=True))
                     st.toast(f"✅ Carga guardada.", icon="📲")
@@ -320,10 +323,10 @@ def mostrar_servicios():
                     del st.session_state["input_monto_adic"]
                     st.rerun()
                 except Exception as e:
-                    st.error(f"❌ Error al guardar. Intente nuevamente.")
+                    st.error("❌ Error al guardar. Intente nuevamente.")
 
 def mostrar_admin_productos():
-    st.title("⚙️ Gestión de Catálogo")
+    st.markdown("<h1>⚙️ Gestión de Catálogo</h1>", unsafe_allow_html=True)
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         df_actual = conn.read(spreadsheet=URL_PLANILLA, worksheet="DB_PRODUCTOS", ttl=0).dropna(subset=['NOMBRE'])
@@ -423,34 +426,35 @@ def mostrar_admin_productos():
         st.error(f"Error al cargar el panel de administración.")
 
 def mostrar_historial():
-    st.title("📜 Historial de Ítems Vendidos")
+    st.markdown("<h1>📜 Historial de Ítems</h1>", unsafe_allow_html=True)
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         df_historial = conn.read(spreadsheet=URL_PLANILLA, worksheet="DB_HISTORIAL_ITEMS", ttl=0)
         df_historial['FECHA_REAL'] = pd.to_datetime(df_historial['FECHA'], dayfirst=True, errors='coerce')
         
-        col1, col2 = st.columns([3, 7])
-        with col1:
-            fecha_elegida = st.date_input("🗓️ Filtrar por Día:", datetime.date.today())
-            palabra_clave = st.text_input("🔍 Buscar producto específico:")
-        
-        mask_fecha = df_historial['FECHA_REAL'].dt.date == fecha_elegida
-        df_filtrado = df_historial[mask_fecha]
-        
-        if palabra_clave:
-            df_filtrado = df_filtrado[df_filtrado['PRODUCTO'].str.contains(palabra_clave, case=False, na=False)]
-        
-        with col2:
-            columnas_mostrar = ['FECHA', 'TICKET_ID', 'PRODUCTO', 'CANTIDAD', 'SUBTOTAL', 'METODO_PAGO']
-            st.dataframe(df_filtrado[columnas_mostrar], use_container_width=True, hide_index=True)
-            total_items = df_filtrado['SUBTOTAL'].sum()
-            st.metric(label=f"Total Filtrado ({fecha_elegida.strftime('%d/%m/%Y')})", value=f"${total_items:,.0f}")
+        with st.container(border=True):
+            col1, col2 = st.columns([3, 7])
+            with col1:
+                fecha_elegida = st.date_input("🗓️ Filtrar por Día:", datetime.date.today())
+                palabra_clave = st.text_input("🔍 Buscar producto específico:")
+            
+            mask_fecha = df_historial['FECHA_REAL'].dt.date == fecha_elegida
+            df_filtrado = df_historial[mask_fecha]
+            
+            if palabra_clave:
+                df_filtrado = df_filtrado[df_filtrado['PRODUCTO'].str.contains(palabra_clave, case=False, na=False)]
+            
+            with col2:
+                columnas_mostrar = ['FECHA', 'TICKET_ID', 'PRODUCTO', 'CANTIDAD', 'SUBTOTAL', 'METODO_PAGO']
+                st.dataframe(df_filtrado[columnas_mostrar], use_container_width=True, hide_index=True)
+                total_items = df_filtrado['SUBTOTAL'].sum()
+                st.metric(label=f"Total Filtrado ({fecha_elegida.strftime('%d/%m/%Y')})", value=f"${total_items:,.0f}")
             
     except Exception as e:
-        st.error(f"No se pudo cargar el historial.")
+        st.error("No se pudo cargar el historial.")
 
 def mostrar_visor():
-    st.title("📊 Visor de Caja (Resumen Ejecutivo)")
+    st.markdown("<h1>📊 Dashboard Ejecutivo</h1>", unsafe_allow_html=True)
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         df_caja = conn.read(spreadsheet=URL_PLANILLA, worksheet="DB_MOVIMIENTOS_CAJA", ttl=0)
@@ -459,8 +463,9 @@ def mostrar_visor():
         df_caja['FECHA_REAL'] = pd.to_datetime(df_caja['FECHA'], dayfirst=True, errors='coerce')
         df_cargas['FECHA_REAL'] = pd.to_datetime(df_cargas['FECHA'], dayfirst=True, errors='coerce')
         
-        c1, c2, c3 = st.columns([3, 4, 3])
-        fecha_elegida = c2.date_input("📅 Seleccionar fecha de Caja:", datetime.date.today())
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([3, 4, 3])
+            fecha_elegida = c2.date_input("📅 Seleccionar fecha a consultar:", datetime.date.today())
         
         df_hoy_caja = df_caja[df_caja['FECHA_REAL'].dt.date == fecha_elegida]
         df_hoy_cargas = df_cargas[df_cargas['FECHA_REAL'].dt.date == fecha_elegida]
@@ -501,25 +506,25 @@ def mostrar_visor():
         
         with col_izq:
             st.markdown(f"""
-            <div style="border: 2px solid #3b1be3; border-radius: 10px; margin-bottom: 25px; background-color: var(--secondary-background-color); box-shadow: 0 4px 8px rgba(0,0,0,0.2);">
+            <div style="border: 1px solid rgba(128,128,128,0.2); border-radius: 12px; margin-bottom: 25px; background-color: var(--secondary-background-color); box-shadow: 0 4px 10px rgba(0,0,0,0.1); overflow: hidden;">
                 <div style="background-color: #3b1be3; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.2em;">CAJA A - DRUGSTORE</div>
                 <div style="padding: 20px;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--text-color); font-size: 1.1em;"><span>(+) EFECTIVO:</span><span>${int(a_efvo):,.0f}</span></div>
                     <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: var(--text-color); font-size: 1.1em;"><span>(+) TRANSFERENCIAS:</span><span>${int(a_transf):,.0f}</span></div>
-                    <div style="border-bottom: 1px solid var(--text-color); opacity: 0.2; margin: 15px 0;"></div>
+                    <div style="border-bottom: 1px solid var(--text-color); opacity: 0.1; margin: 15px 0;"></div>
                     <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: var(--text-color);"><span>TOTAL VENTAS:</span><span>${int(a_total):,.0f}</span></div>
                 </div>
-                <div style="display: flex; justify-content: space-between; background-color: #553aeb; color: white; padding: 12px 20px; font-weight: bold;"><span>GANANCIA ESTIMADA (10%):</span><span>${int(a_ganancia):,.0f}</span></div>
+                <div style="display: flex; justify-content: space-between; background-color: rgba(59, 27, 227, 0.8); color: white; padding: 12px 20px; font-weight: bold;"><span>GANANCIA ESTIMADA (10%):</span><span>${int(a_ganancia):,.0f}</span></div>
             </div>
             """, unsafe_allow_html=True)
             
             st.markdown(f"""
-            <div style="border: 2px solid #418042; border-radius: 10px; margin-bottom: 25px; background-color: var(--secondary-background-color); box-shadow: 0 4px 8px rgba(0,0,0,0.2);">
+            <div style="border: 1px solid rgba(128,128,128,0.2); border-radius: 12px; margin-bottom: 25px; background-color: var(--secondary-background-color); box-shadow: 0 4px 10px rgba(0,0,0,0.1); overflow: hidden;">
                 <div style="background-color: #418042; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.2em;">CAJA C - ADICIONALES (Ganancia)</div>
                 <div style="padding: 20px;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--text-color); font-size: 1.1em;"><span>(+) EFECTIVO:</span><span>${int(c_efvo):,.0f}</span></div>
                     <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: var(--text-color); font-size: 1.1em;"><span>(+) TRANSFERENCIA:</span><span>${int(c_transf):,.0f}</span></div>
-                    <div style="border-bottom: 1px solid var(--text-color); opacity: 0.2; margin: 15px 0;"></div>
+                    <div style="border-bottom: 1px solid var(--text-color); opacity: 0.1; margin: 15px 0;"></div>
                     <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: var(--text-color);"><span>TOTAL GANANCIA:</span><span>${int(c_total):,.0f}</span></div>
                 </div>
             </div>
@@ -527,31 +532,31 @@ def mostrar_visor():
 
         with col_der:
             st.markdown(f"""
-            <div style="border: 2px solid #d68b31; border-radius: 10px; margin-bottom: 25px; background-color: var(--secondary-background-color); box-shadow: 0 4px 8px rgba(0,0,0,0.2);">
+            <div style="border: 1px solid rgba(128,128,128,0.2); border-radius: 12px; margin-bottom: 25px; background-color: var(--secondary-background-color); box-shadow: 0 4px 10px rgba(0,0,0,0.1); overflow: hidden;">
                 <div style="background-color: #d68b31; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.2em;">CAJA B - SUBE (Solo Capital)</div>
                 <div style="padding: 20px;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--text-color); font-size: 1.1em;"><span>(+) INGRESOS EFECTIVO:</span><span>${int(b_efvo):,.0f}</span></div>
                     <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: var(--text-color); font-size: 1.1em;"><span>(+) INGRESOS TRANSF:</span><span>${int(b_transf):,.0f}</span></div>
-                    <div style="border-bottom: 1px solid var(--text-color); opacity: 0.2; margin: 15px 0;"></div>
+                    <div style="border-bottom: 1px solid var(--text-color); opacity: 0.1; margin: 15px 0;"></div>
                     <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: var(--text-color);"><span>TOTAL (Sin Adic):</span><span>${int(b_total):,.0f}</span></div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
             
             st.markdown(f"""
-            <div style="border: 2px solid #de3c31; border-radius: 10px; margin-bottom: 25px; background-color: var(--secondary-background-color); box-shadow: 0 4px 8px rgba(0,0,0,0.2);">
+            <div style="border: 1px solid rgba(128,128,128,0.2); border-radius: 12px; margin-bottom: 25px; background-color: var(--secondary-background-color); box-shadow: 0 4px 10px rgba(0,0,0,0.1); overflow: hidden;">
                 <div style="background-color: #de3c31; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.2em;">CAJA E - CLARO (Solo Capital)</div>
                 <div style="padding: 20px;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--text-color); font-size: 1.1em;"><span>(+) INGRESOS EFECTIVO:</span><span>${int(e_efvo):,.0f}</span></div>
                     <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: var(--text-color); font-size: 1.1em;"><span>(+) INGRESOS TRANSF:</span><span>${int(e_transf):,.0f}</span></div>
-                    <div style="border-bottom: 1px solid var(--text-color); opacity: 0.2; margin: 15px 0;"></div>
+                    <div style="border-bottom: 1px solid var(--text-color); opacity: 0.1; margin: 15px 0;"></div>
                     <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: var(--text-color);"><span>TOTAL (Sin Adic):</span><span>${int(e_total):,.0f}</span></div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
             
     except Exception as e:
-        st.error(f"Error cargando el dashboard.")
+        st.error("Error cargando el dashboard.")
 
 # ==========================================
 # 6. ENRUTADOR PRINCIPAL (MENÚ LATERAL)
