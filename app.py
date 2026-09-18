@@ -19,7 +19,6 @@ def aplicar_estilos_profesionales():
             /* Oculta el menú superior derecho y el pie de página de Streamlit */
             #MainMenu {visibility: hidden;}
             footer {visibility: hidden;}
-            header {visibility: hidden;}
             
             /* Reduce los espacios en blanco superiores para aprovechar la pantalla */
             .block-container {
