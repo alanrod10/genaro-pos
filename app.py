@@ -13,11 +13,10 @@ st.set_page_config(page_title="Genaro POS", page_icon="🛒", layout="wide")
 URL_PLANILLA = "https://docs.google.com/spreadsheets/d/1AEsHRAwONhfcATrG7k0gsVmWB1IGlqoHt89_wcT9Uuo/edit?gid=514091242#gid=514091242"
 
 def aplicar_estilos_profesionales():
-    """Inyecta CSS avanzado para una UI moderna, tipografía grande y fácil lectura en móviles/mostrador."""
+    """Inyecta CSS avanzado para una UI moderna, adaptativa al Modo Oscuro/Claro."""
     st.markdown("""
         <style>
-            /* 1. Ocultar elementos de desarrollador y optimizar márgenes */
-            #MainMenu {visibility: hidden;}
+            /* 1. Ocultar footer pero mantener el menú de configuraciones (Theme/Cache) */
             footer {visibility: hidden;}
             
             .block-container {
@@ -26,28 +25,18 @@ def aplicar_estilos_profesionales():
                 max-width: 98% !important;
             }
             
-            /* 2. Tipografía general de la aplicación */
+            /* 2. Tipografía general */
             p, label, span, .stMarkdown {
                 font-size: 1.1rem !important;
                 font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             }
             
-            /* 3. Títulos imponentes y elegantes */
-            h1 {
-                font-size: 2.8rem !important;
-                font-weight: 800 !important;
-                padding-bottom: 0.5rem;
-            }
-            h2 {
-                font-size: 2.2rem !important;
-                font-weight: 700 !important;
-            }
-            h3 {
-                font-size: 1.6rem !important;
-                font-weight: 600 !important;
-            }
+            /* 3. Títulos imponentes */
+            h1 { font-size: 2.8rem !important; font-weight: 800 !important; padding-bottom: 0.5rem; }
+            h2 { font-size: 2.2rem !important; font-weight: 700 !important; }
+            h3 { font-size: 1.6rem !important; font-weight: 600 !important; }
             
-            /* 4. Botones: Diseño táctil (Touch-friendly), altos y con efecto hover */
+            /* 4. Botones: Diseño táctil (Touch-friendly) */
             .stButton > button {
                 min-height: 3.5rem;
                 border-radius: 12px !important;
@@ -63,7 +52,7 @@ def aplicar_estilos_profesionales():
                 filter: brightness(1.05);
             }
             
-            /* 5. Inputs (Cajas de texto y números) más legibles */
+            /* 5. Inputs (Cajas de texto y números) */
             input[type="text"], input[type="number"] {
                 font-size: 1.25rem !important;
                 padding: 0.7rem !important;
@@ -71,11 +60,11 @@ def aplicar_estilos_profesionales():
                 font-weight: 500 !important;
             }
             
-            /* 6. Métricas (TOTAL A COBRAR) Gigantes */
+            /* 6. Métricas (TOTAL A COBRAR) Gigantes - Usando variable de color dinámica */
             div[data-testid="stMetricValue"] {
                 font-size: 3.5rem !important;
                 font-weight: 900 !important;
-                color: #27AE60 !important; /* Verde Esmeralda */
+                color: #27AE60 !important; 
                 line-height: 1.2;
             }
             div[data-testid="stMetricLabel"] {
@@ -83,10 +72,11 @@ def aplicar_estilos_profesionales():
                 font-weight: 800 !important;
                 text-transform: uppercase;
                 letter-spacing: 1.5px;
-                color: #555555;
+                color: var(--text-color) !important;
+                opacity: 0.7;
             }
             
-            /* 7. Alertas y Carteles más suaves */
+            /* 7. Alertas con bordes suaves */
             .stAlert {
                 border-radius: 12px !important;
                 font-size: 1.1rem !important;
@@ -507,51 +497,51 @@ def mostrar_visor():
         
         with col_izq:
             st.markdown(f"""
-            <div style="border: 2px solid #3b1be3; border-radius: 10px; margin-bottom: 25px; font-family: sans-serif; background-color: #ffffff; box-shadow: 0 4px 8px rgba(0,0,0,0.05); overflow: hidden;">
+            <div style="border: 2px solid #3b1be3; border-radius: 10px; margin-bottom: 25px; font-family: sans-serif; background-color: var(--secondary-background-color); box-shadow: 0 4px 8px rgba(0,0,0,0.2); overflow: hidden;">
                 <div style="background-color: #3b1be3; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.2em; letter-spacing: 0.5px;">CAJA A - DRUGSTORE</div>
                 <div style="padding: 20px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: #333; font-size: 1.1em;"><span>(+) EFECTIVO:</span><span>${a_efvo:,.0f}</span></div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: #333; font-size: 1.1em;"><span>(+) TRANSFERENCIAS:</span><span>${a_transf:,.0f}</span></div>
-                    <hr style="border: 1px solid #eee; margin: 15px 0;">
-                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: black;"><span>TOTAL VENTAS:</span><span>${a_total:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--text-color); font-size: 1.1em;"><span>(+) EFECTIVO:</span><span>${a_efvo:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: var(--text-color); font-size: 1.1em;"><span>(+) TRANSFERENCIAS:</span><span>${a_transf:,.0f}</span></div>
+                    <div style="border-bottom: 1px solid var(--text-color); opacity: 0.2; margin: 15px 0;"></div>
+                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: var(--text-color);"><span>TOTAL VENTAS:</span><span>${a_total:,.0f}</span></div>
                 </div>
                 <div style="display: flex; justify-content: space-between; background-color: #553aeb; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.1em;"><span>GANANCIA ESTIMADA (10%):</span><span>${a_ganancia:,.0f}</span></div>
             </div>
             """, unsafe_allow_html=True)
             
             st.markdown(f"""
-            <div style="border: 2px solid #418042; border-radius: 10px; margin-bottom: 25px; font-family: sans-serif; background-color: #ffffff; box-shadow: 0 4px 8px rgba(0,0,0,0.05); overflow: hidden;">
+            <div style="border: 2px solid #418042; border-radius: 10px; margin-bottom: 25px; font-family: sans-serif; background-color: var(--secondary-background-color); box-shadow: 0 4px 8px rgba(0,0,0,0.2); overflow: hidden;">
                 <div style="background-color: #418042; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.2em; letter-spacing: 0.5px;">CAJA C - ADICIONALES (Ganancia)</div>
                 <div style="padding: 20px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: #333; font-size: 1.1em;"><span>(+) EFECTIVO:</span><span>${c_efvo:,.0f}</span></div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: #333; font-size: 1.1em;"><span>(+) TRANSFERENCIA:</span><span>${c_transf:,.0f}</span></div>
-                    <hr style="border: 1px solid #eee; margin: 15px 0;">
-                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: black;"><span>TOTAL GANANCIA:</span><span>${c_total:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--text-color); font-size: 1.1em;"><span>(+) EFECTIVO:</span><span>${c_efvo:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: var(--text-color); font-size: 1.1em;"><span>(+) TRANSFERENCIA:</span><span>${c_transf:,.0f}</span></div>
+                    <div style="border-bottom: 1px solid var(--text-color); opacity: 0.2; margin: 15px 0;"></div>
+                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: var(--text-color);"><span>TOTAL GANANCIA:</span><span>${c_total:,.0f}</span></div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
         with col_der:
             st.markdown(f"""
-            <div style="border: 2px solid #d68b31; border-radius: 10px; margin-bottom: 25px; font-family: sans-serif; background-color: #ffffff; box-shadow: 0 4px 8px rgba(0,0,0,0.05); overflow: hidden;">
+            <div style="border: 2px solid #d68b31; border-radius: 10px; margin-bottom: 25px; font-family: sans-serif; background-color: var(--secondary-background-color); box-shadow: 0 4px 8px rgba(0,0,0,0.2); overflow: hidden;">
                 <div style="background-color: #d68b31; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.2em; letter-spacing: 0.5px;">CAJA B - SUBE (Solo Capital)</div>
                 <div style="padding: 20px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: #333; font-size: 1.1em;"><span>(+) INGRESOS EFECTIVO:</span><span>${b_efvo:,.0f}</span></div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: #333; font-size: 1.1em;"><span>(+) INGRESOS TRANSF:</span><span>${b_transf:,.0f}</span></div>
-                    <hr style="border: 1px solid #eee; margin: 15px 0;">
-                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: black;"><span>TOTAL (Sin Adic):</span><span>${b_total:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--text-color); font-size: 1.1em;"><span>(+) INGRESOS EFECTIVO:</span><span>${b_efvo:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: var(--text-color); font-size: 1.1em;"><span>(+) INGRESOS TRANSF:</span><span>${b_transf:,.0f}</span></div>
+                    <div style="border-bottom: 1px solid var(--text-color); opacity: 0.2; margin: 15px 0;"></div>
+                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: var(--text-color);"><span>TOTAL (Sin Adic):</span><span>${b_total:,.0f}</span></div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
             
             st.markdown(f"""
-            <div style="border: 2px solid #de3c31; border-radius: 10px; margin-bottom: 25px; font-family: sans-serif; background-color: #ffffff; box-shadow: 0 4px 8px rgba(0,0,0,0.05); overflow: hidden;">
+            <div style="border: 2px solid #de3c31; border-radius: 10px; margin-bottom: 25px; font-family: sans-serif; background-color: var(--secondary-background-color); box-shadow: 0 4px 8px rgba(0,0,0,0.2); overflow: hidden;">
                 <div style="background-color: #de3c31; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.2em; letter-spacing: 0.5px;">CAJA E - CLARO (Solo Capital)</div>
                 <div style="padding: 20px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: #333; font-size: 1.1em;"><span>(+) INGRESOS EFECTIVO:</span><span>${e_efvo:,.0f}</span></div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: #333; font-size: 1.1em;"><span>(+) INGRESOS TRANSF:</span><span>${e_transf:,.0f}</span></div>
-                    <hr style="border: 1px solid #eee; margin: 15px 0;">
-                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: black;"><span>TOTAL (Sin Adic):</span><span>${e_total:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--text-color); font-size: 1.1em;"><span>(+) INGRESOS EFECTIVO:</span><span>${e_efvo:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: var(--text-color); font-size: 1.1em;"><span>(+) INGRESOS TRANSF:</span><span>${e_transf:,.0f}</span></div>
+                    <div style="border-bottom: 1px solid var(--text-color); opacity: 0.2; margin: 15px 0;"></div>
+                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: var(--text-color);"><span>TOTAL (Sin Adic):</span><span>${e_total:,.0f}</span></div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
