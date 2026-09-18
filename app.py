@@ -13,10 +13,9 @@ st.set_page_config(page_title="Genaro POS", page_icon="🛒", layout="wide")
 URL_PLANILLA = "https://docs.google.com/spreadsheets/d/1AEsHRAwONhfcATrG7k0gsVmWB1IGlqoHt89_wcT9Uuo/edit?gid=514091242#gid=514091242"
 
 def aplicar_estilos_profesionales():
-    """Inyecta CSS avanzado para una UI moderna, adaptativa al Modo Oscuro/Claro."""
     st.markdown("""
         <style>
-            /* 1. Ocultar footer pero mantener el menú de configuraciones (Theme/Cache) */
+            /* Ocultar footer pero mantener el menú de configuraciones */
             footer {visibility: hidden;}
             
             .block-container {
@@ -25,18 +24,17 @@ def aplicar_estilos_profesionales():
                 max-width: 98% !important;
             }
             
-            /* 2. Tipografía general */
+            /* Tipografía general */
             p, label, span, .stMarkdown {
                 font-size: 1.1rem !important;
                 font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             }
             
-            /* 3. Títulos imponentes */
             h1 { font-size: 2.8rem !important; font-weight: 800 !important; padding-bottom: 0.5rem; }
             h2 { font-size: 2.2rem !important; font-weight: 700 !important; }
             h3 { font-size: 1.6rem !important; font-weight: 600 !important; }
             
-            /* 4. Botones: Diseño táctil (Touch-friendly) */
+            /* Botones: Diseño táctil (Touch-friendly) */
             .stButton > button {
                 min-height: 3.5rem;
                 border-radius: 12px !important;
@@ -52,7 +50,7 @@ def aplicar_estilos_profesionales():
                 filter: brightness(1.05);
             }
             
-            /* 5. Inputs (Cajas de texto y números) */
+            /* Inputs */
             input[type="text"], input[type="number"] {
                 font-size: 1.25rem !important;
                 padding: 0.7rem !important;
@@ -60,7 +58,7 @@ def aplicar_estilos_profesionales():
                 font-weight: 500 !important;
             }
             
-            /* 6. Métricas (TOTAL A COBRAR) Gigantes - Usando variable de color dinámica */
+            /* Métricas (TOTAL A COBRAR) Gigantes */
             div[data-testid="stMetricValue"] {
                 font-size: 3.5rem !important;
                 font-weight: 900 !important;
@@ -76,7 +74,7 @@ def aplicar_estilos_profesionales():
                 opacity: 0.7;
             }
             
-            /* 7. Alertas con bordes suaves */
+            /* Alertas con bordes suaves */
             .stAlert {
                 border-radius: 12px !important;
                 font-size: 1.1rem !important;
@@ -94,9 +92,11 @@ def inicializar_memoria():
     if 'carrito' not in st.session_state:
         st.session_state.carrito = []
     if 'input_monto_carga' not in st.session_state:
-        st.session_state.input_monto_carga = 0.0
+        st.session_state.input_monto_carga = 0  # Entero
     if 'input_monto_adic' not in st.session_state:
-        st.session_state.input_monto_adic = 0.0
+        st.session_state.input_monto_adic = 0  # Entero
+    if 'search_key' not in st.session_state:
+        st.session_state.search_key = 0  # Llave maestra para vaciar el buscador
 
 inicializar_memoria()
 
@@ -128,9 +128,9 @@ def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
     nueva_venta = pd.DataFrame([{
         "TICKET_ID": ticket_id,
         "FECHA": fecha_actual.strftime("%d/%m/%Y %H:%M:%S"),
-        "TOTAL_VENTA": total_venta,
-        "MONTO_EFECTIVO": pago_efvo,
-        "MONTO_TRANSF": pago_transf,
+        "TOTAL_VENTA": int(total_venta),
+        "MONTO_EFECTIVO": int(pago_efvo),
+        "MONTO_TRANSF": int(pago_transf),
         "ES_NOCTURNO": False
     }])
     
@@ -166,8 +166,8 @@ def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
 @st.dialog("Dividir Pago (Mixto)")
 def modal_pago_mixto(total_cobrar):
     st.write(f"### El total a cobrar es **${total_cobrar:,.0f}**")
-    monto_transf = st.number_input("Monto ingresado en Transferencia:", min_value=0.0, max_value=float(total_cobrar), step=100.0)
-    monto_efvo = total_cobrar - monto_transf
+    monto_transf = st.number_input("Monto ingresado en Transferencia:", min_value=0, max_value=int(total_cobrar), step=100)
+    monto_efvo = int(total_cobrar - monto_transf)
     st.info(f"💵 Restante a cobrar en Efectivo: **${monto_efvo:,.0f}**")
     
     if st.button("✅ Confirmar Pago Mixto", use_container_width=True, type="primary"):
@@ -177,28 +177,32 @@ def modal_pago_mixto(total_cobrar):
 def agregar_al_carrito(nombre, precio):
     for item in st.session_state.carrito:
         if item['nombre'] == nombre:
-            item['cantidad'] += 1.0
-            item['subtotal'] = item['cantidad'] * item['precio']
+            item['cantidad'] += 1
+            item['subtotal'] = item['cantidad'] * int(precio)
+            st.session_state.search_key += 1 # Reinicia el buscador
             return
-    st.session_state.carrito.append({'nombre': nombre, 'precio': float(precio), 'cantidad': 1.0, 'subtotal': float(precio)})
+    st.session_state.carrito.append({'nombre': nombre, 'precio': int(precio), 'cantidad': 1, 'subtotal': int(precio)})
+    st.session_state.search_key += 1 # Reinicia el buscador
 
 def actualizar_desde_cant(i):
-    nueva_cant = st.session_state[f"cant_{i}"]
+    nueva_cant = int(st.session_state[f"cant_{i}"])
     st.session_state.carrito[i]['cantidad'] = nueva_cant
     st.session_state.carrito[i]['subtotal'] = nueva_cant * st.session_state.carrito[i]['precio']
     st.session_state[f"monto_{i}"] = st.session_state.carrito[i]['subtotal']
 
 def actualizar_desde_monto(i):
-    nuevo_monto = st.session_state[f"monto_{i}"]
+    nuevo_monto = int(st.session_state[f"monto_{i}"])
     st.session_state.carrito[i]['subtotal'] = nuevo_monto
     precio = st.session_state.carrito[i]['precio']
     if precio > 0:
-        st.session_state.carrito[i]['cantidad'] = nuevo_monto / precio
+        calc = nuevo_monto / precio
+        # Si pagan un parcial libre (ej. $500), la cantidad asume "1" en lugar de fallar
+        st.session_state.carrito[i]['cantidad'] = int(calc) if calc >= 1 else 1
         st.session_state[f"cant_{i}"] = st.session_state.carrito[i]['cantidad']
 
 def calcular_recargo_automatico():
     monto = st.session_state.input_monto_carga
-    st.session_state.input_monto_adic = float(math.ceil(monto / 2000.0) * 100) if monto > 0 else 0.0
+    st.session_state.input_monto_adic = int(math.ceil(monto / 2000.0) * 100) if monto > 0 else 0
 
 # ==========================================
 # 5. VISTAS Y MÓDULOS (Frontend)
@@ -211,7 +215,9 @@ def mostrar_caja():
     
     with col_izq:
         st.subheader("🔍 Buscador de Productos")
-        busqueda = st_keyup("Busca por nombre o marca:", placeholder="Ej. coc, mignon, lays...", debounce=300)
+        
+        # El buscador ahora está atado a la llave maestra. Cuando sumas un producto, la llave cambia y esto se vacía solo.
+        busqueda = st_keyup("Busca por nombre o marca:", placeholder="Ej. coc, mignon, lays...", debounce=300, key=f"buscador_{st.session_state.search_key}")
         
         if busqueda:
             resultados = df_productos[df_productos['NOMBRE'].str.contains(busqueda, case=False, na=False)].head(15)
@@ -221,7 +227,7 @@ def mostrar_caja():
                 for index, row in resultados.iterrows():
                     c1, c2, c3 = st.columns([6, 2, 3])
                     c1.write(f"**{row['NOMBRE']}**")
-                    c2.write(f"${row['PRECIO_DIA']}")
+                    c2.write(f"${int(row['PRECIO_DIA'])}")
                     if c3.button("➕ Agregar", key=f"btn_add_{index}"):
                         agregar_al_carrito(row['NOMBRE'], row['PRECIO_DIA'])
                         st.rerun()
@@ -240,10 +246,14 @@ def mostrar_caja():
             for i, item in enumerate(st.session_state.carrito):
                 c1, c2, c3, c4 = st.columns([4, 2, 3, 1])
                 c1.write(f"{item['nombre']}")
-                c2.number_input("Cant", value=float(item['cantidad']), min_value=0.01, step=1.0, 
+                
+                # Todo ahora es INT puro, sin decimales. ¡Aparecen el + y el - perfectamente!
+                c2.number_input("Cant", value=int(item['cantidad']), min_value=1, step=1, 
                                 key=f"cant_{i}", on_change=actualizar_desde_cant, args=(i,), label_visibility="collapsed")
-                c3.number_input("Monto", value=float(item['subtotal']), min_value=0.0, step=100.0, 
+                                
+                c3.number_input("Monto", value=int(item['subtotal']), min_value=0, step=100, 
                                 key=f"monto_{i}", on_change=actualizar_desde_monto, args=(i,), label_visibility="collapsed")
+                                
                 if c4.button("❌", key=f"del_{i}"):
                     st.session_state.carrito.pop(i)
                     st.rerun()
@@ -272,19 +282,19 @@ def mostrar_servicios():
         col1, col2 = st.columns(2)
         with col1:
             servicio = st.selectbox("Empresa / Servicio", ["Claro", "Personal", "Movistar", "Tuenti", "DIRECTV", "SUBE", "Otro"])
-            monto_carga = st.number_input("Monto a Cargar ($)", min_value=0.0, step=500.0, 
+            monto_carga = st.number_input("Monto a Cargar ($)", min_value=0, step=500, 
                                           key="input_monto_carga", on_change=calcular_recargo_automatico)
         with col2:
-            monto_adic = st.number_input("Recargo / Adicional ($)", min_value=0.0, step=50.0, key="input_monto_adic")
+            monto_adic = st.number_input("Recargo / Adicional ($)", min_value=0, step=50, key="input_monto_adic")
             metodo_pago = st.radio("Método de Pago", ["EFECTIVO", "TRANSFERENCIA", "MIXTO"], horizontal=True)
             
-        total_cobrar = monto_carga + monto_adic
+        total_cobrar = int(monto_carga + monto_adic)
         st.info(f"### **💰 Total a cobrar al cliente: ${total_cobrar:,.0f}**")
         
-        monto_transf = 0.0
-        monto_efvo = 0.0
+        monto_transf = 0
+        monto_efvo = 0
         if metodo_pago == "MIXTO":
-            monto_transf = st.number_input("Monto pagado en Transferencia:", min_value=0.0, max_value=float(total_cobrar), step=100.0)
+            monto_transf = st.number_input("Monto pagado en Transferencia:", min_value=0, max_value=int(total_cobrar), step=100)
             monto_efvo = total_cobrar - monto_transf
             st.write(f"💵 Restante en Efectivo: **${monto_efvo:,.0f}**")
         elif metodo_pago == "EFECTIVO":
@@ -343,14 +353,14 @@ def mostrar_admin_productos():
                     with c_actual:
                         st.write("**📝 Datos Actuales:**")
                         st.write(f"**Proveedor:** {datos_prod.get('PROVEEDOR', '-')}")
-                        st.write(f"**Costo:** ${float(datos_prod.get('COSTO', 0)):.2f}")
-                        st.write(f"**Precio:** ${float(datos_prod.get('PRECIO_DIA', 0)):.2f}")
+                        st.write(f"**Costo:** ${int(datos_prod.get('COSTO', 0))}")
+                        st.write(f"**Precio:** ${int(datos_prod.get('PRECIO_DIA', 0))}")
                         st.write(f"**Margen:** {float(datos_prod.get('MARGEN_%', 0)) * 100:.2f}%")
                     with c_nuevo:
                         st.write("**✏️ Completar solo si cambia:**")
                         nuevo_prov = st.text_input("Nuevo Proveedor:", value=datos_prod.get('PROVEEDOR', ''))
-                        nuevo_costo = st.number_input("Nuevo Costo ($):", value=float(datos_prod.get('COSTO', 0)), min_value=0.0)
-                        nuevo_precio = st.number_input("Nuevo Precio ($):", value=float(datos_prod.get('PRECIO_DIA', 0)), min_value=0.0)
+                        nuevo_costo = st.number_input("Nuevo Costo ($):", value=int(datos_prod.get('COSTO', 0)), min_value=0, step=100)
+                        nuevo_precio = st.number_input("Nuevo Precio ($):", value=int(datos_prod.get('PRECIO_DIA', 0)), min_value=0, step=100)
                         nuevo_margen_calc = (nuevo_precio - nuevo_costo) / nuevo_costo if nuevo_costo > 0 else 0
                         st.info(f"**Margen Proyectado: {nuevo_margen_calc * 100:.2f}%**")
                     
@@ -390,8 +400,8 @@ def mostrar_admin_productos():
                 n_cat = st.selectbox("CATEGORÍA:", categorias_unicas + ["OTRO..."])
                 n_prov = st.selectbox("PROVEEDOR:", proveedores_unicos + ["OTRO..."])
                 n_unidad = st.selectbox("UNIDAD:", ["Unidad", "Kg", "Litro"])
-                n_costo = st.number_input("COSTO ($):", min_value=0.0, key="new_cost")
-                n_precio = st.number_input("PRECIO VENTA ($):", min_value=0.0, key="new_price")
+                n_costo = st.number_input("COSTO ($):", min_value=0, step=100, key="new_cost")
+                n_precio = st.number_input("PRECIO VENTA ($):", min_value=0, step=100, key="new_price")
                 
                 n_margen = (n_precio - n_costo) / n_costo if n_costo > 0 else 0
                 st.info(f"**Margen Estimado: {n_margen * 100:.2f}%**")
@@ -460,14 +470,14 @@ def mostrar_visor():
         df_hoy_caja = df_caja[df_caja['FECHA_REAL'].dt.date == fecha_elegida]
         df_hoy_cargas = df_cargas[df_cargas['FECHA_REAL'].dt.date == fecha_elegida]
         
-        a_efvo = df_hoy_caja['MONTO_EFECTIVO'].sum()
-        a_transf = df_hoy_caja['MONTO_TRANSF'].sum()
-        a_total = df_hoy_caja['TOTAL_VENTA'].sum()
-        a_ganancia = a_total * 0.10
+        a_efvo = int(df_hoy_caja['MONTO_EFECTIVO'].sum())
+        a_transf = int(df_hoy_caja['MONTO_TRANSF'].sum())
+        a_total = int(df_hoy_caja['TOTAL_VENTA'].sum())
+        a_ganancia = int(a_total * 0.10)
         
-        b_efvo = b_transf = b_total = 0.0
-        c_efvo = c_transf = c_total = 0.0
-        e_efvo = e_transf = e_total = 0.0
+        b_efvo = b_transf = b_total = 0
+        c_efvo = c_transf = c_total = 0
+        e_efvo = e_transf = e_total = 0
         
         for _, row in df_hoy_cargas.iterrows():
             total_cobrado = float(row.get('TOTAL_COBRADO', 0))
@@ -500,12 +510,12 @@ def mostrar_visor():
             <div style="border: 2px solid #3b1be3; border-radius: 10px; margin-bottom: 25px; font-family: sans-serif; background-color: var(--secondary-background-color); box-shadow: 0 4px 8px rgba(0,0,0,0.2); overflow: hidden;">
                 <div style="background-color: #3b1be3; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.2em; letter-spacing: 0.5px;">CAJA A - DRUGSTORE</div>
                 <div style="padding: 20px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--text-color); font-size: 1.1em;"><span>(+) EFECTIVO:</span><span>${a_efvo:,.0f}</span></div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: var(--text-color); font-size: 1.1em;"><span>(+) TRANSFERENCIAS:</span><span>${a_transf:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--text-color); font-size: 1.1em;"><span>(+) EFECTIVO:</span><span>${int(a_efvo):,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: var(--text-color); font-size: 1.1em;"><span>(+) TRANSFERENCIAS:</span><span>${int(a_transf):,.0f}</span></div>
                     <div style="border-bottom: 1px solid var(--text-color); opacity: 0.2; margin: 15px 0;"></div>
-                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: var(--text-color);"><span>TOTAL VENTAS:</span><span>${a_total:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: var(--text-color);"><span>TOTAL VENTAS:</span><span>${int(a_total):,.0f}</span></div>
                 </div>
-                <div style="display: flex; justify-content: space-between; background-color: #553aeb; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.1em;"><span>GANANCIA ESTIMADA (10%):</span><span>${a_ganancia:,.0f}</span></div>
+                <div style="display: flex; justify-content: space-between; background-color: #553aeb; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.1em;"><span>GANANCIA ESTIMADA (10%):</span><span>${int(a_ganancia):,.0f}</span></div>
             </div>
             """, unsafe_allow_html=True)
             
@@ -513,10 +523,10 @@ def mostrar_visor():
             <div style="border: 2px solid #418042; border-radius: 10px; margin-bottom: 25px; font-family: sans-serif; background-color: var(--secondary-background-color); box-shadow: 0 4px 8px rgba(0,0,0,0.2); overflow: hidden;">
                 <div style="background-color: #418042; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.2em; letter-spacing: 0.5px;">CAJA C - ADICIONALES (Ganancia)</div>
                 <div style="padding: 20px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--text-color); font-size: 1.1em;"><span>(+) EFECTIVO:</span><span>${c_efvo:,.0f}</span></div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: var(--text-color); font-size: 1.1em;"><span>(+) TRANSFERENCIA:</span><span>${c_transf:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--text-color); font-size: 1.1em;"><span>(+) EFECTIVO:</span><span>${int(c_efvo):,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: var(--text-color); font-size: 1.1em;"><span>(+) TRANSFERENCIA:</span><span>${int(c_transf):,.0f}</span></div>
                     <div style="border-bottom: 1px solid var(--text-color); opacity: 0.2; margin: 15px 0;"></div>
-                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: var(--text-color);"><span>TOTAL GANANCIA:</span><span>${c_total:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: var(--text-color);"><span>TOTAL GANANCIA:</span><span>${int(c_total):,.0f}</span></div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -526,10 +536,10 @@ def mostrar_visor():
             <div style="border: 2px solid #d68b31; border-radius: 10px; margin-bottom: 25px; font-family: sans-serif; background-color: var(--secondary-background-color); box-shadow: 0 4px 8px rgba(0,0,0,0.2); overflow: hidden;">
                 <div style="background-color: #d68b31; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.2em; letter-spacing: 0.5px;">CAJA B - SUBE (Solo Capital)</div>
                 <div style="padding: 20px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--text-color); font-size: 1.1em;"><span>(+) INGRESOS EFECTIVO:</span><span>${b_efvo:,.0f}</span></div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: var(--text-color); font-size: 1.1em;"><span>(+) INGRESOS TRANSF:</span><span>${b_transf:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--text-color); font-size: 1.1em;"><span>(+) INGRESOS EFECTIVO:</span><span>${int(b_efvo):,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: var(--text-color); font-size: 1.1em;"><span>(+) INGRESOS TRANSF:</span><span>${int(b_transf):,.0f}</span></div>
                     <div style="border-bottom: 1px solid var(--text-color); opacity: 0.2; margin: 15px 0;"></div>
-                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: var(--text-color);"><span>TOTAL (Sin Adic):</span><span>${b_total:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: var(--text-color);"><span>TOTAL (Sin Adic):</span><span>${int(b_total):,.0f}</span></div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -538,10 +548,10 @@ def mostrar_visor():
             <div style="border: 2px solid #de3c31; border-radius: 10px; margin-bottom: 25px; font-family: sans-serif; background-color: var(--secondary-background-color); box-shadow: 0 4px 8px rgba(0,0,0,0.2); overflow: hidden;">
                 <div style="background-color: #de3c31; color: white; padding: 12px 20px; font-weight: bold; font-size: 1.2em; letter-spacing: 0.5px;">CAJA E - CLARO (Solo Capital)</div>
                 <div style="padding: 20px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--text-color); font-size: 1.1em;"><span>(+) INGRESOS EFECTIVO:</span><span>${e_efvo:,.0f}</span></div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: var(--text-color); font-size: 1.1em;"><span>(+) INGRESOS TRANSF:</span><span>${e_transf:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 10px; color: var(--text-color); font-size: 1.1em;"><span>(+) INGRESOS EFECTIVO:</span><span>${int(e_efvo):,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 15px; color: var(--text-color); font-size: 1.1em;"><span>(+) INGRESOS TRANSF:</span><span>${int(e_transf):,.0f}</span></div>
                     <div style="border-bottom: 1px solid var(--text-color); opacity: 0.2; margin: 15px 0;"></div>
-                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: var(--text-color);"><span>TOTAL (Sin Adic):</span><span>${e_total:,.0f}</span></div>
+                    <div style="display: flex; justify-content: space-between; font-weight: 900; font-size: 1.8em; color: var(--text-color);"><span>TOTAL (Sin Adic):</span><span>${int(e_total):,.0f}</span></div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
