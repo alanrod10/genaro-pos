@@ -19,7 +19,6 @@ def aplicar_estilos_profesionales():
             /* 1. Ocultar elementos de desarrollador y optimizar márgenes */
             #MainMenu {visibility: hidden;}
             footer {visibility: hidden;}
-            header {visibility: hidden;}
             
             .block-container {
                 padding-top: 2rem !important;
