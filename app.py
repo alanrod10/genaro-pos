@@ -6,6 +6,11 @@ import datetime
 import math 
 
 # ==========================================
+# 0. CONFIGURACIÓN REGIONAL (ARGENTINA GMT-3)
+# ==========================================
+ZONA_AR = datetime.timezone(datetime.timedelta(hours=-3))
+
+# ==========================================
 # 1. CONFIGURACIÓN INICIAL Y ESTILOS UI/UX
 # ==========================================
 st.set_page_config(page_title="Genaro POS", page_icon="🛒", layout="wide")
@@ -112,7 +117,7 @@ def cargar_productos():
 
 def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
     total_venta = sum(item['subtotal'] for item in st.session_state.carrito)
-    fecha_actual = datetime.datetime.now()
+    fecha_actual = datetime.datetime.now(ZONA_AR)
     ticket_id = "T-" + str(int(fecha_actual.timestamp() * 1000))
     
     if monto_efvo is None and monto_transf is None:
@@ -307,7 +312,7 @@ def mostrar_servicios():
             if monto_carga <= 0:
                 st.error("⚠️ El monto de la carga debe ser mayor a cero.")
             else:
-                fecha = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                fecha = datetime.datetime.now(ZONA_AR).strftime("%d/%m/%Y %H:%M:%S")
                 nueva_carga = pd.DataFrame([{
                     "FECHA": fecha, "SERVICIO": servicio, "MONTO_CARGA": monto_carga,
                     "MONTO_ADICIONAL": monto_adic, "TOTAL_COBRADO": total_cobrar,
@@ -371,7 +376,7 @@ def mostrar_admin_productos():
                             df_actual.at[idx_prod, 'PRECIO_DIA'] = nuevo_precio
                             df_actual.at[idx_prod, 'PRECIO_NOCHE'] = nuevo_precio 
                             df_actual.at[idx_prod, 'MARGEN_%'] = nuevo_margen_calc
-                            df_actual.at[idx_prod, 'FECHA_ACT'] = datetime.datetime.now().strftime("%d/%m/%Y")
+                            df_actual.at[idx_prod, 'FECHA_ACT'] = datetime.datetime.now(ZONA_AR).strftime("%d/%m/%Y")
                             
                             with st.spinner("Guardando en la nube..."):
                                 conn.update(spreadsheet=URL_PLANILLA, worksheet="DB_PRODUCTOS", data=df_actual)
@@ -415,7 +420,7 @@ def mostrar_admin_productos():
                             "ID_PRODUCTO": nuevo_id, "NOMBRE": n_nombre, "CATEGORIA": n_cat, "PROVEEDOR": n_prov,
                             "UNIDAD": n_unidad, "COSTO": n_costo, "MARGEN_%": n_margen, 
                             "PRECIO_DIA": n_precio, "PRECIO_NOCHE": n_precio, 
-                            "FECHA_ACT": datetime.datetime.now().strftime("%d/%m/%Y")
+                            "FECHA_ACT": datetime.datetime.now(ZONA_AR).strftime("%d/%m/%Y")
                         }])
                         with st.spinner("Creando producto..."):
                             conn.update(spreadsheet=URL_PLANILLA, worksheet="DB_PRODUCTOS", data=pd.concat([df_actual, nuevo_registro], ignore_index=True))
@@ -435,7 +440,7 @@ def mostrar_historial():
         with st.container(border=True):
             col1, col2 = st.columns([3, 7])
             with col1:
-                fecha_elegida = st.date_input("🗓️ Filtrar por Día:", datetime.date.today())
+                fecha_elegida = st.date_input("🗓️ Filtrar por Día:", datetime.datetime.now(ZONA_AR).date())
                 palabra_clave = st.text_input("🔍 Buscar producto específico:")
             
             mask_fecha = df_historial['FECHA_REAL'].dt.date == fecha_elegida
@@ -465,7 +470,7 @@ def mostrar_visor():
         
         with st.container(border=True):
             c1, c2, c3 = st.columns([3, 4, 3])
-            fecha_elegida = c2.date_input("📅 Seleccionar fecha a consultar:", datetime.date.today())
+            fecha_elegida = c2.date_input("📅 Seleccionar fecha a consultar:", datetime.datetime.now(ZONA_AR).date())
         
         df_hoy_caja = df_caja[df_caja['FECHA_REAL'].dt.date == fecha_elegida]
         df_hoy_cargas = df_cargas[df_cargas['FECHA_REAL'].dt.date == fecha_elegida]
