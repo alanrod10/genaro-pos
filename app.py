@@ -99,6 +99,11 @@ def inicializar_memoria():
         st.session_state.input_monto_adic = 0
     if 'search_key' not in st.session_state:
         st.session_state.search_key = 0 
+    # Llaves maestras para vaciar formularios en Administración y Preventistas
+    if 'admin_key' not in st.session_state:
+        st.session_state.admin_key = 0
+    if 'prev_key' not in st.session_state:
+        st.session_state.prev_key = 0
 
 inicializar_memoria()
 
@@ -332,6 +337,12 @@ def mostrar_servicios():
 
 def mostrar_admin_productos():
     st.markdown("<h1>⚙️ Gestión de Catálogo</h1>", unsafe_allow_html=True)
+    
+    # Sistema de mensajes que sobrevive al Vaciado Automático
+    if 'admin_msg' in st.session_state:
+        st.success(st.session_state.admin_msg)
+        del st.session_state.admin_msg
+        
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         df_actual = conn.read(spreadsheet=URL_PLANILLA, worksheet="DB_PRODUCTOS", ttl=0).dropna(subset=['NOMBRE'])
@@ -345,7 +356,8 @@ def mostrar_admin_productos():
             with st.container(border=True):
                 st.markdown("### 🔄 ACTUALIZADOR RÁPIDO")
                 lista_productos = sorted(df_actual['NOMBRE'].tolist())
-                producto_seleccionado = st.selectbox("BUSCAR PRODUCTO A MODIFICAR:", [""] + lista_productos)
+                # Con la admin_key forzamos a que el buscador se quede en blanco tras guardar
+                producto_seleccionado = st.selectbox("BUSCAR PRODUCTO A MODIFICAR:", [""] + lista_productos, key=f"mod_sel_{st.session_state.admin_key}")
                 
                 if producto_seleccionado:
                     datos_prod = df_actual[df_actual['NOMBRE'] == producto_seleccionado].iloc[0]
@@ -361,16 +373,16 @@ def mostrar_admin_productos():
                         st.write(f"**Margen:** {float(datos_prod.get('MARGEN_%', 0)) * 100:.2f}%")
                     with c_nuevo:
                         st.write("**✏️ Completar solo si cambia:**")
-                        nuevo_prov = st.text_input("Nuevo Proveedor:", value=datos_prod.get('PROVEEDOR', ''))
-                        nuevo_costo = st.number_input("Nuevo Costo ($):", value=int(datos_prod.get('COSTO', 0)), min_value=0, step=100)
-                        nuevo_precio = st.number_input("Nuevo Precio ($):", value=int(datos_prod.get('PRECIO_DIA', 0)), min_value=0, step=100)
+                        nuevo_prov = st.text_input("Nuevo Proveedor:", value=datos_prod.get('PROVEEDOR', ''), key=f"m_prov_{st.session_state.admin_key}")
+                        nuevo_costo = st.number_input("Nuevo Costo ($):", value=int(datos_prod.get('COSTO', 0)), min_value=0, step=100, key=f"m_cost_{st.session_state.admin_key}")
+                        nuevo_precio = st.number_input("Nuevo Precio ($):", value=int(datos_prod.get('PRECIO_DIA', 0)), min_value=0, step=100, key=f"m_prec_{st.session_state.admin_key}")
                         nuevo_margen_calc = (nuevo_precio - nuevo_costo) / nuevo_costo if nuevo_costo > 0 else 0
                         st.info(f"**Margen Proyectado: {nuevo_margen_calc * 100:.2f}%**")
                     
                     st.write("---")
                     col_btn1, col_btn2 = st.columns(2)
                     with col_btn1:
-                        if st.button("🔄 ACTUALIZAR PRECIOS", type="primary", use_container_width=True):
+                        if st.button("🔄 ACTUALIZAR PRECIOS", type="primary", use_container_width=True, key=f"m_btn_{st.session_state.admin_key}"):
                             df_actual.at[idx_prod, 'PROVEEDOR'] = nuevo_prov
                             df_actual.at[idx_prod, 'COSTO'] = nuevo_costo
                             df_actual.at[idx_prod, 'PRECIO_DIA'] = nuevo_precio
@@ -381,17 +393,19 @@ def mostrar_admin_productos():
                             with st.spinner("Guardando en la nube..."):
                                 conn.update(spreadsheet=URL_PLANILLA, worksheet="DB_PRODUCTOS", data=df_actual)
                                 st.cache_data.clear() 
-                            st.success("¡Actualizado exitosamente!")
+                            st.session_state.admin_msg = "✅ ¡Actualizado exitosamente!"
+                            st.session_state.admin_key += 1
                             st.rerun()
                     with col_btn2:
-                        confirmar = st.checkbox("⚠️ Confirmar borrado")
-                        if st.button("🗑️ ELIMINAR", use_container_width=True):
+                        confirmar = st.checkbox("⚠️ Confirmar borrado", key=f"m_chk_{st.session_state.admin_key}")
+                        if st.button("🗑️ ELIMINAR", use_container_width=True, key=f"m_del_{st.session_state.admin_key}"):
                             if confirmar:
                                 df_actual = df_actual.drop(idx_prod)
                                 with st.spinner("Eliminando..."):
                                     conn.update(spreadsheet=URL_PLANILLA, worksheet="DB_PRODUCTOS", data=df_actual)
                                     st.cache_data.clear()
-                                st.error("Producto eliminado.")
+                                st.session_state.admin_msg = "🗑️ Producto eliminado."
+                                st.session_state.admin_key += 1
                                 st.rerun()
                             else:
                                 st.warning("Debes marcar la casilla.")
@@ -399,17 +413,17 @@ def mostrar_admin_productos():
         with col_der:
             with st.container(border=True):
                 st.markdown("### ➕ ALTA DE PRODUCTO")
-                n_nombre = st.text_input("NOMBRE:")
-                n_cat = st.selectbox("CATEGORÍA:", categorias_unicas + ["OTRO..."])
-                n_prov = st.selectbox("PROVEEDOR:", proveedores_unicos + ["OTRO..."])
-                n_unidad = st.selectbox("UNIDAD:", ["Unidad", "Kg", "Litro"])
-                n_costo = st.number_input("COSTO ($):", min_value=0, step=100, key="new_cost")
-                n_precio = st.number_input("PRECIO VENTA ($):", min_value=0, step=100, key="new_price")
+                n_nombre = st.text_input("NOMBRE:", key=f"n_nom_{st.session_state.admin_key}")
+                n_cat = st.selectbox("CATEGORÍA:", categorias_unicas + ["OTRO..."], key=f"n_cat_{st.session_state.admin_key}")
+                n_prov = st.selectbox("PROVEEDOR:", proveedores_unicos + ["OTRO..."], key=f"n_prov_{st.session_state.admin_key}")
+                n_unidad = st.selectbox("UNIDAD:", ["Unidad", "Kg", "Litro"], key=f"n_uni_{st.session_state.admin_key}")
+                n_costo = st.number_input("COSTO ($):", min_value=0, step=100, key=f"n_cost_{st.session_state.admin_key}")
+                n_precio = st.number_input("PRECIO VENTA ($):", min_value=0, step=100, key=f"n_prec_{st.session_state.admin_key}")
                 
                 n_margen = (n_precio - n_costo) / n_costo if n_costo > 0 else 0
                 st.info(f"**Margen Estimado: {n_margen * 100:.2f}%**")
                 
-                if st.button("➕ CREAR PRODUCTO", type="primary", use_container_width=True):
+                if st.button("➕ CREAR PRODUCTO", type="primary", use_container_width=True, key=f"n_btn_{st.session_state.admin_key}"):
                     if not n_nombre.strip():
                         st.error("⚠️ El nombre es obligatorio.")
                     elif n_precio <= 0:
@@ -425,7 +439,8 @@ def mostrar_admin_productos():
                         with st.spinner("Creando producto..."):
                             conn.update(spreadsheet=URL_PLANILLA, worksheet="DB_PRODUCTOS", data=pd.concat([df_actual, nuevo_registro], ignore_index=True))
                             st.cache_data.clear()
-                        st.success(f"¡{n_nombre} añadido!")
+                        st.session_state.admin_msg = f"✅ ¡{n_nombre} añadido al catálogo!"
+                        st.session_state.admin_key += 1
                         st.rerun()
     except Exception as e:
         st.error(f"Error al cargar el panel de administración.")
@@ -574,41 +589,41 @@ def mostrar_visor():
         st.error("Error cargando el dashboard.")
 
 # ==========================================
-# NUEVO MÓDULO: PREVENTISTAS (Interactivo)
+# NUEVO MÓDULO: PREVENTISTAS (Interactivo + Alta)
 # ==========================================
 def mostrar_preventistas():
     st.markdown("<h1>🚚 Catálogo por Preventista</h1>", unsafe_allow_html=True)
-    st.write("Selecciona un proveedor, revisa su lista y **haz doble clic en los precios para editarlos al instante.**")
+    st.write("Selecciona un proveedor, edita los precios directamente en la tabla o da de alta un producto nuevo.")
     
+    # Sistema de mensajes que sobrevive al Vaciado Automático
+    if 'prev_msg' in st.session_state:
+        st.success(st.session_state.prev_msg)
+        del st.session_state.prev_msg
+        
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         df_productos = conn.read(spreadsheet=URL_PLANILLA, worksheet="DB_PRODUCTOS", ttl=0).dropna(subset=['NOMBRE'])
         
         if not df_productos.empty:
             proveedores_unicos = sorted(df_productos['PROVEEDOR'].dropna().unique().tolist())
+            categorias_unicas = sorted(df_productos['CATEGORIA'].dropna().unique().tolist())
             
             with st.container(border=True):
                 proveedor_elegido = st.selectbox("👤 Seleccionar Preventista / Proveedor:", [""] + proveedores_unicos)
                 
                 if proveedor_elegido:
                     df_filtrado = df_productos[df_productos['PROVEEDOR'] == proveedor_elegido]
-                    
                     st.write(f"### Productos de: **{proveedor_elegido}** ({len(df_filtrado)} ítems)")
-                    st.info("💡 Tip: Edita el Costo o el Precio. El porcentaje de Ganancia se recalculará automáticamente al guardar.")
                     
-                    # Preparar tabla para edición agregando el Margen
                     columnas_mostrar = ['NOMBRE', 'COSTO', 'PRECIO_DIA', 'MARGEN_%']
                     df_edicion = df_filtrado[columnas_mostrar].copy()
-                    
-                    # Convertir el margen de 0.20 a 20.0 para que sea visualmente claro
                     df_edicion['MARGEN_%'] = (pd.to_numeric(df_edicion['MARGEN_%'], errors='coerce').fillna(0) * 100).round(1)
                     
-                    # Renderizar la tabla interactiva (data_editor)
                     edited_df = st.data_editor(
                         df_edicion,
                         use_container_width=True,
                         hide_index=True,
-                        disabled=["NOMBRE", "MARGEN_%"], # Se bloquean para evitar accidentes
+                        disabled=["NOMBRE", "MARGEN_%"], 
                         column_config={
                             "NOMBRE": st.column_config.TextColumn("PRODUCTO"),
                             "COSTO": st.column_config.NumberColumn("COSTO ($)", min_value=0, step=100),
@@ -617,38 +632,65 @@ def mostrar_preventistas():
                         }
                     )
                     
-                    st.write("---")
                     if st.button("💾 Guardar Nuevos Precios", type="primary", use_container_width=True):
                         with st.spinner("Actualizando catálogo en la nube..."):
                             cambios_realizados = False
-                            
                             for idx, row in edited_df.iterrows():
                                 n_costo = float(row['COSTO'])
                                 n_precio = float(row['PRECIO_DIA'])
-                                
                                 c_viejo = float(df_filtrado.loc[idx, 'COSTO'])
                                 p_viejo = float(df_filtrado.loc[idx, 'PRECIO_DIA'])
                                 
-                                # Si cambió el costo o el precio, recalculamos y guardamos
                                 if n_costo != c_viejo or n_precio != p_viejo:
                                     df_productos.at[idx, 'COSTO'] = n_costo
                                     df_productos.at[idx, 'PRECIO_DIA'] = n_precio
                                     df_productos.at[idx, 'PRECIO_NOCHE'] = n_precio
-                                    
-                                    # Recalcular el margen real internamente (ej: 0.20)
                                     n_margen = (n_precio - n_costo) / n_costo if n_costo > 0 else 0
                                     df_productos.at[idx, 'MARGEN_%'] = n_margen
                                     df_productos.at[idx, 'FECHA_ACT'] = datetime.datetime.now(ZONA_AR).strftime("%d/%m/%Y")
-                                    
                                     cambios_realizados = True
                             
                             if cambios_realizados:
                                 conn.update(spreadsheet=URL_PLANILLA, worksheet="DB_PRODUCTOS", data=df_productos)
                                 st.cache_data.clear()
-                                st.success("✅ ¡Los precios de este proveedor fueron actualizados exitosamente!")
+                                st.session_state.prev_msg = "✅ ¡Los precios de este proveedor fueron actualizados!"
                                 st.rerun()
                             else:
                                 st.warning("No detecté ninguna modificación en los números.")
+                    
+                    # ---------------- ALTA RÁPIDA DE PRODUCTOS (PREVENTISTAS) ----------------
+                    st.write("---")
+                    with st.expander(f"➕ Alta rápida de producto para {proveedor_elegido}"):
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            p_nombre = st.text_input("NOMBRE DEL PRODUCTO:", key=f"p_nom_{st.session_state.prev_key}")
+                            p_cat = st.selectbox("CATEGORÍA:", categorias_unicas + ["OTRO..."], key=f"p_cat_{st.session_state.prev_key}")
+                            p_unidad = st.selectbox("UNIDAD:", ["Unidad", "Kg", "Litro"], key=f"p_uni_{st.session_state.prev_key}")
+                        with c2:
+                            p_costo = st.number_input("COSTO ($):", min_value=0, step=100, key=f"p_cost_{st.session_state.prev_key}")
+                            p_precio = st.number_input("PRECIO VENTA ($):", min_value=0, step=100, key=f"p_prec_{st.session_state.prev_key}")
+                            p_margen = (p_precio - p_costo) / p_costo if p_costo > 0 else 0
+                            st.info(f"**Margen Estimado: {p_margen * 100:.2f}%**")
+                            
+                        if st.button("➕ GUARDAR NUEVO PRODUCTO", type="primary", use_container_width=True, key=f"btn_p_add_{st.session_state.prev_key}"):
+                            if not p_nombre.strip():
+                                st.error("⚠️ El nombre es obligatorio.")
+                            elif p_precio <= 0:
+                                st.error("⚠️ El precio debe ser mayor a 0.")
+                            else:
+                                nuevo_id = df_productos['ID_PRODUCTO'].max() + 1 if not df_productos.empty else 1
+                                nuevo_registro = pd.DataFrame([{
+                                    "ID_PRODUCTO": nuevo_id, "NOMBRE": p_nombre, "CATEGORIA": p_cat, "PROVEEDOR": proveedor_elegido,
+                                    "UNIDAD": p_unidad, "COSTO": p_costo, "MARGEN_%": p_margen, 
+                                    "PRECIO_DIA": p_precio, "PRECIO_NOCHE": p_precio, 
+                                    "FECHA_ACT": datetime.datetime.now(ZONA_AR).strftime("%d/%m/%Y")
+                                }])
+                                with st.spinner("Creando producto..."):
+                                    conn.update(spreadsheet=URL_PLANILLA, worksheet="DB_PRODUCTOS", data=pd.concat([df_productos, nuevo_registro], ignore_index=True))
+                                    st.cache_data.clear()
+                                st.session_state.prev_msg = f"✅ ¡{p_nombre} añadido al catálogo de {proveedor_elegido}!"
+                                st.session_state.prev_key += 1
+                                st.rerun()
                                 
         else:
             st.warning("No hay productos cargados en la base de datos.")
