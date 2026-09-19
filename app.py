@@ -99,7 +99,6 @@ def inicializar_memoria():
         st.session_state.input_monto_adic = 0
     if 'search_key' not in st.session_state:
         st.session_state.search_key = 0 
-    # Llaves maestras para vaciar formularios en Administración y Preventistas
     if 'admin_key' not in st.session_state:
         st.session_state.admin_key = 0
     if 'prev_key' not in st.session_state:
@@ -338,7 +337,6 @@ def mostrar_servicios():
 def mostrar_admin_productos():
     st.markdown("<h1>⚙️ Gestión de Catálogo</h1>", unsafe_allow_html=True)
     
-    # Sistema de mensajes que sobrevive al Vaciado Automático
     if 'admin_msg' in st.session_state:
         st.success(st.session_state.admin_msg)
         del st.session_state.admin_msg
@@ -356,7 +354,6 @@ def mostrar_admin_productos():
             with st.container(border=True):
                 st.markdown("### 🔄 ACTUALIZADOR RÁPIDO")
                 lista_productos = sorted(df_actual['NOMBRE'].tolist())
-                # Con la admin_key forzamos a que el buscador se quede en blanco tras guardar
                 producto_seleccionado = st.selectbox("BUSCAR PRODUCTO A MODIFICAR:", [""] + lista_productos, key=f"mod_sel_{st.session_state.admin_key}")
                 
                 if producto_seleccionado:
@@ -595,7 +592,6 @@ def mostrar_preventistas():
     st.markdown("<h1>🚚 Catálogo por Preventista</h1>", unsafe_allow_html=True)
     st.write("Selecciona un proveedor, edita los precios directamente en la tabla o da de alta un producto nuevo.")
     
-    # Sistema de mensajes que sobrevive al Vaciado Automático
     if 'prev_msg' in st.session_state:
         st.success(st.session_state.prev_msg)
         del st.session_state.prev_msg
@@ -614,13 +610,35 @@ def mostrar_preventistas():
                 if proveedor_elegido:
                     df_filtrado = df_productos[df_productos['PROVEEDOR'] == proveedor_elegido]
                     st.write(f"### Productos de: **{proveedor_elegido}** ({len(df_filtrado)} ítems)")
+                    st.info("💡 **Tip:** Edita el Costo o el Precio y presiona Enter (o toca afuera de la celda). Verás cómo el porcentaje de Ganancia se recalcula **en vivo** en la tabla.")
                     
                     columnas_mostrar = ['NOMBRE', 'COSTO', 'PRECIO_DIA', 'MARGEN_%']
                     df_edicion = df_filtrado[columnas_mostrar].copy()
                     df_edicion['MARGEN_%'] = (pd.to_numeric(df_edicion['MARGEN_%'], errors='coerce').fillna(0) * 100).round(1)
                     
+                    editor_key = f"ed_prev_{st.session_state.prev_key}_{proveedor_elegido}"
+                    
+                    # ⚡ TRUCO DE CÁLCULO EN VIVO ⚡
+                    # Interceptamos lo que el usuario escribió antes de que se dibuje la tabla
+                    if editor_key in st.session_state:
+                        cambios_en_vivo = st.session_state[editor_key].get("edited_rows", {})
+                        for row_pos_str, mods in cambios_en_vivo.items():
+                            row_pos = int(row_pos_str)
+                            if row_pos < len(df_edicion):
+                                real_idx = df_edicion.index[row_pos]
+                                c_val = mods.get("COSTO", df_edicion.at[real_idx, "COSTO"])
+                                p_val = mods.get("PRECIO_DIA", df_edicion.at[real_idx, "PRECIO_DIA"])
+                                
+                                if c_val > 0:
+                                    calc_margen = ((p_val - c_val) / c_val) * 100
+                                else:
+                                    calc_margen = 0.0
+                                    
+                                df_edicion.at[real_idx, "MARGEN_%"] = round(calc_margen, 1)
+
                     edited_df = st.data_editor(
                         df_edicion,
+                        key=editor_key,
                         use_container_width=True,
                         hide_index=True,
                         disabled=["NOMBRE", "MARGEN_%"], 
@@ -654,6 +672,7 @@ def mostrar_preventistas():
                                 conn.update(spreadsheet=URL_PLANILLA, worksheet="DB_PRODUCTOS", data=df_productos)
                                 st.cache_data.clear()
                                 st.session_state.prev_msg = "✅ ¡Los precios de este proveedor fueron actualizados!"
+                                st.session_state.prev_key += 1
                                 st.rerun()
                             else:
                                 st.warning("No detecté ninguna modificación en los números.")
