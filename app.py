@@ -574,31 +574,87 @@ def mostrar_visor():
         st.error("Error cargando el dashboard.")
 
 # ==========================================
-# NUEVO MÓDULO: PREVENTISTAS
+# NUEVO MÓDULO: PREVENTISTAS (Interactivo)
 # ==========================================
 def mostrar_preventistas():
     st.markdown("<h1>🚚 Catálogo por Preventista</h1>", unsafe_allow_html=True)
-    st.write("Selecciona un proveedor para ver su lista de precios y armar el pedido.")
+    st.write("Selecciona un proveedor, revisa su lista y **haz doble clic en los precios para editarlos al instante.**")
     
-    df_productos = cargar_productos()
-    
-    if not df_productos.empty:
-        # Extraer proveedores únicos ignorando los valores vacíos
-        proveedores_unicos = sorted(df_productos['PROVEEDOR'].dropna().unique().tolist())
+    try:
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        df_productos = conn.read(spreadsheet=URL_PLANILLA, worksheet="DB_PRODUCTOS", ttl=0).dropna(subset=['NOMBRE'])
         
-        with st.container(border=True):
-            proveedor_elegido = st.selectbox("👤 Seleccionar Preventista / Proveedor:", [""] + proveedores_unicos)
+        if not df_productos.empty:
+            proveedores_unicos = sorted(df_productos['PROVEEDOR'].dropna().unique().tolist())
             
-            if proveedor_elegido:
-                df_filtrado = df_productos[df_productos['PROVEEDOR'] == proveedor_elegido]
+            with st.container(border=True):
+                proveedor_elegido = st.selectbox("👤 Seleccionar Preventista / Proveedor:", [""] + proveedores_unicos)
                 
-                st.write(f"### Productos de: **{proveedor_elegido}** ({len(df_filtrado)} ítems en stock)")
-                
-                # Columnas más relevantes para hacer el pedido al proveedor
-                columnas_mostrar = ['NOMBRE', 'CATEGORIA', 'COSTO', 'PRECIO_DIA']
-                st.dataframe(df_filtrado[columnas_mostrar], use_container_width=True, hide_index=True)
-    else:
-        st.warning("No hay productos cargados en la base de datos.")
+                if proveedor_elegido:
+                    df_filtrado = df_productos[df_productos['PROVEEDOR'] == proveedor_elegido]
+                    
+                    st.write(f"### Productos de: **{proveedor_elegido}** ({len(df_filtrado)} ítems)")
+                    st.info("💡 Tip: Edita el Costo o el Precio. El porcentaje de Ganancia se recalculará automáticamente al guardar.")
+                    
+                    # Preparar tabla para edición agregando el Margen
+                    columnas_mostrar = ['NOMBRE', 'COSTO', 'PRECIO_DIA', 'MARGEN_%']
+                    df_edicion = df_filtrado[columnas_mostrar].copy()
+                    
+                    # Convertir el margen de 0.20 a 20.0 para que sea visualmente claro
+                    df_edicion['MARGEN_%'] = (pd.to_numeric(df_edicion['MARGEN_%'], errors='coerce').fillna(0) * 100).round(1)
+                    
+                    # Renderizar la tabla interactiva (data_editor)
+                    edited_df = st.data_editor(
+                        df_edicion,
+                        use_container_width=True,
+                        hide_index=True,
+                        disabled=["NOMBRE", "MARGEN_%"], # Se bloquean para evitar accidentes
+                        column_config={
+                            "NOMBRE": st.column_config.TextColumn("PRODUCTO"),
+                            "COSTO": st.column_config.NumberColumn("COSTO ($)", min_value=0, step=100),
+                            "PRECIO_DIA": st.column_config.NumberColumn("PRECIO VENTA ($)", min_value=0, step=100),
+                            "MARGEN_%": st.column_config.NumberColumn("GANANCIA (%)", format="%.1f %%")
+                        }
+                    )
+                    
+                    st.write("---")
+                    if st.button("💾 Guardar Nuevos Precios", type="primary", use_container_width=True):
+                        with st.spinner("Actualizando catálogo en la nube..."):
+                            cambios_realizados = False
+                            
+                            for idx, row in edited_df.iterrows():
+                                n_costo = float(row['COSTO'])
+                                n_precio = float(row['PRECIO_DIA'])
+                                
+                                c_viejo = float(df_filtrado.loc[idx, 'COSTO'])
+                                p_viejo = float(df_filtrado.loc[idx, 'PRECIO_DIA'])
+                                
+                                # Si cambió el costo o el precio, recalculamos y guardamos
+                                if n_costo != c_viejo or n_precio != p_viejo:
+                                    df_productos.at[idx, 'COSTO'] = n_costo
+                                    df_productos.at[idx, 'PRECIO_DIA'] = n_precio
+                                    df_productos.at[idx, 'PRECIO_NOCHE'] = n_precio
+                                    
+                                    # Recalcular el margen real internamente (ej: 0.20)
+                                    n_margen = (n_precio - n_costo) / n_costo if n_costo > 0 else 0
+                                    df_productos.at[idx, 'MARGEN_%'] = n_margen
+                                    df_productos.at[idx, 'FECHA_ACT'] = datetime.datetime.now(ZONA_AR).strftime("%d/%m/%Y")
+                                    
+                                    cambios_realizados = True
+                            
+                            if cambios_realizados:
+                                conn.update(spreadsheet=URL_PLANILLA, worksheet="DB_PRODUCTOS", data=df_productos)
+                                st.cache_data.clear()
+                                st.success("✅ ¡Los precios de este proveedor fueron actualizados exitosamente!")
+                                st.rerun()
+                            else:
+                                st.warning("No detecté ninguna modificación en los números.")
+                                
+        else:
+            st.warning("No hay productos cargados en la base de datos.")
+            
+    except Exception as e:
+        st.error(f"Error al cargar el módulo de preventistas.")
 
 # ==========================================
 # 6. ENRUTADOR PRINCIPAL (MENÚ LATERAL)
