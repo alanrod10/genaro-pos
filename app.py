@@ -452,8 +452,19 @@ def mostrar_historial():
             with col2:
                 columnas_mostrar = ['FECHA', 'TICKET_ID', 'PRODUCTO', 'CANTIDAD', 'SUBTOTAL', 'METODO_PAGO']
                 st.dataframe(df_filtrado[columnas_mostrar], use_container_width=True, hide_index=True)
+                
+                # Desglose de las nuevas métricas solicitadas
                 total_items = df_filtrado['SUBTOTAL'].sum()
-                st.metric(label=f"Total Filtrado ({fecha_elegida.strftime('%d/%m/%Y')})", value=f"${total_items:,.0f}")
+                total_efvo = df_filtrado[df_filtrado['METODO_PAGO'] == 'EFECTIVO']['SUBTOTAL'].sum()
+                total_transf = df_filtrado[df_filtrado['METODO_PAGO'] == 'TRANSFERENCIA']['SUBTOTAL'].sum()
+                total_mixto = df_filtrado[df_filtrado['METODO_PAGO'] == 'MIXTO']['SUBTOTAL'].sum()
+                
+                st.write("---")
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric(label=f"💰 TOTAL FILTRADO", value=f"${int(total_items):,.0f}")
+                m2.metric(label="💵 En Efectivo", value=f"${int(total_efvo):,.0f}")
+                m3.metric(label="📱 En Transf.", value=f"${int(total_transf):,.0f}")
+                m4.metric(label="💳 Pago Mixto", value=f"${int(total_mixto):,.0f}")
             
     except Exception as e:
         st.error("No se pudo cargar el historial.")
