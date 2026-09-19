@@ -453,7 +453,6 @@ def mostrar_historial():
                 columnas_mostrar = ['FECHA', 'TICKET_ID', 'PRODUCTO', 'CANTIDAD', 'SUBTOTAL', 'METODO_PAGO']
                 st.dataframe(df_filtrado[columnas_mostrar], use_container_width=True, hide_index=True)
                 
-                # Desglose de las nuevas métricas solicitadas
                 total_items = df_filtrado['SUBTOTAL'].sum()
                 total_efvo = df_filtrado[df_filtrado['METODO_PAGO'] == 'EFECTIVO']['SUBTOTAL'].sum()
                 total_transf = df_filtrado[df_filtrado['METODO_PAGO'] == 'TRANSFERENCIA']['SUBTOTAL'].sum()
@@ -575,6 +574,33 @@ def mostrar_visor():
         st.error("Error cargando el dashboard.")
 
 # ==========================================
+# NUEVO MÓDULO: PREVENTISTAS
+# ==========================================
+def mostrar_preventistas():
+    st.markdown("<h1>🚚 Catálogo por Preventista</h1>", unsafe_allow_html=True)
+    st.write("Selecciona un proveedor para ver su lista de precios y armar el pedido.")
+    
+    df_productos = cargar_productos()
+    
+    if not df_productos.empty:
+        # Extraer proveedores únicos ignorando los valores vacíos
+        proveedores_unicos = sorted(df_productos['PROVEEDOR'].dropna().unique().tolist())
+        
+        with st.container(border=True):
+            proveedor_elegido = st.selectbox("👤 Seleccionar Preventista / Proveedor:", [""] + proveedores_unicos)
+            
+            if proveedor_elegido:
+                df_filtrado = df_productos[df_productos['PROVEEDOR'] == proveedor_elegido]
+                
+                st.write(f"### Productos de: **{proveedor_elegido}** ({len(df_filtrado)} ítems en stock)")
+                
+                # Columnas más relevantes para hacer el pedido al proveedor
+                columnas_mostrar = ['NOMBRE', 'CATEGORIA', 'COSTO', 'PRECIO_DIA']
+                st.dataframe(df_filtrado[columnas_mostrar], use_container_width=True, hide_index=True)
+    else:
+        st.warning("No hay productos cargados en la base de datos.")
+
+# ==========================================
 # 6. ENRUTADOR PRINCIPAL (MENÚ LATERAL)
 # ==========================================
 st.sidebar.image("https://cdn-icons-png.flaticon.com/512/3514/3514491.png", width=120) 
@@ -585,7 +611,8 @@ menu = st.sidebar.radio("Navegación", [
     "📱 Servicios", 
     "⚙️ Admin Productos",
     "📜 Historial de Ítems",
-    "📊 Visor (Dashboard)"
+    "📊 Visor (Dashboard)",
+    "🚚 Preventistas"
 ])
 
 if menu == "🛒 Caja":
@@ -598,3 +625,5 @@ elif menu == "📜 Historial de Ítems":
     mostrar_historial()
 elif menu == "📊 Visor (Dashboard)":
     mostrar_visor()
+elif menu == "🚚 Preventistas":
+    mostrar_preventistas()
