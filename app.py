@@ -23,94 +23,257 @@ st.set_page_config(
     page_title="Genaro POS",
     page_icon="🛒",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 
 def aplicar_estilos_profesionales():
-    """Estilos globales. No modifica la lógica ni el flujo de uso."""
+    """Sistema visual global del POS: moderno, compacto, legible y responsive."""
     st.markdown(
         """
         <style>
-        /* ---------- Base ---------- */
+        /* ======================================================
+           GENARO POS — SISTEMA VISUAL GLOBAL
+           ====================================================== */
+
+        :root {
+            --genaro-bg: #f4f6f8;
+            --genaro-surface: #ffffff;
+            --genaro-border: rgba(15, 23, 42, 0.10);
+            --genaro-text: #111827;
+            --genaro-muted: #64748b;
+            --genaro-primary: #2563eb;
+            --genaro-primary-dark: #1d4ed8;
+            --genaro-radius: 16px;
+            --genaro-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+        }
+
+        /* ---------- Lienzo principal: máxima superficie útil ---------- */
+        [data-testid="stAppViewContainer"] {
+            background: var(--genaro-bg);
+        }
+
+        [data-testid="stAppViewContainer"] .main {
+            background: var(--genaro-bg);
+        }
+
+        [data-testid="stMainBlockContainer"] {
+            max-width: 100% !important;
+            width: 100% !important;
+            padding-top: 1rem !important;
+            padding-bottom: 2rem !important;
+            padding-left: clamp(0.9rem, 2vw, 2rem) !important;
+            padding-right: clamp(0.9rem, 2vw, 2rem) !important;
+        }
+
+        /* Fallback para versiones de Streamlit que usan esta clase */
         .main .block-container {
-            padding-top: 1.35rem;
-            padding-bottom: 2rem;
-            max-width: 1500px;
+            max-width: 100% !important;
+            padding-top: 1rem !important;
+            padding-bottom: 2rem !important;
+            padding-left: clamp(0.9rem, 2vw, 2rem) !important;
+            padding-right: clamp(0.9rem, 2vw, 2rem) !important;
         }
 
         html, body, [class*="css"] {
-            font-family: "Montserrat", "Segoe UI", Arial, sans-serif;
+            font-family: "Segoe UI", Arial, sans-serif;
+            color: var(--genaro-text);
         }
 
-        h1, h2, h3 {
-            letter-spacing: -0.02em;
+        /* ---------- Títulos de módulos ---------- */
+        h1 {
+            font-size: clamp(1.8rem, 2.5vw, 2.45rem) !important;
+            font-weight: 800 !important;
+            letter-spacing: -0.035em !important;
+            color: #0f172a !important;
+            margin-bottom: 0.75rem !important;
+        }
+
+        h2, h3 {
+            letter-spacing: -0.025em !important;
+            color: #0f172a !important;
         }
 
         /* ---------- Sidebar ---------- */
         section[data-testid="stSidebar"] {
-            border-right: 1px solid rgba(128, 128, 128, 0.20);
+            background: linear-gradient(180deg, #0f172a 0%, #162033 100%);
+            border-right: 1px solid rgba(255,255,255,0.08);
         }
 
-        section[data-testid="stSidebar"] .stRadio label {
-            font-weight: 600;
+        section[data-testid="stSidebar"] > div {
+            padding-top: 1rem;
+        }
+
+        section[data-testid="stSidebar"] img {
+            display: block;
+            margin: 0 auto 0.65rem auto;
+            max-width: 86px;
+            border-radius: 18px;
+        }
+
+        section[data-testid="stSidebar"] h1,
+        section[data-testid="stSidebar"] h2,
+        section[data-testid="stSidebar"] h3,
+        section[data-testid="stSidebar"] p,
+        section[data-testid="stSidebar"] label {
+            color: #f8fafc !important;
+        }
+
+        section[data-testid="stSidebar"] .stRadio > label {
+            font-weight: 800 !important;
+            font-size: 0.88rem !important;
+        }
+
+        section[data-testid="stSidebar"] [role="radiogroup"] {
+            gap: 0.32rem;
+        }
+
+        section[data-testid="stSidebar"] [role="radiogroup"] label {
+            border-radius: 12px;
+            padding: 0.38rem 0.55rem;
+            transition: all 0.15s ease;
+        }
+
+        section[data-testid="stSidebar"] [role="radiogroup"] label:hover {
+            background: rgba(255,255,255,0.08);
+        }
+
+        /* ---------- Contenedores ---------- */
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            background: var(--genaro-surface);
+            border: 1px solid var(--genaro-border) !important;
+            border-radius: var(--genaro-radius) !important;
+            box-shadow: var(--genaro-shadow);
         }
 
         /* ---------- Botones ---------- */
         div.stButton > button {
-            border-radius: 10px;
             min-height: 42px;
-            font-weight: 700;
-            transition: transform 0.10s ease, box-shadow 0.10s ease;
+            border-radius: 11px !important;
+            font-weight: 750 !important;
+            border: 1px solid rgba(15,23,42,0.10) !important;
+            transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
         }
 
         div.stButton > button:hover {
             transform: translateY(-1px);
-            box-shadow: 0 5px 14px rgba(0, 0, 0, 0.10);
+            box-shadow: 0 7px 18px rgba(15, 23, 42, 0.10);
         }
 
-        /* ---------- Inputs ---------- */
+        div.stButton > button[kind="primary"] {
+            background: linear-gradient(135deg, var(--genaro-primary), var(--genaro-primary-dark));
+            border-color: transparent !important;
+            color: #ffffff !important;
+        }
+
+        div.stButton > button[kind="primary"]:hover {
+            filter: brightness(1.03);
+        }
+
+        /* ---------- Inputs / Selectores ---------- */
         div[data-baseweb="input"] > div,
-        div[data-baseweb="select"] > div {
-            border-radius: 9px;
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="textarea"] > div {
+            border-radius: 10px !important;
+            border-color: rgba(15,23,42,0.14) !important;
+            background: #ffffff !important;
         }
 
-        /* ---------- Cards nativas ---------- */
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            border-radius: 12px;
+        div[data-baseweb="input"] input,
+        div[data-baseweb="textarea"] textarea {
+            color: #0f172a !important;
+            font-weight: 550;
+        }
+
+        /* ---------- Radio / Checkbox / Expander ---------- */
+        div[data-testid="stExpander"] {
+            border: 1px solid var(--genaro-border) !important;
+            border-radius: 13px !important;
+            background: rgba(255,255,255,0.72);
+        }
+
+        div[data-testid="stCheckbox"] label,
+        div[data-testid="stRadio"] label {
+            font-weight: 550;
         }
 
         /* ---------- Métricas ---------- */
+        div[data-testid="stMetric"] {
+            background: #ffffff;
+            border: 1px solid var(--genaro-border);
+            border-radius: 14px;
+            padding: 0.7rem 0.85rem;
+            box-shadow: 0 5px 18px rgba(15, 23, 42, 0.045);
+        }
+
+        div[data-testid="stMetricLabel"] {
+            color: var(--genaro-muted);
+            font-weight: 700;
+        }
+
         div[data-testid="stMetricValue"] {
-            font-weight: 800;
-            letter-spacing: -0.03em;
+            font-weight: 850 !important;
+            letter-spacing: -0.04em;
+            color: #0f172a;
         }
 
-        /* ---------- Data editors ---------- */
+        /* ---------- Tablas y Data Editor ---------- */
         div[data-testid="stDataEditor"] {
-            border-radius: 10px;
+            border-radius: 12px;
             overflow: hidden;
+            border: 1px solid rgba(15,23,42,0.10);
+            box-shadow: 0 4px 14px rgba(15,23,42,0.04);
+            background: #ffffff;
         }
 
-        /* ---------- Mensajes ---------- */
+        /* ---------- Alertas ---------- */
         div[data-testid="stAlert"] {
-            border-radius: 10px;
+            border-radius: 11px !important;
         }
 
         /* ---------- Divisores ---------- */
         hr {
-            margin-top: 0.65rem;
-            margin-bottom: 0.65rem;
+            margin-top: 0.65rem !important;
+            margin-bottom: 0.65rem !important;
+            border-color: rgba(15,23,42,0.09) !important;
         }
 
-        /* ---------- Footer ---------- */
+        /* ---------- Tooltips / texto secundario ---------- */
+        [data-testid="stCaptionContainer"] {
+            color: var(--genaro-muted);
+        }
+
+        /* ---------- Scrollbar más discreto ---------- */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 20px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        /* ---------- Footer / decoración nativa ---------- */
         footer {
             visibility: hidden;
         }
 
-        /* Evita que el contenido HTML del visor provoque scroll horizontal */
-        .visor-grid-wrapper {
-            width: 100%;
-            overflow-x: auto;
+        /* ---------- Responsive ---------- */
+        @media (max-width: 900px) {
+            [data-testid="stMainBlockContainer"],
+            .main .block-container {
+                padding-left: 0.75rem !important;
+                padding-right: 0.75rem !important;
+            }
+
+            div[data-testid="stMetric"] {
+                padding: 0.55rem 0.7rem;
+            }
         }
         </style>
         """,
@@ -434,6 +597,7 @@ def calcular_recargo_automatico():
 # ==========================================
 def mostrar_caja():
     st.title("🛒 Caja Registradora")
+    st.caption("Punto de venta · búsqueda rápida · cobro en efectivo, transferencia o mixto")
 
     df_productos = cargar_productos()
 
@@ -569,6 +733,7 @@ def mostrar_caja():
 # ==========================================
 def mostrar_servicios():
     st.title("📱 Cargas y Servicios")
+    st.caption("Recargas virtuales y servicios con cálculo automático del adicional")
 
     with st.container(border=True):
         st.write(
@@ -700,6 +865,7 @@ def mostrar_servicios():
 # ==========================================
 def mostrar_historial_cargas():
     st.title("📋 Historial de Cargas")
+    st.caption("Auditoría y corrección de cargas registradas")
 
     if "cargas_msg" in st.session_state:
         st.success(st.session_state.cargas_msg)
@@ -817,6 +983,7 @@ def siguiente_id_producto(df):
 
 def mostrar_admin_productos():
     st.title("⚙️ Gestión de Catálogo")
+    st.caption("Actualización rápida, altas y bajas del catálogo")
 
     if "admin_msg" in st.session_state:
         st.success(st.session_state.admin_msg)
@@ -1087,6 +1254,7 @@ def mostrar_admin_productos():
 # ==========================================
 def mostrar_historial():
     st.title("📜 Historial de Ítems")
+    st.caption("Auditoría de ventas y recalculo automático de caja")
 
     if "hist_msg" in st.session_state:
         st.success(st.session_state.hist_msg)
@@ -1334,45 +1502,62 @@ def mostrar_visor():
     st.markdown(
         """
         <style>
+        /* ======================================================
+           VISOR — DASHBOARD MODERNO
+           ====================================================== */
         .visor-title {
-            font-size: 32px;
-            font-weight: 800;
-            margin: 0 0 18px 0;
-            color: #111111;
+            font-size: clamp(1.8rem, 2.8vw, 2.5rem);
+            font-weight: 850;
+            letter-spacing: -0.045em;
+            margin: 0 0 0.9rem 0;
+            color: #0f172a;
+        }
+
+        .visor-grid-wrapper {
+            width: 100%;
+            overflow-x: auto;
+            padding: 2px;
         }
 
         .visor-grid {
             display: grid;
             grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-            column-gap: 13%;
-            row-gap: 30px;
+            column-gap: 22px;
+            row-gap: 22px;
             width: 100%;
-            min-width: 900px;
-            margin-top: 10px;
+            margin-top: 8px;
         }
 
         .visor-card {
-            border: 4px solid #b7b7b7;
+            border: 1px solid rgba(15, 23, 42, 0.12);
             background: #ffffff;
             overflow: hidden;
             box-sizing: border-box;
             width: 100%;
-            border-radius: 2px;
+            border-radius: 16px;
+            box-shadow: 0 7px 22px rgba(15, 23, 42, 0.07);
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .visor-card:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 11px 28px rgba(15, 23, 42, 0.10);
         }
 
         .visor-header {
-            min-height: 46px;
+            min-height: 50px;
             display: flex;
             align-items: center;
-            padding: 5px 10px;
+            padding: 7px 13px;
             box-sizing: border-box;
-            font-size: clamp(20px, 1.55vw, 29px);
-            font-weight: 800;
+            font-size: clamp(19px, 1.45vw, 27px);
+            font-weight: 850;
             line-height: 1.05;
+            letter-spacing: -0.025em;
         }
 
         .visor-body {
-            padding: 7px 10px 0 10px;
+            padding: 9px 13px 0 13px;
             box-sizing: border-box;
         }
 
@@ -1380,62 +1565,71 @@ def mostrar_visor():
             display: grid;
             grid-template-columns: minmax(0, 1fr) auto;
             align-items: center;
-            min-height: 39px;
-            font-size: clamp(18px, 1.35vw, 26px);
+            min-height: 40px;
+            font-size: clamp(17px, 1.22vw, 23px);
             line-height: 1.05;
-            color: #111111;
+            color: #111827;
             column-gap: 12px;
         }
 
         .visor-label {
             white-space: nowrap;
+            font-weight: 540;
         }
 
         .visor-value {
             text-align: right;
             white-space: nowrap;
             font-variant-numeric: tabular-nums;
+            font-weight: 600;
         }
 
         .visor-separator {
-            height: 5px;
-            background: #b7b7b7;
-            margin-top: 4px;
+            height: 1px;
+            background: rgba(15, 23, 42, 0.14);
+            margin-top: 5px;
         }
 
         .visor-total {
             display: grid;
             grid-template-columns: minmax(0, 1fr) auto;
             align-items: center;
-            min-height: 67px;
-            font-size: clamp(19px, 1.40vw, 27px);
+            min-height: 70px;
+            font-size: clamp(18px, 1.28vw, 25px);
             line-height: 1.05;
-            color: #111111;
+            color: #111827;
             column-gap: 12px;
         }
 
         .visor-total-label {
-            font-weight: 400;
+            font-weight: 700;
         }
 
         .visor-total-value {
-            font-size: clamp(29px, 2.1vw, 40px);
+            font-size: clamp(29px, 2.15vw, 40px);
             font-weight: 900;
             text-align: right;
             white-space: nowrap;
             font-variant-numeric: tabular-nums;
+            letter-spacing: -0.045em;
         }
 
         .visor-profit {
             display: grid;
             grid-template-columns: minmax(0, 1fr) auto;
-            align-items: center;
-            min-height: 45px;
-            border-top: 5px solid #b7b7b7;
-            font-size: clamp(18px, 1.18vw, 23px);
+            align-items: stretch;
+            min-height: 48px;
+            border-top: 1px solid rgba(15, 23, 42, 0.14);
+            font-size: clamp(16px, 1.06vw, 20px);
             font-weight: 800;
             line-height: 1.05;
             color: #5f666d;
+        }
+
+        .visor-profit > div:first-child {
+            display: flex;
+            align-items: center;
+            padding-left: 2px;
         }
 
         .visor-profit-value {
@@ -1443,34 +1637,34 @@ def mostrar_visor():
             display: flex;
             align-items: center;
             justify-content: flex-end;
-            padding: 0 10px;
-            min-width: 215px;
+            padding: 0 12px;
+            min-width: 175px;
             box-sizing: border-box;
             color: #ffffff;
-            font-size: clamp(24px, 1.65vw, 29px);
+            font-size: clamp(23px, 1.48vw, 29px);
             font-weight: 900;
             white-space: nowrap;
             font-variant-numeric: tabular-nums;
+            letter-spacing: -0.03em;
         }
 
         .visor-secondary {
             display: flex;
             justify-content: flex-end;
             align-items: center;
-            min-height: 39px;
-            font-size: clamp(18px, 1.35vw, 27px);
-            color: #111111;
+            min-height: 34px;
+            font-size: clamp(16px, 1.10vw, 22px);
+            color: #64748b;
             white-space: nowrap;
             font-variant-numeric: tabular-nums;
-            margin-top: -4px;
+            margin-top: -3px;
         }
 
-        @media (max-width: 1100px) {
+        @media (max-width: 1050px) {
             .visor-grid {
-                min-width: 0;
                 grid-template-columns: 1fr;
                 column-gap: 0;
-                row-gap: 22px;
+                row-gap: 18px;
             }
         }
         </style>
@@ -1827,6 +2021,7 @@ def mostrar_visor():
 # ==========================================
 def mostrar_preventistas():
     st.title("🚚 Catálogo por Preventista")
+    st.caption("Actualiza costos y precios por proveedor directamente desde la tabla")
 
     st.write(
         "Selecciona un proveedor, edita los precios directamente en la tabla "
