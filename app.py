@@ -1617,7 +1617,11 @@ def mostrar_historial_cargas():
         normalizar_fecha_columna(df_full)
 
         with st.container(border=True):
-            fecha_elegida = st.date_input("🗓️ Filtrar por Día:", ahora_ar().date())
+            fecha_elegida = st.date_input(
+                "🗓️ Filtrar por Día:",
+                ahora_ar().date(),
+            )
+
             df_filtrado = df_full[
                 df_full["FECHA_REAL"].dt.date == fecha_elegida
             ].copy()
@@ -1638,40 +1642,95 @@ def mostrar_historial_cargas():
                 "PAGO_TRANSF",
             ]
 
+            editor_key = f"ed_cargas_{st.session_state.cargas_key}"
+
             edited_cargas = st.data_editor(
                 df_filtrado[columnas_editor],
                 use_container_width=True,
                 num_rows="dynamic",
-                key=f"ed_cargas_{st.session_state.cargas_key}",
+                hide_index=True,
+                key=editor_key,
             )
 
-            if st.button("💾 Guardar Cambios en Cargas", type="primary", use_container_width=True):
+            if st.button(
+                "💾 Guardar Cambios en Cargas",
+                type="primary",
+                use_container_width=True,
+            ):
                 with st.spinner("Sincronizando correcciones..."):
+                    # IMPORTANTE:
+                    # st.data_editor guarda deleted_rows como posiciones de fila
+                    # (0, 1, 2...), no como índices originales del DataFrame.
+                    # Usamos esas posiciones para identificar exactamente qué
+                    # registros reales de DB_CARGAS fueron eliminados.
+                    estado_editor = st.session_state.get(editor_key, {})
+                    filas_eliminadas = sorted(
+                        {
+                            int(pos)
+                            for pos in estado_editor.get("deleted_rows", [])
+                        }
+                    )
+
                     indices_originales = df_filtrado.index.tolist()
-                    indices_editados = edited_cargas.index.tolist()
-                    df_final = df_full.copy()
 
                     indices_eliminados = [
-                        idx for idx in indices_originales if idx not in indices_editados
+                        indices_originales[pos]
+                        for pos in filas_eliminadas
+                        if 0 <= pos < len(indices_originales)
                     ]
-                    df_final = df_final.drop(indices_eliminados)
 
-                    for idx, row in edited_cargas.iterrows():
-                        if idx in df_final.index:
-                            df_final.loc[idx, columnas_editor] = row.values
-                        else:
-                            df_final = pd.concat(
-                                [df_final, pd.DataFrame([row])],
-                                ignore_index=True,
-                            )
+                    df_final = df_full.drop(
+                        index=indices_eliminados,
+                        errors="ignore",
+                    ).copy()
 
-                    df_final = df_final.drop(columns=["FECHA_REAL"], errors="ignore")
+                    # Las filas que sobreviven se emparejan por POSICIÓN,
+                    # que es el mecanismo de identidad que usa data_editor.
+                    indices_supervivientes = [
+                        idx
+                        for pos, idx in enumerate(indices_originales)
+                        if pos not in filas_eliminadas
+                    ]
+
+                    filas_existentes = min(
+                        len(indices_supervivientes),
+                        len(edited_cargas),
+                    )
+
+                    for pos in range(filas_existentes):
+                        idx_real = indices_supervivientes[pos]
+                        fila_editada = edited_cargas.iloc[pos]
+                        df_final.loc[idx_real, columnas_editor] = (
+                            fila_editada.values
+                        )
+
+                    # Las filas que exceden a las originales son altas nuevas.
+                    if len(edited_cargas) > filas_existentes:
+                        filas_nuevas = edited_cargas.iloc[filas_existentes:]
+                        df_final = pd.concat(
+                            [
+                                df_final,
+                                filas_nuevas.copy(),
+                            ],
+                            ignore_index=True,
+                        )
+
+                    df_final = df_final.drop(
+                        columns=["FECHA_REAL"],
+                        errors="ignore",
+                    )
 
                     conn.update(
                         spreadsheet=URL_PLANILLA,
                         worksheet="DB_CARGAS",
                         data=df_final,
                     )
+
+                    # Las lecturas normales de DB_CARGAS usan ttl=0, por lo que
+                    # dashboard/historial siempre vuelven a consultar la hoja.
+                    # Se mantiene además la limpieza por seguridad ante otros
+                    # lectores cacheados de la aplicación.
+                    st.cache_data.clear()
 
                     st.session_state.cargas_msg = (
                         "✅ ¡El historial de cargas fue corregido y actualizado exitosamente!"
