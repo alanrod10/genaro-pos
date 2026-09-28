@@ -1,7 +1,6 @@
 import datetime
 import html
 import math
-import re
 import unicodedata
 
 import pandas as pd
@@ -817,112 +816,209 @@ def dinero(valor):
 
 
 def normalizar_busqueda(valor):
-    """Minúsculas, sin acentos y con espacios normalizados."""
-    texto = "" if valor is None else str(valor)
-    texto = unicodedata.normalize("NFKD", texto)
-    texto = "".join(c for c in texto if not unicodedata.combining(c))
-    texto = texto.lower()
-    texto = re.sub(r"\s+", " ", texto).strip()
-    return texto
+    """Normaliza texto para búsqueda literal, rápida y tolerante."""
+    if valor is None:
+        return ""
+
+    try:
+        if pd.isna(valor):
+            return ""
+    except (TypeError, ValueError):
+        pass
+
+    texto = unicodedata.normalize("NFKD", str(valor))
+    texto = "".join(
+        caracter
+        for caracter in texto
+        if not unicodedata.combining(caracter)
+    ).lower()
+
+    # "Coca-Cola", "coca cola" y "coca/cola" quedan equivalentes.
+    texto = "".join(
+        caracter if caracter.isalnum() else " "
+        for caracter in texto
+    )
+    return " ".join(texto.split())
+
+
+def construir_indice_busqueda(df):
+    """Prepara el texto auxiliar una sola vez cuando se carga el catálogo."""
+    campos = [
+        campo
+        for campo in [
+            "NOMBRE",
+            "PROVEEDOR",
+            "CATEGORIA",
+            "UNIDAD",
+            "ID_PRODUCTO",
+        ]
+        if campo in df.columns
+    ]
+
+    if not campos:
+        vacio = pd.Series("", index=df.index, dtype="string")
+        return vacio, vacio
+
+    partes = []
+    nombre = pd.Series("", index=df.index, dtype="string")
+
+    for campo in campos:
+        serie = (
+            df[campo]
+            .fillna("")
+            .astype(str)
+            .map(normalizar_busqueda)
+            .astype("string")
+        )
+        partes.append(serie)
+        if campo == "NOMBRE":
+            nombre = serie
+
+    texto = pd.concat(partes, axis=1).fillna("").agg(" ".join, axis=1)
+    return texto.astype("string"), nombre
 
 
 def buscar_productos_inteligente(df, consulta, limite=15):
     """
-    Busca por nombre, proveedor, categoría, unidad o ID.
-    Todos los términos deben aparecer en algún campo del producto.
-    El nombre recibe prioridad en el orden de resultados.
+    Buscador para caja optimizado para el caso real del negocio.
 
-    La búsqueda usa un índice normalizado precalculado por cargar_productos()
-    cuando está disponible, evitando normalizar las ~800 filas en cada tecla.
+    1. Busca directamente en NOMBRE, que es el 99% de las consultas.
+    2. Si no encuentra, busca en proveedor/categoría/unidad/ID.
+    3. Ignora mayúsculas, acentos y signos.
+    4. "cocacola" también encuentra "Coca Cola".
+
+    No usa regex ni fuzzy matching: para un catálogo de ~800 productos es
+    más rápido, más predecible y más fácil de mantener.
     """
-    if df.empty or not consulta or "NOMBRE" not in df.columns:
+    if df.empty or "NOMBRE" not in df.columns:
         return df.iloc[0:0].copy()
 
     consulta_limpia = normalizar_busqueda(consulta)
-    tokens = consulta_limpia.split()
-    if not tokens:
+    if not consulta_limpia:
         return df.iloc[0:0].copy()
 
-    # Cargar_productos() prepara estas columnas una sola vez.
-    if "__BUSQ_TEXTO" in df.columns and "__BUSQ_NOMBRE" in df.columns:
-        busqueda_series = df["__BUSQ_TEXTO"]
-        nombre_series = df["__BUSQ_NOMBRE"]
-        trabajo = df
+    tokens = consulta_limpia.split()
+
+    # ----------------------------------------------------------
+    # 1) NOMBRE: lectura directa del campo real del catálogo.
+    # No dependemos del índice auxiliar para que "coca" siempre
+    # pueda encontrarse mientras exista en NOMBRE.
+    # ----------------------------------------------------------
+    if "__BUSQ_NOMBRE" in df.columns:
+        nombre = df["__BUSQ_NOMBRE"].astype("string").fillna("")
     else:
-        campos = [
-            campo for campo in [
-                "NOMBRE",
-                "PROVEEDOR",
-                "CATEGORIA",
-                "UNIDAD",
-                "ID_PRODUCTO",
-            ]
-            if campo in df.columns
-        ]
-
-        trabajo = df.copy()
-        columnas_busqueda = []
-        for campo in campos:
-            columna_aux = f"__{campo}"
-            trabajo[columna_aux] = (
-                trabajo[campo]
-                .fillna("")
-                .astype(str)
-                .map(normalizar_busqueda)
-            )
-            columnas_busqueda.append(columna_aux)
-
-        busqueda_series = trabajo[columnas_busqueda].agg(" ".join, axis=1)
-        nombre_series = (
-            trabajo["__NOMBRE"]
-            if "__NOMBRE" in trabajo.columns
-            else pd.Series("", index=trabajo.index)
+        nombre = (
+            df["NOMBRE"]
+            .fillna("")
+            .astype(str)
+            .map(normalizar_busqueda)
+            .astype("string")
         )
 
-    mask = pd.Series(True, index=trabajo.index)
+    mask_nombre = pd.Series(True, index=df.index, dtype=bool)
     for token in tokens:
-        mask &= busqueda_series.str.contains(
-            re.escape(token),
-            regex=True,
+        mask_nombre &= nombre.str.contains(
+            token,
+            regex=False,
+            na=False,
+        )
+
+    # Variante sin espacios: "cocacola" -> "coca cola".
+    consulta_compacta = consulta_limpia.replace(" ", "")
+    nombre_compacto = nombre.str.replace(" ", "", regex=False)
+    mask_nombre |= nombre_compacto.str.contains(
+        consulta_compacta,
+        regex=False,
+        na=False,
+    )
+
+    if mask_nombre.any():
+        resultados = df.loc[mask_nombre].copy()
+        nombre_resultados = nombre.loc[mask_nombre]
+
+        resultados["__SCORE"] = (
+            nombre_resultados.eq(consulta_limpia).astype("int16") * 1000
+            + nombre_resultados.str.startswith(
+                consulta_limpia,
+                na=False,
+            ).astype("int16") * 100
+            + nombre_resultados.str.contains(
+                consulta_limpia,
+                regex=False,
+                na=False,
+            ).astype("int16") * 10
+        )
+        resultados["__NOMBRE_ORDEN"] = nombre_resultados
+
+        return (
+            resultados.sort_values(
+                by=["__SCORE", "__NOMBRE_ORDEN"],
+                ascending=[False, True],
+                kind="stable",
+            )
+            .head(limite)
+            .drop(
+                columns=["__SCORE", "__NOMBRE_ORDEN"],
+                errors="ignore",
+            )
+        )
+
+    # ----------------------------------------------------------
+    # 2) METADATOS: proveedor, categoría, unidad e ID.
+    # ----------------------------------------------------------
+    if "__BUSQ_TEXTO" in df.columns:
+        texto = df["__BUSQ_TEXTO"].astype("string").fillna("")
+    else:
+        texto, _ = construir_indice_busqueda(df)
+
+    mask = pd.Series(True, index=df.index, dtype=bool)
+    for token in tokens:
+        mask &= texto.str.contains(
+            token,
+            regex=False,
+            na=False,
+        )
+
+    if not mask.any():
+        texto_compacto = texto.str.replace(" ", "", regex=False)
+        mask = texto_compacto.str.contains(
+            consulta_compacta,
+            regex=False,
             na=False,
         )
 
     if not mask.any():
         return df.iloc[0:0].copy()
 
-    indices = mask[mask].index
-    resultados = trabajo.loc[indices].copy()
+    resultados = df.loc[mask].copy()
+    nombre_resultados = nombre.loc[mask]
+    texto_resultados = texto.loc[mask]
 
-    resultados["__SCORE"] = 0
-    for token in tokens:
-        resultados["__SCORE"] += (
-            nombre_series.loc[indices]
-            .str.contains(re.escape(token), regex=True, na=False)
-            .astype(int)
-            * 10
-        )
-        resultados["__SCORE"] += (
-            busqueda_series.loc[indices]
-            .str.startswith(consulta_limpia, na=False)
-            .astype(int)
-            * 2
-        )
+    resultados["__SCORE"] = (
+        nombre_resultados.str.contains(
+            consulta_limpia,
+            regex=False,
+            na=False,
+        ).astype("int16") * 100
+        + texto_resultados.str.startswith(
+            consulta_limpia,
+            na=False,
+        ).astype("int16") * 10
+    )
+    resultados["__NOMBRE_ORDEN"] = nombre_resultados
 
-    resultados["__NOMBRE_ORDEN"] = nombre_series.loc[indices]
-    resultados = (
+    return (
         resultados.sort_values(
             by=["__SCORE", "__NOMBRE_ORDEN"],
             ascending=[False, True],
             kind="stable",
         )
         .head(limite)
+        .drop(
+            columns=["__SCORE", "__NOMBRE_ORDEN"],
+            errors="ignore",
+        )
     )
-
-    columnas_tmp = [
-        col for col in resultados.columns
-        if col.startswith("__")
-    ]
-    return resultados.drop(columns=columnas_tmp, errors="ignore")
 
 
 # ==========================================
@@ -952,6 +1048,7 @@ inicializar_memoria()
 # ==========================================
 @st.cache_data(ttl=600)
 def cargar_productos():
+    """Carga y deja listo el catálogo para Caja y Preventistas."""
     try:
         conn = obtener_conexion()
         df = conn.read(
@@ -959,43 +1056,31 @@ def cargar_productos():
             worksheet="DB_PRODUCTOS",
         )
 
-        if df.empty:
-            return df
+        if df is None or df.empty:
+            return pd.DataFrame()
 
-        if "NOMBRE" in df.columns:
-            df = df.dropna(subset=["NOMBRE"]).copy()
-            df["NOMBRE"] = df["NOMBRE"].astype(str)
+        df = df.copy()
 
-        # Índice de búsqueda precalculado. Se genera una vez cada 10 minutos
-        # y luego el buscador solo consulta strings ya normalizados.
-        campos = [
-            campo for campo in [
-                "NOMBRE",
-                "PROVEEDOR",
-                "CATEGORIA",
-                "UNIDAD",
-                "ID_PRODUCTO",
-            ]
-            if campo in df.columns
-        ]
+        # Encabezados tolerantes a espacios/casing accidental.
+        vistos = {}
+        nuevos = []
+        for col in df.columns:
+            base = str(col).strip().upper()
+            n = vistos.get(base, 0)
+            nuevos.append(base if n == 0 else f"{base}_{n}")
+            vistos[base] = n + 1
+        df.columns = nuevos
 
-        partes = []
-        for campo in campos:
-            normalizado = (
-                df[campo]
-                .fillna("")
-                .astype(str)
-                .map(normalizar_busqueda)
-            )
-            partes.append(normalizado)
-            if campo == "NOMBRE":
-                df["__BUSQ_NOMBRE"] = normalizado
+        if "NOMBRE" not in df.columns:
+            return pd.DataFrame()
 
-        df["__BUSQ_TEXTO"] = (
-            pd.concat(partes, axis=1).fillna("").agg(" ".join, axis=1)
-            if partes
-            else ""
-        )
+        df = df.dropna(subset=["NOMBRE"]).copy()
+        df["NOMBRE"] = df["NOMBRE"].astype(str).str.strip()
+        df = df[df["NOMBRE"] != ""].copy()
+
+        texto, nombre = construir_indice_busqueda(df)
+        df["__BUSQ_TEXTO"] = texto
+        df["__BUSQ_NOMBRE"] = nombre
 
         return df
 
@@ -1258,6 +1343,15 @@ def mostrar_caja():
 
     df_productos = cargar_productos()
 
+    # Si el primer intento dejó el catálogo vacío por un fallo temporal,
+    # se reintenta una sola vez antes de mostrar el estado de la Caja.
+    if df_productos.empty:
+        try:
+            cargar_productos.clear()
+            df_productos = cargar_productos()
+        except Exception:
+            df_productos = pd.DataFrame()
+
     col_izq, col_der = st.columns([5, 5], gap="large")
 
     with col_izq:
@@ -1269,12 +1363,12 @@ def mostrar_caja():
             )
 
             busqueda = st_keyup(
-                "Busca por nombre o marca (Ej. Lays, Coca):",
-                debounce=300,
+                "Buscar producto… (ej.: coca, lays, secco)",
+                debounce=220,
                 key=f"buscador_{st.session_state.search_key}",
             )
 
-            if busqueda:
+            if busqueda and not df_productos.empty:
                 resultados = buscar_productos_inteligente(
                     df_productos,
                     busqueda,
@@ -1282,7 +1376,9 @@ def mostrar_caja():
                 )
 
                 if resultados.empty:
-                    st.warning("No hay coincidencias en el catálogo.")
+                    st.warning(
+                        f'No encontré "{busqueda.strip()}" en el nombre, proveedor, categoría o código.'
+                    )
                 else:
                     for index, row in resultados.iterrows():
                         c1, c2 = st.columns([8, 2], vertical_alignment="center")
@@ -1576,7 +1672,7 @@ def mostrar_historial_cargas():
                         worksheet="DB_CARGAS",
                         data=df_final,
                     )
-                    st.cache_data.clear()
+
                     st.session_state.cargas_msg = (
                         "✅ ¡El historial de cargas fue corregido y actualizado exitosamente!"
                     )
@@ -1714,7 +1810,7 @@ def mostrar_admin_productos():
                                         worksheet="DB_PRODUCTOS",
                                         data=df_actual,
                                     )
-                                    st.cache_data.clear()
+                                    cargar_productos.clear()
 
                                 st.session_state.admin_msg = "✅ ¡Actualizado exitosamente!"
                                 st.session_state.admin_key += 1
@@ -1738,7 +1834,7 @@ def mostrar_admin_productos():
                                             worksheet="DB_PRODUCTOS",
                                             data=df_actual,
                                         )
-                                        st.cache_data.clear()
+                                        cargar_productos.clear()
                                     st.session_state.admin_msg = "🗑️ Producto eliminado."
                                     st.session_state.admin_key += 1
                                     st.rerun()
@@ -1815,7 +1911,7 @@ def mostrar_admin_productos():
                                 worksheet="DB_PRODUCTOS",
                                 data=pd.concat([df_actual, nuevo_registro], ignore_index=True),
                             )
-                            st.cache_data.clear()
+                            cargar_productos.clear()
                         st.session_state.admin_msg = f"✅ ¡{n_nombre} añadido al catálogo!"
                         st.session_state.admin_key += 1
                         st.rerun()
@@ -1993,7 +2089,7 @@ def mostrar_historial():
                         worksheet="DB_MOVIMIENTOS_CAJA",
                         data=df_caja,
                     )
-                    st.cache_data.clear()
+                    cargar_movimientos_resumen.clear()
                     st.session_state.hist_msg = (
                         "✅ ¡Los ítems fueron corregidos y la Caja fue recalculada perfectamente!"
                     )
@@ -2360,7 +2456,7 @@ def mostrar_preventistas():
                                     worksheet="DB_PRODUCTOS",
                                     data=df_productos,
                                 )
-                                st.cache_data.clear()
+                                cargar_productos.clear()
                                 st.session_state.prev_msg = "✅ ¡Los precios de este proveedor fueron actualizados!"
                                 st.session_state.prev_key += 1
                                 st.rerun()
@@ -2412,7 +2508,7 @@ def mostrar_preventistas():
                                         worksheet="DB_PRODUCTOS",
                                         data=pd.concat([df_productos, nuevo_registro], ignore_index=True),
                                     )
-                                    st.cache_data.clear()
+                                    cargar_productos.clear()
                                 st.session_state.prev_msg = f"✅ ¡{p_nombre} añadido al catálogo de {proveedor_elegido}!"
                                 st.session_state.prev_key += 1
                                 st.rerun()
