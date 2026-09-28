@@ -1,6 +1,8 @@
 import datetime
 import html
 import math
+import re
+import unicodedata
 
 import pandas as pd
 import streamlit as st
@@ -8,7 +10,7 @@ from st_keyup import st_keyup
 from streamlit_gsheets import GSheetsConnection
 
 # ==========================================
-# 0. CONFIGURACIÓN REGIONAL Y CONSTANTES
+# 0. CONFIGURACIÓN REGIONAL
 # ==========================================
 ZONA_AR = datetime.timezone(datetime.timedelta(hours=-3))
 URL_PLANILLA = "https://docs.google.com/spreadsheets/d/1AEsHRAwONhfcATrG7k0gsVmWB1IGlqoHt89_wcT9Uuo/edit?gid=514091242#gid=514091242"
@@ -17,97 +19,98 @@ RECARGO_BASE = 2000
 RECARGO_POR_TRAMO = 100
 
 # ==========================================
-# 1. CONFIGURACIÓN INICIAL Y ESTILOS UI/UX
+# 1. CONFIGURACIÓN INICIAL Y UI/UX
 # ==========================================
 st.set_page_config(
     page_title="Genaro POS",
     page_icon="🛒",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
 
 def aplicar_estilos_profesionales():
-    """Sistema visual global del POS: moderno, compacto, legible y responsive."""
+    """Tema global del POS. Solo modifica presentación, no lógica de negocio."""
     st.markdown(
         """
         <style>
         /* ======================================================
-           GENARO POS — SISTEMA VISUAL GLOBAL
+           GENARO POS — UI MODERNA / DESKTOP + CELULAR
            ====================================================== */
-
         :root {
-            --genaro-bg: #f4f6f8;
-            --genaro-surface: #ffffff;
-            --genaro-border: rgba(15, 23, 42, 0.10);
-            --genaro-text: #111827;
-            --genaro-muted: #64748b;
-            --genaro-primary: #2563eb;
-            --genaro-primary-dark: #1d4ed8;
-            --genaro-radius: 16px;
-            --genaro-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+            --g-bg: #f5f7fb;
+            --g-surface: #ffffff;
+            --g-surface-2: #f8fafc;
+            --g-border: rgba(15, 23, 42, 0.10);
+            --g-border-strong: rgba(15, 23, 42, 0.16);
+            --g-text: #0f172a;
+            --g-muted: #64748b;
+            --g-primary: #2563eb;
+            --g-primary-dark: #1d4ed8;
+            --g-radius: 16px;
+            --g-shadow: 0 8px 26px rgba(15, 23, 42, 0.065);
         }
 
-        /* ---------- Lienzo principal: máxima superficie útil ---------- */
+        /* ---------- Lienzo máximo ---------- */
         [data-testid="stAppViewContainer"] {
-            background: var(--genaro-bg);
-        }
-
-        [data-testid="stAppViewContainer"] .main {
-            background: var(--genaro-bg);
+            background: var(--g-bg);
         }
 
         [data-testid="stMainBlockContainer"] {
             max-width: 100% !important;
             width: 100% !important;
-            padding-top: 1rem !important;
+            padding-top: 0.85rem !important;
             padding-bottom: 2rem !important;
-            padding-left: clamp(0.9rem, 2vw, 2rem) !important;
-            padding-right: clamp(0.9rem, 2vw, 2rem) !important;
+            padding-left: clamp(0.65rem, 1.65vw, 1.65rem) !important;
+            padding-right: clamp(0.65rem, 1.65vw, 1.65rem) !important;
         }
 
-        /* Fallback para versiones de Streamlit que usan esta clase */
         .main .block-container {
             max-width: 100% !important;
-            padding-top: 1rem !important;
+            width: 100% !important;
+            padding-top: 0.85rem !important;
             padding-bottom: 2rem !important;
-            padding-left: clamp(0.9rem, 2vw, 2rem) !important;
-            padding-right: clamp(0.9rem, 2vw, 2rem) !important;
+            padding-left: clamp(0.65rem, 1.65vw, 1.65rem) !important;
+            padding-right: clamp(0.65rem, 1.65vw, 1.65rem) !important;
         }
 
         html, body, [class*="css"] {
             font-family: "Segoe UI", Arial, sans-serif;
-            color: var(--genaro-text);
+            color: var(--g-text);
         }
 
-        /* ---------- Títulos de módulos ---------- */
+        /* ---------- Títulos ---------- */
         h1 {
-            font-size: clamp(1.8rem, 2.5vw, 2.45rem) !important;
-            font-weight: 800 !important;
-            letter-spacing: -0.035em !important;
-            color: #0f172a !important;
-            margin-bottom: 0.75rem !important;
+            font-size: clamp(1.75rem, 2.7vw, 2.45rem) !important;
+            line-height: 1.05 !important;
+            font-weight: 850 !important;
+            letter-spacing: -0.045em !important;
+            color: var(--g-text) !important;
+            margin: 0 0 0.20rem 0 !important;
         }
 
         h2, h3 {
+            color: var(--g-text) !important;
             letter-spacing: -0.025em !important;
-            color: #0f172a !important;
+        }
+
+        [data-testid="stCaptionContainer"] {
+            color: var(--g-muted) !important;
         }
 
         /* ---------- Sidebar ---------- */
         section[data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #0f172a 0%, #162033 100%);
-            border-right: 1px solid rgba(255,255,255,0.08);
+            background: linear-gradient(180deg, #0b1220 0%, #111b2d 100%);
+            border-right: 1px solid rgba(255,255,255,0.07);
         }
 
         section[data-testid="stSidebar"] > div {
-            padding-top: 1rem;
+            padding-top: 0.75rem;
         }
 
         section[data-testid="stSidebar"] img {
             display: block;
-            margin: 0 auto 0.65rem auto;
-            max-width: 86px;
+            margin: 0 auto 0.45rem auto;
+            max-width: 76px;
             border-radius: 18px;
         }
 
@@ -119,31 +122,37 @@ def aplicar_estilos_profesionales():
             color: #f8fafc !important;
         }
 
+        section[data-testid="stSidebar"] h1,
+        section[data-testid="stSidebar"] h2,
+        section[data-testid="stSidebar"] h3 {
+            letter-spacing: -0.02em !important;
+        }
+
         section[data-testid="stSidebar"] .stRadio > label {
+            font-size: 0.86rem !important;
             font-weight: 800 !important;
-            font-size: 0.88rem !important;
         }
 
         section[data-testid="stSidebar"] [role="radiogroup"] {
-            gap: 0.32rem;
+            gap: 0.23rem;
         }
 
         section[data-testid="stSidebar"] [role="radiogroup"] label {
-            border-radius: 12px;
-            padding: 0.38rem 0.55rem;
-            transition: all 0.15s ease;
+            border-radius: 11px;
+            padding: 0.34rem 0.48rem;
+            transition: background 0.15s ease;
         }
 
         section[data-testid="stSidebar"] [role="radiogroup"] label:hover {
-            background: rgba(255,255,255,0.08);
+            background: rgba(255,255,255,0.075);
         }
 
         /* ---------- Contenedores ---------- */
         div[data-testid="stVerticalBlockBorderWrapper"] {
-            background: var(--genaro-surface);
-            border: 1px solid var(--genaro-border) !important;
-            border-radius: var(--genaro-radius) !important;
-            box-shadow: var(--genaro-shadow);
+            background: var(--g-surface);
+            border: 1px solid var(--g-border) !important;
+            border-radius: var(--g-radius) !important;
+            box-shadow: var(--g-shadow);
         }
 
         /* ---------- Botones ---------- */
@@ -151,8 +160,8 @@ def aplicar_estilos_profesionales():
             min-height: 42px;
             border-radius: 11px !important;
             font-weight: 750 !important;
-            border: 1px solid rgba(15,23,42,0.10) !important;
-            transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+            border: 1px solid rgba(15,23,42,0.11) !important;
+            transition: transform 0.12s ease, box-shadow 0.12s ease;
         }
 
         div.stButton > button:hover {
@@ -161,19 +170,16 @@ def aplicar_estilos_profesionales():
         }
 
         div.stButton > button[kind="primary"] {
-            background: linear-gradient(135deg, var(--genaro-primary), var(--genaro-primary-dark));
+            background: linear-gradient(135deg, var(--g-primary), var(--g-primary-dark));
             border-color: transparent !important;
             color: #ffffff !important;
         }
 
-        div.stButton > button[kind="primary"]:hover {
-            filter: brightness(1.03);
-        }
-
-        /* ---------- Inputs / Selectores ---------- */
+        /* ---------- Inputs ---------- */
         div[data-baseweb="input"] > div,
         div[data-baseweb="select"] > div,
         div[data-baseweb="textarea"] > div {
+            min-height: 42px;
             border-radius: 10px !important;
             border-color: rgba(15,23,42,0.14) !important;
             background: #ffffff !important;
@@ -185,95 +191,450 @@ def aplicar_estilos_profesionales():
             font-weight: 550;
         }
 
-        /* ---------- Radio / Checkbox / Expander ---------- */
+        /* ---------- Expander / alerts ---------- */
         div[data-testid="stExpander"] {
-            border: 1px solid var(--genaro-border) !important;
+            border: 1px solid var(--g-border) !important;
             border-radius: 13px !important;
-            background: rgba(255,255,255,0.72);
+            background: rgba(255,255,255,0.85);
         }
 
-        div[data-testid="stCheckbox"] label,
-        div[data-testid="stRadio"] label {
-            font-weight: 550;
-        }
-
-        /* ---------- Métricas ---------- */
-        div[data-testid="stMetric"] {
-            background: #ffffff;
-            border: 1px solid var(--genaro-border);
-            border-radius: 14px;
-            padding: 0.7rem 0.85rem;
-            box-shadow: 0 5px 18px rgba(15, 23, 42, 0.045);
-        }
-
-        div[data-testid="stMetricLabel"] {
-            color: var(--genaro-muted);
-            font-weight: 700;
-        }
-
-        div[data-testid="stMetricValue"] {
-            font-weight: 850 !important;
-            letter-spacing: -0.04em;
-            color: #0f172a;
-        }
-
-        /* ---------- Tablas y Data Editor ---------- */
-        div[data-testid="stDataEditor"] {
-            border-radius: 12px;
-            overflow: hidden;
-            border: 1px solid rgba(15,23,42,0.10);
-            box-shadow: 0 4px 14px rgba(15,23,42,0.04);
-            background: #ffffff;
-        }
-
-        /* ---------- Alertas ---------- */
         div[data-testid="stAlert"] {
             border-radius: 11px !important;
         }
 
+        /* ---------- Métricas nativas ---------- */
+        div[data-testid="stMetric"] {
+            background: #ffffff;
+            border: 1px solid var(--g-border);
+            border-radius: 14px;
+            padding: 0.62rem 0.78rem;
+            box-shadow: 0 5px 18px rgba(15, 23, 42, 0.045);
+        }
+
+        div[data-testid="stMetricLabel"] {
+            color: var(--g-muted);
+            font-weight: 700;
+        }
+
+        div[data-testid="stMetricValue"] {
+            color: var(--g-text);
+            font-weight: 850 !important;
+            letter-spacing: -0.04em;
+        }
+
+        /* ---------- Data editor ---------- */
+        div[data-testid="stDataEditor"] {
+            border: 1px solid var(--g-border);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+            background: #ffffff;
+        }
+
         /* ---------- Divisores ---------- */
         hr {
-            margin-top: 0.65rem !important;
+            margin-top: 0.55rem !important;
             margin-bottom: 0.65rem !important;
-            border-color: rgba(15,23,42,0.09) !important;
+            border-color: rgba(15,23,42,0.08) !important;
         }
 
-        /* ---------- Tooltips / texto secundario ---------- */
-        [data-testid="stCaptionContainer"] {
-            color: var(--genaro-muted);
+        /* ======================================================
+           CAJA — RESUMEN DEL DÍA
+           ====================================================== */
+        .resumen-hoy {
+            background: linear-gradient(135deg, #0f172a 0%, #172554 100%);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 18px;
+            padding: 14px;
+            margin: 0 0 18px 0;
+            box-shadow: 0 12px 30px rgba(15,23,42,0.13);
+            color: #ffffff;
         }
 
-        /* ---------- Scrollbar más discreto ---------- */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
+        .resumen-hoy-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 12px;
         }
 
-        ::-webkit-scrollbar-thumb {
-            background: #cbd5e1;
-            border-radius: 20px;
+        .resumen-hoy-title {
+            font-size: 18px;
+            font-weight: 850;
+            line-height: 1.05;
+            letter-spacing: -0.02em;
         }
 
-        ::-webkit-scrollbar-track {
-            background: transparent;
+        .resumen-hoy-date {
+            font-size: 12px;
+            opacity: 0.74;
+            margin-top: 3px;
         }
 
-        /* ---------- Footer / decoración nativa ---------- */
-        footer {
-            visibility: hidden;
+        .resumen-hoy-badge {
+            font-size: 11px;
+            font-weight: 800;
+            border: 1px solid rgba(255,255,255,0.15);
+            background: rgba(255,255,255,0.07);
+            border-radius: 999px;
+            padding: 5px 8px;
+            white-space: nowrap;
+        }
+
+        .resumen-grid {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 8px;
+        }
+
+        .resumen-card {
+            min-width: 0;
+            border-radius: 13px;
+            background: rgba(255,255,255,0.085);
+            border: 1px solid rgba(255,255,255,0.09);
+            padding: 9px 10px;
+        }
+
+        .resumen-label {
+            font-size: 11px;
+            opacity: 0.74;
+            font-weight: 700;
+            margin-bottom: 3px;
+        }
+
+        .resumen-value {
+            font-size: clamp(19px, 1.65vw, 27px);
+            line-height: 1.0;
+            font-weight: 900;
+            letter-spacing: -0.04em;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .resumen-sub {
+            font-size: 10px;
+            opacity: 0.62;
+            margin-top: 3px;
+        }
+
+        /* ======================================================
+           BUSCADOR DE PRODUCTOS — RESULTADOS
+           ====================================================== */
+        .busqueda-hint {
+            font-size: 12px;
+            color: #64748b;
+            margin: -6px 0 10px 0;
+        }
+
+        .producto-resultado {
+            background: #f8fafc;
+            border: 1px solid rgba(15,23,42,0.085);
+            border-radius: 12px;
+            padding: 8px 10px;
+            min-height: 49px;
+            box-sizing: border-box;
+        }
+
+        .producto-nombre {
+            font-size: 14px;
+            line-height: 1.10;
+            font-weight: 800;
+            color: #0f172a;
+        }
+
+        .producto-meta {
+            font-size: 10.5px;
+            line-height: 1.20;
+            color: #64748b;
+            margin-top: 3px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .producto-precio {
+            font-size: 19px;
+            font-weight: 900;
+            line-height: 1;
+            color: #0f172a;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        /* ======================================================
+           VISOR — DASHBOARD
+           ====================================================== */
+        .visor-title {
+            font-size: clamp(1.8rem, 2.8vw, 2.5rem);
+            font-weight: 850;
+            letter-spacing: -0.045em;
+            margin: 0 0 0.8rem 0;
+            color: #0f172a;
+        }
+
+        .visor-grid-wrapper {
+            width: 100%;
+            overflow-x: auto;
+            padding: 2px;
+        }
+
+        .visor-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            column-gap: 22px;
+            row-gap: 22px;
+            width: 100%;
+            margin-top: 8px;
+        }
+
+        .visor-card {
+            border: 1px solid rgba(15, 23, 42, 0.12);
+            background: #ffffff;
+            overflow: hidden;
+            box-sizing: border-box;
+            width: 100%;
+            border-radius: 16px;
+            box-shadow: 0 7px 22px rgba(15, 23, 42, 0.07);
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .visor-card:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 11px 28px rgba(15, 23, 42, 0.10);
+        }
+
+        .visor-header {
+            min-height: 50px;
+            display: flex;
+            align-items: center;
+            padding: 7px 13px;
+            box-sizing: border-box;
+            font-size: clamp(18px, 1.40vw, 27px);
+            font-weight: 850;
+            line-height: 1.05;
+            letter-spacing: -0.025em;
+        }
+
+        .visor-body {
+            padding: 9px 13px 0 13px;
+            box-sizing: border-box;
+        }
+
+        .visor-line {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            min-height: 40px;
+            font-size: clamp(16px, 1.15vw, 23px);
+            line-height: 1.05;
+            color: #111827;
+            column-gap: 12px;
+        }
+
+        .visor-label {
+            white-space: nowrap;
+            font-weight: 540;
+        }
+
+        .visor-value {
+            text-align: right;
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+            font-weight: 650;
+        }
+
+        .visor-separator {
+            height: 1px;
+            background: rgba(15, 23, 42, 0.13);
+            margin-top: 5px;
+        }
+
+        .visor-total {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            min-height: 70px;
+            font-size: clamp(17px, 1.24vw, 25px);
+            line-height: 1.05;
+            color: #111827;
+            column-gap: 12px;
+        }
+
+        .visor-total-label {
+            font-weight: 700;
+        }
+
+        .visor-total-value {
+            font-size: clamp(28px, 2.0vw, 40px);
+            font-weight: 900;
+            text-align: right;
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.045em;
+        }
+
+        .visor-profit {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: stretch;
+            min-height: 48px;
+            border-top: 1px solid rgba(15, 23, 42, 0.13);
+            font-size: clamp(15px, 1.00vw, 20px);
+            font-weight: 800;
+            line-height: 1.05;
+            color: #5f666d;
+        }
+
+        .visor-profit > div:first-child {
+            display: flex;
+            align-items: center;
+            padding-left: 2px;
+        }
+
+        .visor-profit-value {
+            align-self: stretch;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding: 0 12px;
+            min-width: 175px;
+            box-sizing: border-box;
+            color: #ffffff;
+            font-size: clamp(22px, 1.42vw, 29px);
+            font-weight: 900;
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.03em;
+        }
+
+        .visor-secondary {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            min-height: 31px;
+            font-size: clamp(15px, 1.05vw, 22px);
+            color: #64748b;
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+            margin-top: -3px;
         }
 
         /* ---------- Responsive ---------- */
-        @media (max-width: 900px) {
-            [data-testid="stMainBlockContainer"],
-            .main .block-container {
-                padding-left: 0.75rem !important;
-                padding-right: 0.75rem !important;
+        @media (max-width: 1100px) {
+            .resumen-grid {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
             }
 
-            div[data-testid="stMetric"] {
-                padding: 0.55rem 0.7rem;
+            .visor-grid {
+                grid-template-columns: 1fr;
+                column-gap: 0;
+                row-gap: 18px;
             }
+        }
+
+        @media (max-width: 700px) {
+            [data-testid="stMainBlockContainer"],
+            .main .block-container {
+                padding-left: 0.55rem !important;
+                padding-right: 0.55rem !important;
+                padding-top: 0.65rem !important;
+            }
+
+            h1 {
+                font-size: 1.72rem !important;
+            }
+
+            .resumen-hoy {
+                padding: 11px;
+                border-radius: 15px;
+            }
+
+            .resumen-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 7px;
+            }
+
+            .resumen-card {
+                padding: 8px;
+            }
+
+            .resumen-value {
+                font-size: 20px;
+            }
+
+            .resumen-hoy-badge {
+                display: none;
+            }
+
+            .producto-resultado {
+                min-height: 52px;
+            }
+
+            .producto-nombre {
+                font-size: 13px;
+            }
+
+            .producto-precio {
+                font-size: 17px;
+            }
+
+            .visor-header {
+                min-height: 47px;
+            }
+
+            .visor-profit-value {
+                min-width: 145px;
+            }
+        }
+
+        @media (max-width: 430px) {
+            .resumen-hoy-top {
+                margin-bottom: 9px;
+            }
+
+            .resumen-grid {
+                gap: 6px;
+            }
+
+            .resumen-label {
+                font-size: 10px;
+            }
+
+            .resumen-value {
+                font-size: 18px;
+            }
+
+            .resumen-sub {
+                font-size: 9px;
+            }
+
+            .visor-line {
+                font-size: 15px;
+            }
+
+            .visor-total {
+                font-size: 17px;
+            }
+
+            .visor-total-value {
+                font-size: 27px;
+            }
+
+            .visor-profit {
+                font-size: 14px;
+            }
+
+            .visor-profit-value {
+                min-width: 128px;
+                font-size: 22px;
+            }
+        }
+
+        footer {
+            visibility: hidden;
         }
         </style>
         """,
@@ -303,22 +664,13 @@ def fecha_act_texto():
 
 
 def normalizar_fecha_columna(df, columna="FECHA"):
-    """
-    Genera FECHA_REAL sin tocar FECHA.
-
-    Soporta los tres formatos que pueden aparecer al leer Google Sheets:
-    - datetime/Timestamp reales;
-    - texto dd/mm/yyyy[ hh:mm:ss];
-    - seriales numéricos de Excel/Sheets (ej. 46293 o 46293.5).
-    """
+    """Convierte fechas de texto, datetime o seriales de Sheets/Excel."""
     if columna not in df.columns:
         df["FECHA_REAL"] = pd.NaT
         return df
 
     valores = df[columna]
     numerico = pd.to_numeric(valores, errors="coerce")
-
-    # Rango razonable de fechas serializadas de Excel/Sheets.
     es_serial = numerico.between(20000, 60000)
 
     fechas = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
@@ -342,14 +694,6 @@ def normalizar_fecha_columna(df, columna="FECHA"):
     return df
 
 
-def sumar_numerico(df, columna):
-    """Suma segura de una columna; devuelve 0 si no existe o está vacía."""
-    if columna not in df.columns:
-        return 0.0
-    serie = pd.to_numeric(df[columna], errors="coerce").fillna(0)
-    return float(serie.sum())
-
-
 def numero_seguro(valor, default=0.0):
     try:
         if pd.isna(valor):
@@ -366,12 +710,88 @@ def entero_seguro(valor, default=0):
         return default
 
 
+def sumar_numerico(df, columna):
+    if columna not in df.columns:
+        return 0.0
+    return float(pd.to_numeric(df[columna], errors="coerce").fillna(0).sum())
+
+
 def dinero(valor):
     return f"${entero_seguro(valor):,}"
 
 
+def normalizar_busqueda(valor):
+    """Minúsculas, sin acentos y con espacios normalizados."""
+    texto = "" if valor is None else str(valor)
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    texto = texto.lower()
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto
+
+
+def buscar_productos_inteligente(df, consulta, limite=15):
+    """
+    Busca por nombre, proveedor, categoría, unidad o ID.
+    Todos los términos escritos deben existir en algún campo del producto.
+    Los resultados que coinciden en el nombre reciben prioridad.
+    """
+    if df.empty or not consulta or "NOMBRE" not in df.columns:
+        return df.iloc[0:0].copy()
+
+    campos = [
+        campo for campo in [
+            "NOMBRE",
+            "PROVEEDOR",
+            "CATEGORIA",
+            "UNIDAD",
+            "ID_PRODUCTO",
+        ]
+        if campo in df.columns
+    ]
+
+    consulta_limpia = normalizar_busqueda(consulta)
+    tokens = consulta_limpia.split()
+
+    trabajo = df.copy()
+    for campo in campos:
+        trabajo[f"__{campo}"] = trabajo[campo].fillna("").astype(str).map(normalizar_busqueda)
+
+    trabajo["__BUSQUEDA"] = trabajo[
+        [f"__{campo}" for campo in campos]
+    ].agg(" ".join, axis=1)
+
+    mask = pd.Series(True, index=trabajo.index)
+    for token in tokens:
+        mask &= trabajo["__BUSQUEDA"].str.contains(
+            re.escape(token),
+            regex=True,
+            na=False,
+        )
+
+    resultados = trabajo.loc[mask].copy()
+
+    if resultados.empty:
+        return df.iloc[0:0].copy()
+
+    nombre_norm = resultados["__NOMBRE"] if "__NOMBRE" in resultados else pd.Series("", index=resultados.index)
+    resultados["__SCORE"] = 0
+    for token in tokens:
+        resultados["__SCORE"] += nombre_norm.str.contains(re.escape(token), regex=True, na=False).astype(int) * 10
+        resultados["__SCORE"] += resultados["__BUSQUEDA"].str.startswith(consulta_limpia, na=False).astype(int) * 2
+
+    resultados = resultados.sort_values(
+        by=["__SCORE", "__NOMBRE"],
+        ascending=[False, True],
+        kind="stable",
+    ).head(limite)
+
+    columnas_tmp = [col for col in resultados.columns if col.startswith("__")]
+    return resultados.drop(columns=columnas_tmp, errors="ignore")
+
+
 # ==========================================
-# 3. GESTIÓN DEL ESTADO (MEMORIA)
+# 3. GESTIÓN DEL ESTADO
 # ==========================================
 def inicializar_memoria():
     defaults = {
@@ -393,7 +813,7 @@ def inicializar_memoria():
 inicializar_memoria()
 
 # ==========================================
-# 4. CONEXIÓN A BASE DE DATOS Y LÓGICA VENTA
+# 4. DATOS Y LÓGICA DE VENTA
 # ==========================================
 @st.cache_data(ttl=600)
 def cargar_productos():
@@ -412,7 +832,6 @@ def cargar_productos():
             df["NOMBRE"] = df["NOMBRE"].astype(str)
 
         return df
-
     except Exception:
         return pd.DataFrame()
 
@@ -437,20 +856,18 @@ def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
         pago_efvo = numero_seguro(monto_efvo)
         pago_transf = numero_seguro(monto_transf)
 
-    nueva_venta = pd.DataFrame(
-        [
-            {
-                "TICKET_ID": ticket_id,
-                "FECHA": fecha_actual.strftime("%d/%m/%Y %H:%M:%S"),
-                "TOTAL_VENTA": entero_seguro(total_venta),
-                "MONTO_EFECTIVO": entero_seguro(pago_efvo),
-                "MONTO_TRANSF": entero_seguro(pago_transf),
-                "ES_NOCTURNO": False,
-            }
-        ]
-    )
+    nueva_venta = pd.DataFrame([
+        {
+            "TICKET_ID": ticket_id,
+            "FECHA": fecha_actual.strftime("%d/%m/%Y %H:%M:%S"),
+            "TOTAL_VENTA": entero_seguro(total_venta),
+            "MONTO_EFECTIVO": entero_seguro(pago_efvo),
+            "MONTO_TRANSF": entero_seguro(pago_transf),
+            "ES_NOCTURNO": False,
+        }
+    ])
 
-    items_vendidos = [
+    df_items_nuevos = pd.DataFrame([
         {
             "TICKET_ID": ticket_id,
             "FECHA": fecha_actual.strftime("%d/%m/%Y %H:%M:%S"),
@@ -462,13 +879,10 @@ def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
             "METODO_PAGO": metodo_pago,
         }
         for item in st.session_state.carrito
-    ]
-
-    df_items_nuevos = pd.DataFrame(items_vendidos)
+    ])
 
     try:
         conn = obtener_conexion()
-
         with st.spinner("💾 Guardando transacción en la nube..."):
             df_mov = conn.read(
                 spreadsheet=URL_PLANILLA,
@@ -478,10 +892,7 @@ def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
             conn.update(
                 spreadsheet=URL_PLANILLA,
                 worksheet="DB_MOVIMIENTOS_CAJA",
-                data=pd.concat(
-                    [df_mov, nueva_venta],
-                    ignore_index=True,
-                ),
+                data=pd.concat([df_mov, nueva_venta], ignore_index=True),
             )
 
             df_historial = conn.read(
@@ -492,10 +903,7 @@ def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
             conn.update(
                 spreadsheet=URL_PLANILLA,
                 worksheet="DB_HISTORIAL_ITEMS",
-                data=pd.concat(
-                    [df_historial, df_items_nuevos],
-                    ignore_index=True,
-                ),
+                data=pd.concat([df_historial, df_items_nuevos], ignore_index=True),
             )
 
         st.session_state.carrito = []
@@ -520,13 +928,9 @@ def modal_pago_mixto(total_cobrar):
         max_value=int(total_cobrar),
         step=100,
     )
-
     monto_efvo = int(total_cobrar - monto_transf)
 
-    st.info(
-        f"💵 Restante a cobrar en Efectivo: **${monto_efvo:,.0f}**"
-    )
-
+    st.info(f"💵 Restante a cobrar en Efectivo: **${monto_efvo:,.0f}**")
     st.write("---")
 
     if st.button(
@@ -593,19 +997,94 @@ def calcular_recargo_automatico():
 
 
 # ==========================================
-# 6. VISTAS - CAJA
+# 6. CAJA
 # ==========================================
 def mostrar_caja():
     st.title("🛒 Caja Registradora")
     st.caption("Punto de venta · búsqueda rápida · cobro en efectivo, transferencia o mixto")
 
+    # ------------------------------------------
+    # RESUMEN DE HOY
+    # ------------------------------------------
+    try:
+        conn = obtener_conexion()
+        df_hoy = conn.read(
+            spreadsheet=URL_PLANILLA,
+            worksheet="DB_MOVIMIENTOS_CAJA",
+            ttl=0,
+        )
+        normalizar_fecha_columna(df_hoy)
+        df_hoy = df_hoy[
+            df_hoy["FECHA_REAL"].dt.date == ahora_ar().date()
+        ].copy()
+
+        hoy_ventas = sumar_numerico(df_hoy, "TOTAL_VENTA")
+        hoy_efvo = sumar_numerico(df_hoy, "MONTO_EFECTIVO")
+        hoy_transf = sumar_numerico(df_hoy, "MONTO_TRANSF")
+        hoy_tickets = len(df_hoy)
+        hoy_ganancia = hoy_ventas * 0.10
+
+        resumen_html = f"""
+        <div class="resumen-hoy">
+            <div class="resumen-hoy-top">
+                <div>
+                    <div class="resumen-hoy-title">📈 Resumen de hoy</div>
+                    <div class="resumen-hoy-date">{ahora_ar().strftime('%d/%m/%Y')} · actividad registrada</div>
+                </div>
+                <div class="resumen-hoy-badge">EN TIEMPO REAL</div>
+            </div>
+            <div class="resumen-grid">
+                <div class="resumen-card">
+                    <div class="resumen-label">VENTAS</div>
+                    <div class="resumen-value">{dinero(hoy_ventas)}</div>
+                    <div class="resumen-sub">importe total</div>
+                </div>
+                <div class="resumen-card">
+                    <div class="resumen-label">EFECTIVO</div>
+                    <div class="resumen-value">{dinero(hoy_efvo)}</div>
+                    <div class="resumen-sub">cobros</div>
+                </div>
+                <div class="resumen-card">
+                    <div class="resumen-label">TRANSFERENCIAS</div>
+                    <div class="resumen-value">{dinero(hoy_transf)}</div>
+                    <div class="resumen-sub">cobros</div>
+                </div>
+                <div class="resumen-card">
+                    <div class="resumen-label">TICKETS</div>
+                    <div class="resumen-value">{hoy_tickets}</div>
+                    <div class="resumen-sub">ventas registradas</div>
+                </div>
+                <div class="resumen-card">
+                    <div class="resumen-label">GANANCIA EST.</div>
+                    <div class="resumen-value">{dinero(hoy_ganancia)}</div>
+                    <div class="resumen-sub">10% estimado</div>
+                </div>
+            </div>
+        </div>
+        """
+        st.markdown(resumen_html, unsafe_allow_html=True)
+    except Exception:
+        st.markdown(
+            """
+            <div class="resumen-hoy">
+                <div class="resumen-hoy-title">📈 Resumen de hoy</div>
+                <div class="resumen-hoy-date">No se pudo cargar el resumen en este momento.</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
     df_productos = cargar_productos()
 
-    col_izq, col_der = st.columns([5, 5])
+    col_izq, col_der = st.columns([5, 5], gap="large")
 
     with col_izq:
         with st.container(border=True):
             st.subheader("🔍 Buscador de Productos")
+            st.markdown(
+                '<div class="busqueda-hint">Busca por nombre, marca, proveedor, categoría, unidad o código.</div>',
+                unsafe_allow_html=True,
+            )
 
             busqueda = st_keyup(
                 "Busca por nombre o marca (Ej. Lays, Coca):",
@@ -614,27 +1093,42 @@ def mostrar_caja():
             )
 
             if busqueda:
-                if df_productos.empty or "NOMBRE" not in df_productos.columns:
-                    st.warning("No hay productos disponibles en el catálogo.")
+                resultados = buscar_productos_inteligente(
+                    df_productos,
+                    busqueda,
+                    limite=15,
+                )
+
+                if resultados.empty:
+                    st.warning("No hay coincidencias en el catálogo.")
                 else:
-                    nombres = df_productos["NOMBRE"].astype(str)
-                    resultados = df_productos[
-                        nombres.str.contains(
-                            busqueda,
-                            case=False,
-                            na=False,
+                    for index, row in resultados.iterrows():
+                        c1, c2 = st.columns([8, 2], vertical_alignment="center")
+
+                        proveedor = str(row.get("PROVEEDOR", "")).strip()
+                        categoria = str(row.get("CATEGORIA", "")).strip()
+                        unidad = str(row.get("UNIDAD", "")).strip()
+                        meta = " · ".join(
+                            [x for x in [proveedor, categoria, unidad] if x and x.lower() != "nan"]
                         )
-                    ].head(15)
 
-                    if resultados.empty:
-                        st.warning("No hay coincidencias en el catálogo.")
-                    else:
-                        for index, row in resultados.iterrows():
-                            c1, c2, c3 = st.columns([5, 2, 3])
-                            c1.write(f"**{row['NOMBRE']}**")
-                            c2.write(f"${entero_seguro(row.get('PRECIO_DIA', 0))}")
+                        with c1:
+                            st.markdown(
+                                f"""
+                                <div class="producto-resultado">
+                                    <div class="producto-nombre">{html.escape(str(row['NOMBRE']))}</div>
+                                    <div class="producto-meta">{html.escape(meta if meta else 'Producto de catálogo')}</div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                            )
 
-                            if c3.button(
+                        with c2:
+                            st.markdown(
+                                f'<div class="producto-precio">{dinero(row.get("PRECIO_DIA", 0))}</div>',
+                                unsafe_allow_html=True,
+                            )
+                            if st.button(
                                 "➕ Agregar",
                                 key=f"btn_add_{index}",
                                 use_container_width=True,
@@ -650,9 +1144,7 @@ def mostrar_caja():
             st.subheader("🛒 Tu Carrito")
 
             if not st.session_state.carrito:
-                st.info(
-                    "El carrito está vacío. Agrega productos desde el buscador."
-                )
+                st.info("El carrito está vacío. Agrega productos desde el buscador.")
             else:
                 total = 0
 
@@ -662,8 +1154,8 @@ def mostrar_caja():
                 h3.write("**Monto $**")
 
                 for i, item in enumerate(st.session_state.carrito):
-                    c1, c2, c3, c4 = st.columns([4, 3, 3, 1])
-                    c1.write(f"{item['nombre']}")
+                    c1, c2, c3, c4 = st.columns([4, 3, 3, 1], vertical_alignment="center")
+                    c1.write(item["nombre"])
 
                     c2.number_input(
                         "Cant",
@@ -704,10 +1196,7 @@ def mostrar_caja():
                     type="primary",
                 ):
                     if procesar_venta("EFECTIVO"):
-                        st.toast(
-                            "✅ Venta en Efectivo registrada.",
-                            icon="✅",
-                        )
+                        st.toast("✅ Venta en Efectivo registrada.", icon="✅")
                         st.rerun()
 
                 if col_transf.button(
@@ -715,10 +1204,7 @@ def mostrar_caja():
                     use_container_width=True,
                 ):
                     if procesar_venta("TRANSFERENCIA"):
-                        st.toast(
-                            "✅ Venta por Transferencia registrada.",
-                            icon="✅",
-                        )
+                        st.toast("✅ Venta por Transferencia registrada.", icon="✅")
                         st.rerun()
 
                 if col_mixto.button(
@@ -729,34 +1215,23 @@ def mostrar_caja():
 
 
 # ==========================================
-# 7. VISTAS - SERVICIOS
+# 7. SERVICIOS
 # ==========================================
 def mostrar_servicios():
     st.title("📱 Cargas y Servicios")
     st.caption("Recargas virtuales y servicios con cálculo automático del adicional")
 
     with st.container(border=True):
-        st.write(
-            "Registra recargas virtuales o pagos de servicios de forma ágil."
-        )
+        st.write("Registra recargas virtuales o pagos de servicios de forma ágil.")
         st.write("---")
 
-        col1, col2 = st.columns(2)
+        col1, col2 = st.columns(2, gap="large")
 
         with col1:
             servicio = st.selectbox(
                 "Empresa / Servicio",
-                [
-                    "Claro",
-                    "Personal",
-                    "Movistar",
-                    "Tuenti",
-                    "DIRECTV",
-                    "SUBE",
-                    "Otro",
-                ],
+                ["Claro", "Personal", "Movistar", "Tuenti", "DIRECTV", "SUBE", "Otro"],
             )
-
             monto_carga = st.number_input(
                 "Monto a Cargar ($)",
                 min_value=0,
@@ -772,7 +1247,6 @@ def mostrar_servicios():
                 step=50,
                 key="input_monto_adic",
             )
-
             metodo_pago = st.radio(
                 "Método de Pago",
                 ["EFECTIVO", "TRANSFERENCIA", "MIXTO"],
@@ -780,10 +1254,7 @@ def mostrar_servicios():
             )
 
         total_cobrar = int(monto_carga + monto_adic)
-
-        st.info(
-            f"### **💰 Total a cobrar al cliente: ${total_cobrar:,.0f}**"
-        )
+        st.info(f"### **💰 Total a cobrar al cliente: ${total_cobrar:,.0f}**")
 
         monto_transf = 0
         monto_efvo = 0
@@ -796,72 +1267,54 @@ def mostrar_servicios():
                 step=100,
             )
             monto_efvo = total_cobrar - monto_transf
-            st.write(
-                f"💵 Restante en Efectivo: **${monto_efvo:,.0f}**"
-            )
-
+            st.write(f"💵 Restante en Efectivo: **${monto_efvo:,.0f}**")
         elif metodo_pago == "EFECTIVO":
             monto_efvo = total_cobrar
-
-        elif metodo_pago == "TRANSFERENCIA":
+        else:
             monto_transf = total_cobrar
 
         st.divider()
 
-        if st.button(
-            "🚀 Registrar Carga",
-            type="primary",
-            use_container_width=True,
-        ):
+        if st.button("🚀 Registrar Carga", type="primary", use_container_width=True):
             if monto_carga <= 0:
                 st.error("⚠️ El monto de la carga debe ser mayor a cero.")
             else:
-                nueva_carga = pd.DataFrame(
-                    [
-                        {
-                            "FECHA": fecha_texto(),
-                            "SERVICIO": servicio,
-                            "MONTO_CARGA": monto_carga,
-                            "MONTO_ADICIONAL": monto_adic,
-                            "TOTAL_COBRADO": total_cobrar,
-                            "PAGO_EFVO": monto_efvo,
-                            "PAGO_TRANSF": monto_transf,
-                        }
-                    ]
-                )
+                nueva_carga = pd.DataFrame([
+                    {
+                        "FECHA": fecha_texto(),
+                        "SERVICIO": servicio,
+                        "MONTO_CARGA": monto_carga,
+                        "MONTO_ADICIONAL": monto_adic,
+                        "TOTAL_COBRADO": total_cobrar,
+                        "PAGO_EFVO": monto_efvo,
+                        "PAGO_TRANSF": monto_transf,
+                    }
+                ])
 
                 try:
                     conn = obtener_conexion()
-
                     with st.spinner("Guardando en el sistema..."):
                         df_cargas = conn.read(
                             spreadsheet=URL_PLANILLA,
                             worksheet="DB_CARGAS",
                             ttl=0,
                         )
-
                         conn.update(
                             spreadsheet=URL_PLANILLA,
                             worksheet="DB_CARGAS",
-                            data=pd.concat(
-                                [df_cargas, nueva_carga],
-                                ignore_index=True,
-                            ),
+                            data=pd.concat([df_cargas, nueva_carga], ignore_index=True),
                         )
 
                     st.toast("✅ Carga guardada.", icon="📲")
-
-                    for key in ("input_monto_carga", "input_monto_adic"):
-                        st.session_state.pop(key, None)
-
+                    st.session_state.pop("input_monto_carga", None)
+                    st.session_state.pop("input_monto_adic", None)
                     st.rerun()
-
                 except Exception:
                     st.error("❌ Error al guardar. Intente nuevamente.")
 
 
 # ==========================================
-# 8. VISTAS - HISTORIAL DE CARGAS
+# 8. HISTORIAL DE CARGAS
 # ==========================================
 def mostrar_historial_cargas():
     st.title("📋 Historial de Cargas")
@@ -883,14 +1336,10 @@ def mostrar_historial_cargas():
             st.info("No hay cargas registradas en la base de datos.")
             return
 
-        df_full = normalizar_fecha_columna(df_full)
+        normalizar_fecha_columna(df_full)
 
         with st.container(border=True):
-            fecha_elegida = st.date_input(
-                "🗓️ Filtrar por Día:",
-                ahora_ar().date(),
-            )
-
+            fecha_elegida = st.date_input("🗓️ Filtrar por Día:", ahora_ar().date())
             df_filtrado = df_full[
                 df_full["FECHA_REAL"].dt.date == fecha_elegida
             ].copy()
@@ -911,29 +1360,21 @@ def mostrar_historial_cargas():
                 "PAGO_TRANSF",
             ]
 
-            edit_source = df_filtrado[columnas_editor].copy()
-
             edited_cargas = st.data_editor(
-                edit_source,
+                df_filtrado[columnas_editor],
                 use_container_width=True,
                 num_rows="dynamic",
                 key=f"ed_cargas_{st.session_state.cargas_key}",
             )
 
-            if st.button(
-                "💾 Guardar Cambios en Cargas",
-                type="primary",
-                use_container_width=True,
-            ):
+            if st.button("💾 Guardar Cambios en Cargas", type="primary", use_container_width=True):
                 with st.spinner("Sincronizando correcciones..."):
                     indices_originales = df_filtrado.index.tolist()
                     indices_editados = edited_cargas.index.tolist()
                     df_final = df_full.copy()
 
                     indices_eliminados = [
-                        idx
-                        for idx in indices_originales
-                        if idx not in indices_editados
+                        idx for idx in indices_originales if idx not in indices_editados
                     ]
                     df_final = df_final.drop(indices_eliminados)
 
@@ -942,26 +1383,20 @@ def mostrar_historial_cargas():
                             df_final.loc[idx, columnas_editor] = row.values
                         else:
                             df_final = pd.concat(
-                                [
-                                    df_final,
-                                    pd.DataFrame([row]),
-                                ],
+                                [df_final, pd.DataFrame([row])],
                                 ignore_index=True,
                             )
 
-                    if "FECHA_REAL" in df_final.columns:
-                        df_final = df_final.drop(columns=["FECHA_REAL"])
+                    df_final = df_final.drop(columns=["FECHA_REAL"], errors="ignore")
 
                     conn.update(
                         spreadsheet=URL_PLANILLA,
                         worksheet="DB_CARGAS",
                         data=df_final,
                     )
-
                     st.cache_data.clear()
                     st.session_state.cargas_msg = (
-                        "✅ ¡El historial de cargas fue corregido y "
-                        "actualizado exitosamente!"
+                        "✅ ¡El historial de cargas fue corregido y actualizado exitosamente!"
                     )
                     st.session_state.cargas_key += 1
                     st.rerun()
@@ -971,12 +1406,11 @@ def mostrar_historial_cargas():
 
 
 # ==========================================
-# 9. VISTAS - ADMINISTRACIÓN DE PRODUCTOS
+# 9. ADMIN PRODUCTOS
 # ==========================================
 def siguiente_id_producto(df):
     if df.empty or "ID_PRODUCTO" not in df.columns:
         return 1
-
     serie = pd.to_numeric(df["ID_PRODUCTO"], errors="coerce").dropna()
     return int(serie.max()) + 1 if not serie.empty else 1
 
@@ -1026,13 +1460,10 @@ def mostrar_admin_productos():
 
                 if producto_seleccionado:
                     coincidencias = df_actual[
-                        df_actual["NOMBRE"].astype(str)
-                        == producto_seleccionado
+                        df_actual["NOMBRE"].astype(str) == producto_seleccionado
                     ]
 
-                    if coincidencias.empty:
-                        st.warning("No se encontró el producto seleccionado.")
-                    else:
+                    if not coincidencias.empty:
                         datos_prod = coincidencias.iloc[0]
                         idx_prod = coincidencias.index.tolist()[0]
 
@@ -1041,28 +1472,20 @@ def mostrar_admin_productos():
 
                         with c_actual:
                             st.write("**📝 Datos Actuales:**")
-                            st.write(
-                                f"**Proveedor:** {datos_prod.get('PROVEEDOR', '-')}"
-                            )
-                            st.write(
-                                f"**Costo:** ${entero_seguro(datos_prod.get('COSTO', 0))}"
-                            )
-                            st.write(
-                                f"**Precio:** ${entero_seguro(datos_prod.get('PRECIO_DIA', 0))}"
-                            )
+                            st.write(f"**Proveedor:** {datos_prod.get('PROVEEDOR', '-')}")
+                            st.write(f"**Costo:** ${entero_seguro(datos_prod.get('COSTO', 0))}")
+                            st.write(f"**Precio:** ${entero_seguro(datos_prod.get('PRECIO_DIA', 0))}")
                             st.write(
                                 f"**Margen:** {numero_seguro(datos_prod.get('MARGEN_%', 0)) * 100:.2f}%"
                             )
 
                         with c_nuevo:
                             st.write("**✏️ Completar solo si cambia:**")
-
                             nuevo_prov = st.text_input(
                                 "Nuevo Proveedor:",
                                 value=str(datos_prod.get("PROVEEDOR", "")),
                                 key=f"m_prov_{st.session_state.admin_key}",
                             )
-
                             nuevo_costo = st.number_input(
                                 "Nuevo Costo ($):",
                                 value=entero_seguro(datos_prod.get("COSTO", 0)),
@@ -1070,7 +1493,6 @@ def mostrar_admin_productos():
                                 step=100,
                                 key=f"m_cost_{st.session_state.admin_key}",
                             )
-
                             nuevo_precio = st.number_input(
                                 "Nuevo Precio ($):",
                                 value=entero_seguro(datos_prod.get("PRECIO_DIA", 0)),
@@ -1078,16 +1500,13 @@ def mostrar_admin_productos():
                                 step=100,
                                 key=f"m_prec_{st.session_state.admin_key}",
                             )
-
                             nuevo_margen_calc = (
                                 (nuevo_precio - nuevo_costo) / nuevo_costo
                                 if nuevo_costo > 0
                                 else 0
                             )
-
                             st.info(
-                                f"**Margen Proyectado: "
-                                f"{nuevo_margen_calc * 100:.2f}%**"
+                                f"**Margen Proyectado: {nuevo_margen_calc * 100:.2f}%**"
                             )
 
                         st.write("---")
@@ -1124,7 +1543,6 @@ def mostrar_admin_productos():
                                 "⚠️ Confirmar borrado",
                                 key=f"m_chk_{st.session_state.admin_key}",
                             )
-
                             if st.button(
                                 "🗑️ ELIMINAR",
                                 use_container_width=True,
@@ -1132,7 +1550,6 @@ def mostrar_admin_productos():
                             ):
                                 if confirmar:
                                     df_actual = df_actual.drop(idx_prod)
-
                                     with st.spinner("Eliminando..."):
                                         conn.update(
                                             spreadsheet=URL_PLANILLA,
@@ -1140,7 +1557,6 @@ def mostrar_admin_productos():
                                             data=df_actual,
                                         )
                                         st.cache_data.clear()
-
                                     st.session_state.admin_msg = "🗑️ Producto eliminado."
                                     st.session_state.admin_key += 1
                                     st.rerun()
@@ -1150,53 +1566,40 @@ def mostrar_admin_productos():
         with col_der:
             with st.container(border=True):
                 st.markdown("### ➕ ALTA DE PRODUCTO")
-
-                n_nombre = st.text_input(
-                    "NOMBRE:",
-                    key=f"n_nom_{st.session_state.admin_key}",
-                )
-
+                n_nombre = st.text_input("NOMBRE:", key=f"n_nom_{st.session_state.admin_key}")
                 n_cat = st.selectbox(
                     "CATEGORÍA:",
                     categorias_unicas + ["OTRO..."],
                     key=f"n_cat_{st.session_state.admin_key}",
                 )
-
                 n_prov = st.selectbox(
                     "PROVEEDOR:",
                     proveedores_unicos + ["OTRO..."],
                     key=f"n_prov_{st.session_state.admin_key}",
                 )
-
                 n_unidad = st.selectbox(
                     "UNIDAD:",
                     ["Unidad", "Kg", "Litro"],
                     key=f"n_uni_{st.session_state.admin_key}",
                 )
-
                 n_costo = st.number_input(
-                    "COSTO ($):",
+                    "COSTO ($)",
                     min_value=0,
                     step=100,
                     key=f"n_cost_{st.session_state.admin_key}",
                 )
-
                 n_precio = st.number_input(
-                    "PRECIO VENTA ($):",
+                    "PRECIO VENTA ($)",
                     min_value=0,
                     step=100,
                     key=f"n_prec_{st.session_state.admin_key}",
                 )
-
                 n_margen = (
                     (n_precio - n_costo) / n_costo
                     if n_costo > 0
                     else 0
                 )
-
-                st.info(
-                    f"**Margen Estimado: {n_margen * 100:.2f}%**"
-                )
+                st.info(f"**Margen Estimado: {n_margen * 100:.2f}%**")
 
                 if st.button(
                     "➕ CREAR PRODUCTO",
@@ -1210,38 +1613,28 @@ def mostrar_admin_productos():
                         st.error("⚠️ El precio debe ser mayor a 0.")
                     else:
                         nuevo_id = siguiente_id_producto(df_actual)
-
-                        nuevo_registro = pd.DataFrame(
-                            [
-                                {
-                                    "ID_PRODUCTO": nuevo_id,
-                                    "NOMBRE": n_nombre,
-                                    "CATEGORIA": n_cat,
-                                    "PROVEEDOR": n_prov,
-                                    "UNIDAD": n_unidad,
-                                    "COSTO": n_costo,
-                                    "MARGEN_%": n_margen,
-                                    "PRECIO_DIA": n_precio,
-                                    "PRECIO_NOCHE": n_precio,
-                                    "FECHA_ACT": fecha_act_texto(),
-                                }
-                            ]
-                        )
-
+                        nuevo_registro = pd.DataFrame([
+                            {
+                                "ID_PRODUCTO": nuevo_id,
+                                "NOMBRE": n_nombre,
+                                "CATEGORIA": n_cat,
+                                "PROVEEDOR": n_prov,
+                                "UNIDAD": n_unidad,
+                                "COSTO": n_costo,
+                                "MARGEN_%": n_margen,
+                                "PRECIO_DIA": n_precio,
+                                "PRECIO_NOCHE": n_precio,
+                                "FECHA_ACT": fecha_act_texto(),
+                            }
+                        ])
                         with st.spinner("Creando producto..."):
                             conn.update(
                                 spreadsheet=URL_PLANILLA,
                                 worksheet="DB_PRODUCTOS",
-                                data=pd.concat(
-                                    [df_actual, nuevo_registro],
-                                    ignore_index=True,
-                                ),
+                                data=pd.concat([df_actual, nuevo_registro], ignore_index=True),
                             )
                             st.cache_data.clear()
-
-                        st.session_state.admin_msg = (
-                            f"✅ ¡{n_nombre} añadido al catálogo!"
-                        )
+                        st.session_state.admin_msg = f"✅ ¡{n_nombre} añadido al catálogo!"
                         st.session_state.admin_key += 1
                         st.rerun()
 
@@ -1250,11 +1643,11 @@ def mostrar_admin_productos():
 
 
 # ==========================================
-# 10. VISTAS - HISTORIAL DE ÍTEMS
+# 10. HISTORIAL DE ÍTEMS
 # ==========================================
 def mostrar_historial():
     st.title("📜 Historial de Ítems")
-    st.caption("Auditoría de ventas y recalculo automático de caja")
+    st.caption("Auditoría de ventas y recálculo automático de caja")
 
     if "hist_msg" in st.session_state:
         st.success(st.session_state.hist_msg)
@@ -1262,37 +1655,27 @@ def mostrar_historial():
 
     try:
         conn = obtener_conexion()
-
         df_historial = conn.read(
             spreadsheet=URL_PLANILLA,
             worksheet="DB_HISTORIAL_ITEMS",
             ttl=0,
         )
-
         df_caja = conn.read(
             spreadsheet=URL_PLANILLA,
             worksheet="DB_MOVIMIENTOS_CAJA",
             ttl=0,
         )
 
-        df_historial = normalizar_fecha_columna(df_historial)
+        normalizar_fecha_columna(df_historial)
 
         with st.container(border=True):
-            col1, col2 = st.columns([3, 7])
+            col1, col2 = st.columns([3, 7], gap="large")
 
             with col1:
-                fecha_elegida = st.date_input(
-                    "🗓️ Filtrar por Día:",
-                    ahora_ar().date(),
-                )
-                palabra_clave = st.text_input(
-                    "🔍 Buscar producto específico:"
-                )
+                fecha_elegida = st.date_input("🗓️ Filtrar por Día:", ahora_ar().date())
+                palabra_clave = st.text_input("🔍 Buscar producto específico:")
 
-            mask_fecha = (
-                df_historial["FECHA_REAL"].dt.date == fecha_elegida
-            )
-
+            mask_fecha = df_historial["FECHA_REAL"].dt.date == fecha_elegida
             df_filtrado = df_historial[mask_fecha].copy()
 
             if palabra_clave:
@@ -1311,7 +1694,6 @@ def mostrar_historial():
                     "el Subtotal. **El sistema descontará automáticamente el "
                     "dinero de la Caja.**"
                 )
-
                 columnas_mostrar = [
                     "FECHA",
                     "TICKET_ID",
@@ -1329,21 +1711,10 @@ def mostrar_historial():
                 )
 
                 total_items = sumar_numerico(edited_df, "SUBTOTAL")
-
-                metodo = edited_df["METODO_PAGO"].astype(str).str.upper()
-
-                total_efvo = sumar_numerico(
-                    edited_df.loc[metodo == "EFECTIVO"],
-                    "SUBTOTAL",
-                )
-                total_transf = sumar_numerico(
-                    edited_df.loc[metodo == "TRANSFERENCIA"],
-                    "SUBTOTAL",
-                )
-                total_mixto = sumar_numerico(
-                    edited_df.loc[metodo == "MIXTO"],
-                    "SUBTOTAL",
-                )
+                metodos = edited_df["METODO_PAGO"].astype(str).str.upper()
+                total_efvo = sumar_numerico(edited_df.loc[metodos == "EFECTIVO"], "SUBTOTAL")
+                total_transf = sumar_numerico(edited_df.loc[metodos == "TRANSFERENCIA"], "SUBTOTAL")
+                total_mixto = sumar_numerico(edited_df.loc[metodos == "MIXTO"], "SUBTOTAL")
 
                 st.write("---")
                 m1, m2, m3, m4 = st.columns(4)
@@ -1357,17 +1728,13 @@ def mostrar_historial():
                 type="primary",
                 use_container_width=True,
             ):
-                with st.spinner(
-                    "Sincronizando ítems y recalculando cierres de caja..."
-                ):
+                with st.spinner("Sincronizando ítems y recalculando cierres de caja..."):
                     indices_originales = df_filtrado.index.tolist()
                     indices_editados = edited_df.index.tolist()
                     df_final_items = df_historial.copy()
 
                     indices_eliminados = [
-                        idx
-                        for idx in indices_originales
-                        if idx not in indices_editados
+                        idx for idx in indices_originales if idx not in indices_editados
                     ]
                     df_final_items = df_final_items.drop(indices_eliminados)
 
@@ -1376,19 +1743,15 @@ def mostrar_historial():
                             df_final_items.loc[idx, columnas_mostrar] = row.values
                         else:
                             df_final_items = pd.concat(
-                                [
-                                    df_final_items,
-                                    pd.DataFrame([row]),
-                                ],
+                                [df_final_items, pd.DataFrame([row])],
                                 ignore_index=True,
                             )
 
-                    if "FECHA_REAL" in df_final_items.columns:
-                        df_final_items = df_final_items.drop(
-                            columns=["FECHA_REAL"]
-                        )
+                    df_final_items = df_final_items.drop(
+                        columns=["FECHA_REAL"],
+                        errors="ignore",
+                    )
 
-                    # 3. RECÁLCULO AUTOMÁTICO EN LA CAJA ORIGINAL
                     tickets_involucrados = (
                         df_filtrado["TICKET_ID"].dropna().unique().tolist()
                     )
@@ -1397,11 +1760,7 @@ def mostrar_historial():
                         items_del_ticket = df_final_items[
                             df_final_items["TICKET_ID"] == tid
                         ]
-
-                        new_total = sumar_numerico(
-                            items_del_ticket,
-                            "SUBTOTAL",
-                        )
+                        new_total = sumar_numerico(items_del_ticket, "SUBTOTAL")
 
                         idx_caja_list = df_caja[
                             df_caja["TICKET_ID"] == tid
@@ -1419,72 +1778,42 @@ def mostrar_historial():
                                 diff = old_total - new_total
 
                                 if diff != 0:
-                                    df_caja.at[
-                                        idx_caja,
-                                        "TOTAL_VENTA",
-                                    ] = new_total
-
+                                    df_caja.at[idx_caja, "TOTAL_VENTA"] = new_total
                                     efvo = numero_seguro(
-                                        df_caja.at[
-                                            idx_caja,
-                                            "MONTO_EFECTIVO",
-                                        ]
+                                        df_caja.at[idx_caja, "MONTO_EFECTIVO"]
                                     )
-
                                     transf = numero_seguro(
-                                        df_caja.at[
-                                            idx_caja,
-                                            "MONTO_TRANSF",
-                                        ]
+                                        df_caja.at[idx_caja, "MONTO_TRANSF"]
                                     )
 
                                     if diff > 0:
                                         if efvo >= diff:
-                                            df_caja.at[
-                                                idx_caja,
-                                                "MONTO_EFECTIVO",
-                                            ] = efvo - diff
+                                            df_caja.at[idx_caja, "MONTO_EFECTIVO"] = efvo - diff
                                         else:
-                                            df_caja.at[
-                                                idx_caja,
-                                                "MONTO_EFECTIVO",
-                                            ] = 0
-                                            df_caja.at[
-                                                idx_caja,
-                                                "MONTO_TRANSF",
-                                            ] = max(
+                                            df_caja.at[idx_caja, "MONTO_EFECTIVO"] = 0
+                                            df_caja.at[idx_caja, "MONTO_TRANSF"] = max(
                                                 0,
                                                 transf - (diff - efvo),
                                             )
-
                                     else:
                                         if transf > 0 and efvo == 0:
-                                            df_caja.at[
-                                                idx_caja,
-                                                "MONTO_TRANSF",
-                                            ] = transf - diff
+                                            df_caja.at[idx_caja, "MONTO_TRANSF"] = transf - diff
                                         else:
-                                            df_caja.at[
-                                                idx_caja,
-                                                "MONTO_EFECTIVO",
-                                            ] = efvo - diff
+                                            df_caja.at[idx_caja, "MONTO_EFECTIVO"] = efvo - diff
 
                     conn.update(
                         spreadsheet=URL_PLANILLA,
                         worksheet="DB_HISTORIAL_ITEMS",
                         data=df_final_items,
                     )
-
                     conn.update(
                         spreadsheet=URL_PLANILLA,
                         worksheet="DB_MOVIMIENTOS_CAJA",
                         data=df_caja,
                     )
-
                     st.cache_data.clear()
                     st.session_state.hist_msg = (
-                        "✅ ¡Los ítems fueron corregidos y la Caja fue "
-                        "recalculada perfectamente!"
+                        "✅ ¡Los ítems fueron corregidos y la Caja fue recalculada perfectamente!"
                     )
                     st.session_state.hist_key += 1
                     st.rerun()
@@ -1494,179 +1823,13 @@ def mostrar_historial():
 
 
 # ==========================================
-# 11. VISTAS - VISOR / DASHBOARD
+# 11. VISOR / DASHBOARD
 # ==========================================
 def mostrar_visor():
-    # CSS propio del visor: mantiene la distribución de la planilla
-    # pero con mejor adaptación a pantallas y tipografía.
     st.markdown(
         """
         <style>
-        /* ======================================================
-           VISOR — DASHBOARD MODERNO
-           ====================================================== */
-        .visor-title {
-            font-size: clamp(1.8rem, 2.8vw, 2.5rem);
-            font-weight: 850;
-            letter-spacing: -0.045em;
-            margin: 0 0 0.9rem 0;
-            color: #0f172a;
-        }
-
-        .visor-grid-wrapper {
-            width: 100%;
-            overflow-x: auto;
-            padding: 2px;
-        }
-
-        .visor-grid {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-            column-gap: 22px;
-            row-gap: 22px;
-            width: 100%;
-            margin-top: 8px;
-        }
-
-        .visor-card {
-            border: 1px solid rgba(15, 23, 42, 0.12);
-            background: #ffffff;
-            overflow: hidden;
-            box-sizing: border-box;
-            width: 100%;
-            border-radius: 16px;
-            box-shadow: 0 7px 22px rgba(15, 23, 42, 0.07);
-            transition: transform 0.15s ease, box-shadow 0.15s ease;
-        }
-
-        .visor-card:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 11px 28px rgba(15, 23, 42, 0.10);
-        }
-
-        .visor-header {
-            min-height: 50px;
-            display: flex;
-            align-items: center;
-            padding: 7px 13px;
-            box-sizing: border-box;
-            font-size: clamp(19px, 1.45vw, 27px);
-            font-weight: 850;
-            line-height: 1.05;
-            letter-spacing: -0.025em;
-        }
-
-        .visor-body {
-            padding: 9px 13px 0 13px;
-            box-sizing: border-box;
-        }
-
-        .visor-line {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
-            align-items: center;
-            min-height: 40px;
-            font-size: clamp(17px, 1.22vw, 23px);
-            line-height: 1.05;
-            color: #111827;
-            column-gap: 12px;
-        }
-
-        .visor-label {
-            white-space: nowrap;
-            font-weight: 540;
-        }
-
-        .visor-value {
-            text-align: right;
-            white-space: nowrap;
-            font-variant-numeric: tabular-nums;
-            font-weight: 600;
-        }
-
-        .visor-separator {
-            height: 1px;
-            background: rgba(15, 23, 42, 0.14);
-            margin-top: 5px;
-        }
-
-        .visor-total {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
-            align-items: center;
-            min-height: 70px;
-            font-size: clamp(18px, 1.28vw, 25px);
-            line-height: 1.05;
-            color: #111827;
-            column-gap: 12px;
-        }
-
-        .visor-total-label {
-            font-weight: 700;
-        }
-
-        .visor-total-value {
-            font-size: clamp(29px, 2.15vw, 40px);
-            font-weight: 900;
-            text-align: right;
-            white-space: nowrap;
-            font-variant-numeric: tabular-nums;
-            letter-spacing: -0.045em;
-        }
-
-        .visor-profit {
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
-            align-items: stretch;
-            min-height: 48px;
-            border-top: 1px solid rgba(15, 23, 42, 0.14);
-            font-size: clamp(16px, 1.06vw, 20px);
-            font-weight: 800;
-            line-height: 1.05;
-            color: #5f666d;
-        }
-
-        .visor-profit > div:first-child {
-            display: flex;
-            align-items: center;
-            padding-left: 2px;
-        }
-
-        .visor-profit-value {
-            align-self: stretch;
-            display: flex;
-            align-items: center;
-            justify-content: flex-end;
-            padding: 0 12px;
-            min-width: 175px;
-            box-sizing: border-box;
-            color: #ffffff;
-            font-size: clamp(23px, 1.48vw, 29px);
-            font-weight: 900;
-            white-space: nowrap;
-            font-variant-numeric: tabular-nums;
-            letter-spacing: -0.03em;
-        }
-
-        .visor-secondary {
-            display: flex;
-            justify-content: flex-end;
-            align-items: center;
-            min-height: 34px;
-            font-size: clamp(16px, 1.10vw, 22px);
-            color: #64748b;
-            white-space: nowrap;
-            font-variant-numeric: tabular-nums;
-            margin-top: -3px;
-        }
-
-        @media (max-width: 1050px) {
-            .visor-grid {
-                grid-template-columns: 1fr;
-                column-gap: 0;
-                row-gap: 18px;
-            }
-        }
+        .visor-title { font-size: clamp(1.8rem, 2.8vw, 2.5rem); font-weight: 850; letter-spacing: -0.045em; margin: 0 0 .8rem 0; color:#0f172a; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -1674,10 +1837,8 @@ def mostrar_visor():
 
     def visor_header(titulo, fondo, texto="#FFFFFF"):
         return (
-            f'<div class="visor-header" '
-            f'style="background:{fondo};color:{texto};">'
-            f'{html.escape(titulo)}'
-            f'</div>'
+            f'<div class="visor-header" style="background:{fondo};color:{texto};">'
+            f'{html.escape(titulo)}</div>'
         )
 
     def visor_line(label, valor):
@@ -1690,7 +1851,6 @@ def mostrar_visor():
 
     try:
         conn = obtener_conexion()
-
         df_caja = conn.read(
             spreadsheet=URL_PLANILLA,
             worksheet="DB_MOVIMIENTOS_CAJA",
@@ -1723,33 +1883,18 @@ def mostrar_visor():
                 ahora_ar().date(),
             )
 
-        df_hoy_caja = df_caja[
-            df_caja["FECHA_REAL"].dt.date == fecha_elegida
-        ].copy()
+        df_hoy_caja = df_caja[df_caja["FECHA_REAL"].dt.date == fecha_elegida].copy()
+        df_hoy_cargas = df_cargas[df_cargas["FECHA_REAL"].dt.date == fecha_elegida].copy()
+        df_hoy_gastos = df_gastos[df_gastos["FECHA_REAL"].dt.date == fecha_elegida].copy()
 
-        df_hoy_cargas = df_cargas[
-            df_cargas["FECHA_REAL"].dt.date == fecha_elegida
-        ].copy()
-
-        df_hoy_gastos = df_gastos[
-            df_gastos["FECHA_REAL"].dt.date == fecha_elegida
-        ].copy()
-
-        # --------------------------
-        # CAJA A - DRUGSTORE
-        # --------------------------
         a_efvo = sumar_numerico(df_hoy_caja, "MONTO_EFECTIVO")
         a_transf = sumar_numerico(df_hoy_caja, "MONTO_TRANSF")
         a_total = sumar_numerico(df_hoy_caja, "TOTAL_VENTA")
         a_ganancia = a_total * 0.10
 
-        # --------------------------
-        # CAJAS B / C / E
-        # --------------------------
         b_efvo = b_transf = b_total = 0.0
         c_efvo = c_transf = c_total = 0.0
         e_efvo = e_transf = e_total = 0.0
-
         recargas_transferencias_total = 0.0
         sube_mp_capital = 0.0
 
@@ -1759,69 +1904,31 @@ def mostrar_visor():
             monto_adic = numero_seguro(row.get("MONTO_ADICIONAL", 0))
             pago_transf = numero_seguro(row.get("PAGO_TRANSF", 0))
 
-            # Todas las transferencias de cargas impactan Caja D.
             recargas_transferencias_total += pago_transf
+            capital_transferido = min(pago_transf, monto_carga)
+            adicional_transferido = max(pago_transf - monto_carga, 0)
 
-            # Se conserva la misma convención contable de la planilla:
-            # primero se considera capital hasta MONTO_CARGA y el excedente
-            # de la transferencia pertenece al adicional.
-            capital_transferido = min(
-                pago_transf,
-                monto_carga,
-            )
-
-            adicional_transferido = max(
-                pago_transf - monto_carga,
-                0,
-            )
-
-            # CAJA C - ADICIONALES
             c_total += monto_adic
             c_transf += adicional_transferido
-            c_efvo += max(
-                monto_adic - adicional_transferido,
-                0,
-            )
+            c_efvo += max(monto_adic - adicional_transferido, 0)
 
             if servicio == "CLARO":
-                # CAJA E - CLARO
                 e_total += monto_carga
                 e_transf += capital_transferido
-                e_efvo += max(
-                    monto_carga - capital_transferido,
-                    0,
-                )
-
+                e_efvo += max(monto_carga - capital_transferido, 0)
             elif servicio != "SUBE (MP)":
-                # CAJA B - SUBE / otros servicios de capital
                 b_total += monto_carga
                 b_transf += capital_transferido
-                b_efvo += max(
-                    monto_carga - capital_transferido,
-                    0,
-                )
-
+                b_efvo += max(monto_carga - capital_transferido, 0)
             else:
-                # Capital especial SUBE (MP): no se muestra en B,
-                # pero se descuenta del total disponible en banco.
                 sube_mp_capital += monto_carga
 
-        # --------------------------
-        # GASTOS / RETIROS DEL DÍA
-        # --------------------------
         if not df_hoy_gastos.empty and "METODO_PAGO" in df_hoy_gastos.columns:
-            metodo_gastos = (
-                df_hoy_gastos["METODO_PAGO"]
-                .astype(str)
-                .str.strip()
-                .str.upper()
-            )
-
+            metodo_gastos = df_hoy_gastos["METODO_PAGO"].astype(str).str.strip().str.upper()
             gastos_efvo = sumar_numerico(
                 df_hoy_gastos.loc[metodo_gastos == "EFECTIVO"],
                 "MONTO_SALIDA",
             )
-
             gastos_transf = sumar_numerico(
                 df_hoy_gastos.loc[metodo_gastos == "TRANSFERENCIA"],
                 "MONTO_SALIDA",
@@ -1831,36 +1938,17 @@ def mostrar_visor():
             gastos_transf = 0.0
 
         gastos_total = gastos_efvo + gastos_transf
-
-        # --------------------------
-        # CAJA D - TRANSFERENCIAS
-        # --------------------------
         d_ventas_drugstore = a_transf
         d_recargas = recargas_transferencias_total
-        d_total_banco = (
-            d_ventas_drugstore
-            + d_recargas
-            - sube_mp_capital
-            - gastos_transf
-        )
-
-        # La segunda cifra visible a la derecha del efectivo de Caja A
-        # conserva exactamente el criterio utilizado en el visor actual.
+        d_total_banco = d_ventas_drugstore + d_recargas - sube_mp_capital - gastos_transf
         efectivo_disponible = a_efvo - d_recargas
 
-        # --------------------------
-        # TARJETAS DEL VISOR
-        # --------------------------
         caja_a = (
             '<div class="visor-card">'
             + visor_header("CAJA A - DRUGSTORE", "#0000FF")
             + '<div class="visor-body">'
             + visor_line("(+) EFECTIVO:", a_efvo)
-            + (
-                '<div class="visor-secondary">'
-                f'{dinero(efectivo_disponible)}'
-                '</div>'
-            )
+            + f'<div class="visor-secondary">{dinero(efectivo_disponible)}</div>'
             + visor_line("(+) TRANSFERENCIAS:", a_transf)
             + '<div class="visor-separator"></div>'
             + (
@@ -1872,23 +1960,16 @@ def mostrar_visor():
             + (
                 '<div class="visor-profit">'
                 '<div>GANANCIA ESTIMADA (10%):</div>'
-                '<div class="visor-profit-value" '
-                'style="background:#0000FF;">'
-                f'{dinero(a_ganancia)}'
-                '</div>'
+                '<div class="visor-profit-value" style="background:#0000FF;">'
+                f'{dinero(a_ganancia)}</div>'
                 '</div>'
             )
-            + '</div>'
-            + '</div>'
+            + '</div></div>'
         )
 
         caja_b = (
             '<div class="visor-card">'
-            + visor_header(
-                "CAJA B - SUBE (Solo Capital)",
-                "#FF9900",
-                "#111111",
-            )
+            + visor_header("CAJA B - SUBE (Solo Capital)", "#FF9900", "#111111")
             + '<div class="visor-body">'
             + visor_line("(+) INGRESOS EFECTIVO:", b_efvo)
             + visor_line("(+) INGRESOS TRANSF:", b_transf)
@@ -1899,16 +1980,12 @@ def mostrar_visor():
                 f'<div class="visor-total-value">{dinero(b_total)}</div>'
                 '</div>'
             )
-            + '</div>'
-            + '</div>'
+            + '</div></div>'
         )
 
         caja_c = (
             '<div class="visor-card">'
-            + visor_header(
-                "CAJA C - ADICIONALES (Ganancia)",
-                "#38761D",
-            )
+            + visor_header("CAJA C - ADICIONALES (Ganancia)", "#38761D")
             + '<div class="visor-body">'
             + visor_line("(+) EFECTIVO:", c_efvo)
             + visor_line("(+) TRANSFERENCIA:", c_transf)
@@ -1919,45 +1996,29 @@ def mostrar_visor():
                 f'<div class="visor-total-value">{dinero(c_total)}</div>'
                 '</div>'
             )
-            + '</div>'
-            + '</div>'
+            + '</div></div>'
         )
 
         caja_d = (
             '<div class="visor-card">'
-            + visor_header(
-                "CAJA D - TRANSFERENCIAS (Total)",
-                "#9900FF",
-            )
+            + visor_header("CAJA D - TRANSFERENCIAS (Total)", "#9900FF")
             + '<div class="visor-body">'
-            + visor_line(
-                "DE VENTAS DRUGSTORE:",
-                d_ventas_drugstore,
-            )
-            + visor_line(
-                "DE RECARGAS (Todas):",
-                d_recargas,
-            )
+            + visor_line("DE VENTAS DRUGSTORE:", d_ventas_drugstore)
+            + visor_line("DE RECARGAS (Todas):", d_recargas)
             + '<div class="visor-separator"></div>'
             + (
                 '<div class="visor-total">'
                 '<div class="visor-total-label">TOTAL EN BANCO:</div>'
-                '<div class="visor-total-value" '
-                'style="background:#DDDDDD;padding:7px 10px;">'
-                f'{dinero(d_total_banco)}'
-                '</div>'
+                '<div class="visor-total-value" style="background:#D9D9D9;padding:7px 10px;">'
+                f'{dinero(d_total_banco)}</div>'
                 '</div>'
             )
-            + '</div>'
-            + '</div>'
+            + '</div></div>'
         )
 
         caja_e = (
             '<div class="visor-card">'
-            + visor_header(
-                "CAJA E - CLARO (Solo Capital)",
-                "#FF0000",
-            )
+            + visor_header("CAJA E - CLARO (Solo Capital)", "#FF0000")
             + '<div class="visor-body">'
             + visor_line("(+) INGRESOS EFECTIVO:", e_efvo)
             + visor_line("(+) INGRESOS TRANSF:", e_transf)
@@ -1968,25 +2029,15 @@ def mostrar_visor():
                 f'<div class="visor-total-value">{dinero(e_total)}</div>'
                 '</div>'
             )
-            + '</div>'
-            + '</div>'
+            + '</div></div>'
         )
 
         caja_gastos = (
             '<div class="visor-card">'
-            + visor_header(
-                "GASTOS / RETIROS DEL DÍA",
-                "#000000",
-            )
+            + visor_header("GASTOS / RETIROS DEL DÍA", "#000000")
             + '<div class="visor-body">'
-            + visor_line(
-                "(-) SALIDAS EFECTIVO:",
-                gastos_efvo,
-            )
-            + visor_line(
-                "(-) SALIDAS TRANSF:",
-                gastos_transf,
-            )
+            + visor_line("(-) SALIDAS EFECTIVO:", gastos_efvo)
+            + visor_line("(-) SALIDAS TRANSF:", gastos_transf)
             + '<div class="visor-separator"></div>'
             + (
                 '<div class="visor-total">'
@@ -1994,21 +2045,13 @@ def mostrar_visor():
                 f'<div class="visor-total-value">{dinero(gastos_total)}</div>'
                 '</div>'
             )
-            + '</div>'
-            + '</div>'
+            + '</div></div>'
         )
 
         st.markdown(
-            '<div class="visor-grid-wrapper">'
-            '<div class="visor-grid">'
-            + caja_a
-            + caja_b
-            + caja_c
-            + caja_d
-            + caja_e
-            + caja_gastos
-            + '</div>'
-            '</div>',
+            '<div class="visor-grid-wrapper"><div class="visor-grid">'
+            + caja_a + caja_b + caja_c + caja_d + caja_e + caja_gastos
+            + '</div></div>',
             unsafe_allow_html=True,
         )
 
@@ -2017,15 +2060,14 @@ def mostrar_visor():
 
 
 # ==========================================
-# 12. VISTAS - PREVENTISTAS
+# 12. PREVENTISTAS
 # ==========================================
 def mostrar_preventistas():
     st.title("🚚 Catálogo por Preventista")
     st.caption("Actualiza costos y precios por proveedor directamente desde la tabla")
 
     st.write(
-        "Selecciona un proveedor, edita los precios directamente en la tabla "
-        "o da de alta un producto nuevo."
+        "Selecciona un proveedor, edita los precios directamente en la tabla o da de alta un producto nuevo."
     )
 
     if "prev_msg" in st.session_state:
@@ -2039,25 +2081,14 @@ def mostrar_preventistas():
             worksheet="DB_PRODUCTOS",
             ttl=0,
         )
-
-        if "NOMBRE" in df_productos.columns:
-            df_productos = df_productos.dropna(subset=["NOMBRE"]).copy()
+        df_productos = df_productos.dropna(subset=["NOMBRE"]).copy()
 
         if not df_productos.empty:
             proveedores_unicos = sorted(
-                df_productos["PROVEEDOR"]
-                .dropna()
-                .astype(str)
-                .unique()
-                .tolist()
+                df_productos["PROVEEDOR"].dropna().astype(str).unique().tolist()
             )
-
             categorias_unicas = sorted(
-                df_productos["CATEGORIA"]
-                .dropna()
-                .astype(str)
-                .unique()
-                .tolist()
+                df_productos["CATEGORIA"].dropna().astype(str).unique().tolist()
             )
 
             with st.container(border=True):
@@ -2068,79 +2099,43 @@ def mostrar_preventistas():
 
                 if proveedor_elegido:
                     df_filtrado = df_productos[
-                        df_productos["PROVEEDOR"].astype(str)
-                        == proveedor_elegido
+                        df_productos["PROVEEDOR"].astype(str) == proveedor_elegido
                     ]
-
                     st.write(
-                        f"### Productos de: **{proveedor_elegido}** "
-                        f"({len(df_filtrado)} ítems)"
+                        f"### Productos de: **{proveedor_elegido}** ({len(df_filtrado)} ítems)"
                     )
-
                     st.info(
                         "💡 **Tip:** Edita el Costo o el Precio y presiona Enter "
                         "(o toca afuera de la celda). Verás cómo el porcentaje "
                         "de Ganancia se recalcula **en vivo** en la tabla."
                     )
 
-                    columnas_mostrar = [
-                        "NOMBRE",
-                        "COSTO",
-                        "PRECIO_DIA",
-                        "MARGEN_%",
-                    ]
-
+                    columnas_mostrar = ["NOMBRE", "COSTO", "PRECIO_DIA", "MARGEN_%"]
                     df_edicion = df_filtrado[columnas_mostrar].copy()
-
                     df_edicion["MARGEN_%"] = (
-                        pd.to_numeric(
-                            df_edicion["MARGEN_%"],
-                            errors="coerce",
-                        )
-                        .fillna(0)
-                        * 100
+                        pd.to_numeric(df_edicion["MARGEN_%"], errors="coerce").fillna(0) * 100
                     ).round(1)
 
-                    editor_key = (
-                        f"ed_prev_{st.session_state.prev_key}_"
-                        f"{proveedor_elegido}"
-                    )
+                    editor_key = f"ed_prev_{st.session_state.prev_key}_{proveedor_elegido}"
 
                     if editor_key in st.session_state:
-                        cambios_en_vivo = st.session_state[editor_key].get(
-                            "edited_rows",
-                            {},
-                        )
-
+                        cambios_en_vivo = st.session_state[editor_key].get("edited_rows", {})
                         for row_pos_str, mods in cambios_en_vivo.items():
                             row_pos = int(row_pos_str)
-
                             if row_pos < len(df_edicion):
                                 real_idx = df_edicion.index[row_pos]
-
                                 c_val = numero_seguro(
-                                    mods.get(
-                                        "COSTO",
-                                        df_edicion.at[real_idx, "COSTO"],
-                                    )
+                                    mods.get("COSTO", df_edicion.at[real_idx, "COSTO"])
                                 )
                                 p_val = numero_seguro(
-                                    mods.get(
-                                        "PRECIO_DIA",
-                                        df_edicion.at[real_idx, "PRECIO_DIA"],
-                                    )
+                                    mods.get("PRECIO_DIA", df_edicion.at[real_idx, "PRECIO_DIA"])
                                 )
-
                                 calc_margen = (
                                     ((p_val - c_val) / c_val) * 100
                                     if c_val > 0
                                     else 0.0
                                 )
-
-                                df_edicion.at[
-                                    real_idx,
-                                    "MARGEN_%",
-                                ] = round(calc_margen, 1)
+                                df_edicion.at[real_idx, "MARGEN_%"] = round(calc_margen, 1)
 
                     edited_df = st.data_editor(
                         df_edicion,
@@ -2149,56 +2144,31 @@ def mostrar_preventistas():
                         hide_index=True,
                         disabled=["NOMBRE", "MARGEN_%"],
                         column_config={
-                            "NOMBRE": st.column_config.TextColumn(
-                                "PRODUCTO"
-                            ),
-                            "COSTO": st.column_config.NumberColumn(
-                                "COSTO ($)",
-                                min_value=0,
-                                step=100,
-                            ),
-                            "PRECIO_DIA": st.column_config.NumberColumn(
-                                "PRECIO VENTA ($)",
-                                min_value=0,
-                                step=100,
-                            ),
-                            "MARGEN_%": st.column_config.NumberColumn(
-                                "GANANCIA (%)",
-                                format="%.1f %%",
-                            ),
+                            "NOMBRE": st.column_config.TextColumn("PRODUCTO"),
+                            "COSTO": st.column_config.NumberColumn("COSTO ($)", min_value=0, step=100),
+                            "PRECIO_DIA": st.column_config.NumberColumn("PRECIO VENTA ($)", min_value=0, step=100),
+                            "MARGEN_%": st.column_config.NumberColumn("GANANCIA (%)", format="%.1f %%"),
                         },
                     )
 
-                    if st.button(
-                        "💾 Guardar Nuevos Precios",
-                        type="primary",
-                        use_container_width=True,
-                    ):
-                        with st.spinner(
-                            "Actualizando catálogo en la nube..."
-                        ):
+                    if st.button("💾 Guardar Nuevos Precios", type="primary", use_container_width=True):
+                        with st.spinner("Actualizando catálogo en la nube..."):
                             cambios_realizados = False
-
                             for idx, row in edited_df.iterrows():
                                 n_costo = numero_seguro(row["COSTO"])
                                 n_precio = numero_seguro(row["PRECIO_DIA"])
-                                c_viejo = numero_seguro(
-                                    df_filtrado.loc[idx, "COSTO"]
-                                )
-                                p_viejo = numero_seguro(
-                                    df_filtrado.loc[idx, "PRECIO_DIA"]
-                                )
+                                c_viejo = numero_seguro(df_filtrado.loc[idx, "COSTO"])
+                                p_viejo = numero_seguro(df_filtrado.loc[idx, "PRECIO_DIA"])
 
                                 if n_costo != c_viejo or n_precio != p_viejo:
                                     df_productos.at[idx, "COSTO"] = n_costo
                                     df_productos.at[idx, "PRECIO_DIA"] = n_precio
                                     df_productos.at[idx, "PRECIO_NOCHE"] = n_precio
-                                    n_margen = (
+                                    df_productos.at[idx, "MARGEN_%"] = (
                                         (n_precio - n_costo) / n_costo
                                         if n_costo > 0
                                         else 0
                                     )
-                                    df_productos.at[idx, "MARGEN_%"] = n_margen
                                     df_productos.at[idx, "FECHA_ACT"] = fecha_act_texto()
                                     cambios_realizados = True
 
@@ -2209,65 +2179,24 @@ def mostrar_preventistas():
                                     data=df_productos,
                                 )
                                 st.cache_data.clear()
-                                st.session_state.prev_msg = (
-                                    "✅ ¡Los precios de este proveedor "
-                                    "fueron actualizados!"
-                                )
+                                st.session_state.prev_msg = "✅ ¡Los precios de este proveedor fueron actualizados!"
                                 st.session_state.prev_key += 1
                                 st.rerun()
                             else:
-                                st.warning(
-                                    "No detecté ninguna modificación "
-                                    "en los números."
-                                )
+                                st.warning("No detecté ninguna modificación en los números.")
 
                     st.write("---")
-
-                    with st.expander(
-                        f"➕ Alta rápida de producto para {proveedor_elegido}"
-                    ):
+                    with st.expander(f"➕ Alta rápida de producto para {proveedor_elegido}"):
                         c1, c2 = st.columns(2)
-
                         with c1:
-                            p_nombre = st.text_input(
-                                "NOMBRE DEL PRODUCTO:",
-                                key=f"p_nom_{st.session_state.prev_key}",
-                            )
-                            p_cat = st.selectbox(
-                                "CATEGORÍA:",
-                                categorias_unicas + ["OTRO..."],
-                                key=f"p_cat_{st.session_state.prev_key}",
-                            )
-                            p_unidad = st.selectbox(
-                                "UNIDAD:",
-                                ["Unidad", "Kg", "Litro"],
-                                key=f"p_uni_{st.session_state.prev_key}",
-                            )
-
+                            p_nombre = st.text_input("NOMBRE DEL PRODUCTO:", key=f"p_nom_{st.session_state.prev_key}")
+                            p_cat = st.selectbox("CATEGORÍA:", categorias_unicas + ["OTRO..."], key=f"p_cat_{st.session_state.prev_key}")
+                            p_unidad = st.selectbox("UNIDAD:", ["Unidad", "Kg", "Litro"], key=f"p_uni_{st.session_state.prev_key}")
                         with c2:
-                            p_costo = st.number_input(
-                                "COSTO ($):",
-                                min_value=0,
-                                step=100,
-                                key=f"p_cost_{st.session_state.prev_key}",
-                            )
-                            p_precio = st.number_input(
-                                "PRECIO VENTA ($):",
-                                min_value=0,
-                                step=100,
-                                key=f"p_prec_{st.session_state.prev_key}",
-                            )
-
-                            p_margen = (
-                                (p_precio - p_costo) / p_costo
-                                if p_costo > 0
-                                else 0
-                            )
-
-                            st.info(
-                                f"**Margen Estimado: "
-                                f"{p_margen * 100:.2f}%**"
-                            )
+                            p_costo = st.number_input("COSTO ($):", min_value=0, step=100, key=f"p_cost_{st.session_state.prev_key}")
+                            p_precio = st.number_input("PRECIO VENTA ($):", min_value=0, step=100, key=f"p_prec_{st.session_state.prev_key}")
+                            p_margen = (p_precio - p_costo) / p_costo if p_costo > 0 else 0
+                            st.info(f"**Margen Estimado: {p_margen * 100:.2f}%**")
 
                         if st.button(
                             "➕ GUARDAR NUEVO PRODUCTO",
@@ -2281,56 +2210,39 @@ def mostrar_preventistas():
                                 st.error("⚠️ El precio debe ser mayor a 0.")
                             else:
                                 nuevo_id = siguiente_id_producto(df_productos)
-
-                                nuevo_registro = pd.DataFrame(
-                                    [
-                                        {
-                                            "ID_PRODUCTO": nuevo_id,
-                                            "NOMBRE": p_nombre,
-                                            "CATEGORIA": p_cat,
-                                            "PROVEEDOR": proveedor_elegido,
-                                            "UNIDAD": p_unidad,
-                                            "COSTO": p_costo,
-                                            "MARGEN_%": p_margen,
-                                            "PRECIO_DIA": p_precio,
-                                            "PRECIO_NOCHE": p_precio,
-                                            "FECHA_ACT": fecha_act_texto(),
-                                        }
-                                    ]
-                                )
-
+                                nuevo_registro = pd.DataFrame([
+                                    {
+                                        "ID_PRODUCTO": nuevo_id,
+                                        "NOMBRE": p_nombre,
+                                        "CATEGORIA": p_cat,
+                                        "PROVEEDOR": proveedor_elegido,
+                                        "UNIDAD": p_unidad,
+                                        "COSTO": p_costo,
+                                        "MARGEN_%": p_margen,
+                                        "PRECIO_DIA": p_precio,
+                                        "PRECIO_NOCHE": p_precio,
+                                        "FECHA_ACT": fecha_act_texto(),
+                                    }
+                                ])
                                 with st.spinner("Creando producto..."):
                                     conn.update(
                                         spreadsheet=URL_PLANILLA,
                                         worksheet="DB_PRODUCTOS",
-                                        data=pd.concat(
-                                            [
-                                                df_productos,
-                                                nuevo_registro,
-                                            ],
-                                            ignore_index=True,
-                                        ),
+                                        data=pd.concat([df_productos, nuevo_registro], ignore_index=True),
                                     )
                                     st.cache_data.clear()
-
-                                st.session_state.prev_msg = (
-                                    f"✅ ¡{p_nombre} añadido al catálogo "
-                                    f"de {proveedor_elegido}!"
-                                )
+                                st.session_state.prev_msg = f"✅ ¡{p_nombre} añadido al catálogo de {proveedor_elegido}!"
                                 st.session_state.prev_key += 1
                                 st.rerun()
-
         else:
             st.warning("No hay productos cargados en la base de datos.")
 
     except Exception as e:
-        st.error(
-            f"Error al cargar el módulo de preventistas. {e}"
-        )
+        st.error(f"Error al cargar el módulo de preventistas. {e}")
 
 
 # ==========================================
-# 13. ENRUTADOR PRINCIPAL (MENÚ LATERAL)
+# 13. ENRUTADOR PRINCIPAL
 # ==========================================
 st.sidebar.image(
     "https://cdn-icons-png.flaticon.com/512/3514/3514491.png",
@@ -2338,6 +2250,7 @@ st.sidebar.image(
 )
 
 st.sidebar.title("Sistema Genaro")
+st.sidebar.caption("POS · Gestión · Control")
 
 menu = st.sidebar.radio(
     "Navegación",
@@ -2354,21 +2267,15 @@ menu = st.sidebar.radio(
 
 if menu == "🛒 Caja":
     mostrar_caja()
-
 elif menu == "📱 Servicios":
     mostrar_servicios()
-
 elif menu == "📋 Historial de Cargas":
     mostrar_historial_cargas()
-
 elif menu == "⚙️ Admin Productos":
     mostrar_admin_productos()
-
 elif menu == "📜 Historial de Ítems":
     mostrar_historial()
-
 elif menu == "📊 Visor (Dashboard)":
     mostrar_visor()
-
 elif menu == "🚚 Preventistas":
     mostrar_preventistas()
