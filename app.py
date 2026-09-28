@@ -543,14 +543,22 @@ def mostrar_historial():
     except Exception as e:
         st.error(f"No se pudo cargar el historial. Detalle: {e}")
 def mostrar_visor():
-    st.title("📊 Dashboard Ejecutivo")
+    st.markdown(
+        """
+        # 📊 Dashboard Ejecutivo
+        """,
+        unsafe_allow_html=True
+    )
+
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
+
         df_caja = conn.read(
             spreadsheet=URL_PLANILLA,
             worksheet="DB_MOVIMIENTOS_CAJA",
             ttl=0
         )
+
         df_cargas = conn.read(
             spreadsheet=URL_PLANILLA,
             worksheet="DB_CARGAS",
@@ -558,21 +566,32 @@ def mostrar_visor():
         )
 
         df_caja["FECHA_REAL"] = pd.to_datetime(
-            df_caja["FECHA"], dayfirst=True, errors="coerce"
+            df_caja["FECHA"],
+            dayfirst=True,
+            errors="coerce"
         )
+
         df_cargas["FECHA_REAL"] = pd.to_datetime(
-            df_cargas["FECHA"], dayfirst=True, errors="coerce"
+            df_cargas["FECHA"],
+            dayfirst=True,
+            errors="coerce"
         )
 
         with st.container(border=True):
             c1, c2, c3 = st.columns([3, 4, 3])
+
             fecha_elegida = c2.date_input(
                 "📅 Seleccionar fecha a consultar:",
                 datetime.datetime.now(ZONA_AR).date()
             )
 
-        df_hoy_caja = df_caja[df_caja["FECHA_REAL"].dt.date == fecha_elegida]
-        df_hoy_cargas = df_cargas[df_cargas["FECHA_REAL"].dt.date == fecha_elegida]
+        df_hoy_caja = df_caja[
+            df_caja["FECHA_REAL"].dt.date == fecha_elegida
+        ]
+
+        df_hoy_cargas = df_cargas[
+            df_cargas["FECHA_REAL"].dt.date == fecha_elegida
+        ]
 
         a_efvo = int(df_hoy_caja["MONTO_EFECTIVO"].sum())
         a_transf = int(df_hoy_caja["MONTO_TRANSF"].sum())
@@ -594,6 +613,7 @@ def mostrar_visor():
                 if total_cobrado > 0
                 else 0
             )
+
             ratio_transf = (
                 float(row.get("PAGO_TRANSF", 0)) / total_cobrado
                 if total_cobrado > 0
@@ -620,28 +640,28 @@ def mostrar_visor():
         with col_izq:
             st.markdown(
                 f"""
-                ### CAJA A - DRUGSTORE
+                CAJA A - DRUGSTORE
 
-                **(+) EFECTIVO:** ${int(a_efvo):,.0f}
+                (+) EFECTIVO:${int(a_efvo):,.0f}
 
-                **(+) TRANSFERENCIAS:** ${int(a_transf):,.0f}
+                (+) TRANSFERENCIAS:${int(a_transf):,.0f}
 
-                **TOTAL VENTAS:** ${int(a_total):,.0f}
+                TOTAL VENTAS:${int(a_total):,.0f}
 
-                **GANANCIA ESTIMADA (10%):** ${int(a_ganancia):,.0f}
+                GANANCIA ESTIMADA (10%):${int(a_ganancia):,.0f}
                 """,
                 unsafe_allow_html=True
             )
 
             st.markdown(
                 f"""
-                ### CAJA C - ADICIONALES (Ganancia)
+                CAJA C - ADICIONALES (Ganancia)
 
-                **(+) EFECTIVO:** ${int(c_efvo):,.0f}
+                (+) EFECTIVO:${int(c_efvo):,.0f}
 
-                **(+) TRANSFERENCIA:** ${int(c_transf):,.0f}
+                (+) TRANSFERENCIA:${int(c_transf):,.0f}
 
-                **TOTAL GANANCIA:** ${int(c_total):,.0f}
+                TOTAL GANANCIA:${int(c_total):,.0f}
                 """,
                 unsafe_allow_html=True
             )
@@ -649,34 +669,32 @@ def mostrar_visor():
         with col_der:
             st.markdown(
                 f"""
-                ### CAJA B - SUBE (Solo Capital)
+                CAJA B - SUBE (Solo Capital)
 
-                **(+) INGRESOS EFECTIVO:** ${int(b_efvo):,.0f}
+                (+) INGRESOS EFECTIVO:${int(b_efvo):,.0f}
 
-                **(+) INGRESOS TRANSF:** ${int(b_transf):,.0f}
+                (+) INGRESOS TRANSF:${int(b_transf):,.0f}
 
-                **TOTAL (Sin Adic):** ${int(b_total):,.0f}
+                TOTAL (Sin Adic):${int(b_total):,.0f}
                 """,
                 unsafe_allow_html=True
             )
 
             st.markdown(
                 f"""
-                ### CAJA E - CLARO (Solo Capital)
+                CAJA E - CLARO (Solo Capital)
 
-                **(+) INGRESOS EFECTIVO:** ${int(e_efvo):,.0f}
+                (+) INGRESOS EFECTIVO:${int(e_efvo):,.0f}
 
-                **(+) INGRESOS TRANSF:** ${int(e_transf):,.0f}
+                (+) INGRESOS TRANSF:${int(e_transf):,.0f}
 
-                **TOTAL (Sin Adic):** ${int(e_total):,.0f}
+                TOTAL (Sin Adic):${int(e_total):,.0f}
                 """,
                 unsafe_allow_html=True
             )
 
     except Exception as e:
         st.error("Error cargando el dashboard.")
-
-
 def mostrar_preventistas():
     st.title("🚚 Catálogo por Preventista")
 
