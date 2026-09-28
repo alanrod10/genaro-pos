@@ -829,60 +829,99 @@ def normalizar_busqueda(valor):
 def buscar_productos_inteligente(df, consulta, limite=15):
     """
     Busca por nombre, proveedor, categoría, unidad o ID.
-    Todos los términos escritos deben existir en algún campo del producto.
-    Los resultados que coinciden en el nombre reciben prioridad.
+    Todos los términos deben aparecer en algún campo del producto.
+    El nombre recibe prioridad en el orden de resultados.
+
+    La búsqueda usa un índice normalizado precalculado por cargar_productos()
+    cuando está disponible, evitando normalizar las ~800 filas en cada tecla.
     """
     if df.empty or not consulta or "NOMBRE" not in df.columns:
         return df.iloc[0:0].copy()
 
-    campos = [
-        campo for campo in [
-            "NOMBRE",
-            "PROVEEDOR",
-            "CATEGORIA",
-            "UNIDAD",
-            "ID_PRODUCTO",
-        ]
-        if campo in df.columns
-    ]
-
     consulta_limpia = normalizar_busqueda(consulta)
     tokens = consulta_limpia.split()
+    if not tokens:
+        return df.iloc[0:0].copy()
 
-    trabajo = df.copy()
-    for campo in campos:
-        trabajo[f"__{campo}"] = trabajo[campo].fillna("").astype(str).map(normalizar_busqueda)
+    # Cargar_productos() prepara estas columnas una sola vez.
+    if "__BUSQ_TEXTO" in df.columns and "__BUSQ_NOMBRE" in df.columns:
+        busqueda_series = df["__BUSQ_TEXTO"]
+        nombre_series = df["__BUSQ_NOMBRE"]
+        trabajo = df
+    else:
+        campos = [
+            campo for campo in [
+                "NOMBRE",
+                "PROVEEDOR",
+                "CATEGORIA",
+                "UNIDAD",
+                "ID_PRODUCTO",
+            ]
+            if campo in df.columns
+        ]
 
-    trabajo["__BUSQUEDA"] = trabajo[
-        [f"__{campo}" for campo in campos]
-    ].agg(" ".join, axis=1)
+        trabajo = df.copy()
+        columnas_busqueda = []
+        for campo in campos:
+            columna_aux = f"__{campo}"
+            trabajo[columna_aux] = (
+                trabajo[campo]
+                .fillna("")
+                .astype(str)
+                .map(normalizar_busqueda)
+            )
+            columnas_busqueda.append(columna_aux)
+
+        busqueda_series = trabajo[columnas_busqueda].agg(" ".join, axis=1)
+        nombre_series = (
+            trabajo["__NOMBRE"]
+            if "__NOMBRE" in trabajo.columns
+            else pd.Series("", index=trabajo.index)
+        )
 
     mask = pd.Series(True, index=trabajo.index)
     for token in tokens:
-        mask &= trabajo["__BUSQUEDA"].str.contains(
+        mask &= busqueda_series.str.contains(
             re.escape(token),
             regex=True,
             na=False,
         )
 
-    resultados = trabajo.loc[mask].copy()
-
-    if resultados.empty:
+    if not mask.any():
         return df.iloc[0:0].copy()
 
-    nombre_norm = resultados["__NOMBRE"] if "__NOMBRE" in resultados else pd.Series("", index=resultados.index)
+    indices = mask[mask].index
+    resultados = trabajo.loc[indices].copy()
+
     resultados["__SCORE"] = 0
     for token in tokens:
-        resultados["__SCORE"] += nombre_norm.str.contains(re.escape(token), regex=True, na=False).astype(int) * 10
-        resultados["__SCORE"] += resultados["__BUSQUEDA"].str.startswith(consulta_limpia, na=False).astype(int) * 2
+        resultados["__SCORE"] += (
+            nombre_series.loc[indices]
+            .str.contains(re.escape(token), regex=True, na=False)
+            .astype(int)
+            * 10
+        )
+        resultados["__SCORE"] += (
+            busqueda_series.loc[indices]
+            .str.startswith(consulta_limpia, na=False)
+            .astype(int)
+            * 2
+        )
 
-    resultados = resultados.sort_values(
-        by=["__SCORE", "__NOMBRE"],
-        ascending=[False, True],
-        kind="stable",
-    ).head(limite)
+    resultados["__NOMBRE_ORDEN"] = nombre_series.loc[indices]
+    resultados = (
+        resultados.sort_values(
+            by=["__SCORE", "__NOMBRE_ORDEN"],
+            ascending=[False, True],
+            kind="stable",
+        )
+        .head(limite)
+    )
 
-    columnas_tmp = [col for col in resultados.columns if col.startswith("__")]
+    columnas_tmp = [
+        col for col in resultados.columns
+        if col.startswith("__")
+    ]
     return resultados.drop(columns=columnas_tmp, errors="ignore")
 
 
@@ -927,7 +966,39 @@ def cargar_productos():
             df = df.dropna(subset=["NOMBRE"]).copy()
             df["NOMBRE"] = df["NOMBRE"].astype(str)
 
+        # Índice de búsqueda precalculado. Se genera una vez cada 10 minutos
+        # y luego el buscador solo consulta strings ya normalizados.
+        campos = [
+            campo for campo in [
+                "NOMBRE",
+                "PROVEEDOR",
+                "CATEGORIA",
+                "UNIDAD",
+                "ID_PRODUCTO",
+            ]
+            if campo in df.columns
+        ]
+
+        partes = []
+        for campo in campos:
+            normalizado = (
+                df[campo]
+                .fillna("")
+                .astype(str)
+                .map(normalizar_busqueda)
+            )
+            partes.append(normalizado)
+            if campo == "NOMBRE":
+                df["__BUSQ_NOMBRE"] = normalizado
+
+        df["__BUSQ_TEXTO"] = (
+            pd.concat(partes, axis=1).fillna("").agg(" ".join, axis=1)
+            if partes
+            else ""
+        )
+
         return df
+
     except Exception:
         return pd.DataFrame()
 
@@ -1003,6 +1074,7 @@ def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
             )
 
         st.session_state.carrito = []
+        cargar_movimientos_resumen.clear()
         return True
 
     except Exception:
@@ -1095,6 +1167,24 @@ def calcular_recargo_automatico():
 # ==========================================
 # 6. CAJA
 # ==========================================
+@st.cache_data(ttl=15)
+def cargar_movimientos_resumen():
+    """Lee movimientos para el resumen de Caja durante 15 segundos.
+
+    El resumen se muestra arriba del buscador, por lo que sin este caché
+    cada tecla en st_keyup provocaría una nueva lectura de Google Sheets.
+    Después de registrar una venta el caché se limpia explícitamente para
+    que el resumen se actualice inmediatamente.
+    """
+    conn = obtener_conexion()
+    df = conn.read(
+        spreadsheet=URL_PLANILLA,
+        worksheet="DB_MOVIMIENTOS_CAJA",
+        ttl=0,
+    )
+    return normalizar_fecha_columna(df)
+
+
 def mostrar_caja():
     st.title("🛒 Caja Registradora")
     st.caption("Punto de venta · búsqueda rápida · cobro en efectivo, transferencia o mixto")
@@ -1104,13 +1194,7 @@ def mostrar_caja():
     # ------------------------------------------
     try:
         ahora = ahora_ar()
-        conn = obtener_conexion()
-        df_hoy = conn.read(
-            spreadsheet=URL_PLANILLA,
-            worksheet="DB_MOVIMIENTOS_CAJA",
-            ttl=0,
-        )
-        normalizar_fecha_columna(df_hoy)
+        df_hoy = cargar_movimientos_resumen()
         fecha_hoy = ahora.date()
         df_hoy = df_hoy[
             df_hoy["FECHA_REAL"].dt.date == fecha_hoy
