@@ -25,131 +25,149 @@ st.set_page_config(
     page_title="Genaro POS",
     page_icon="🛒",
     layout="wide",
+    initial_sidebar_state="auto",
 )
 
 
 def aplicar_estilos_profesionales():
-    """Tema global del POS. Solo modifica presentación, no lógica de negocio."""
+    """Tema claro exclusivo del POS. Solo modifica presentación, no lógica."""
     st.markdown(
         """
         <style>
-        /* ======================================================
-           GENARO POS — UI MODERNA / DESKTOP + CELULAR
-           ====================================================== */
+        /* ==========================================================
+           GENARO POS — LIGHT UI SYSTEM
+           Alta legibilidad · contraste · escritorio + celular
+           ========================================================== */
+
         :root {
-            --g-bg: #f5f7fb;
-            --g-surface: #ffffff;
-            --g-surface-2: #f8fafc;
-            --g-border: rgba(15, 23, 42, 0.10);
-            --g-border-strong: rgba(15, 23, 42, 0.16);
-            --g-text: #0f172a;
-            --g-muted: #64748b;
-            --g-primary: #2563eb;
-            --g-primary-dark: #1d4ed8;
+            color-scheme: light !important;
+            --g-bg: #F3F6FA;
+            --g-surface: #FFFFFF;
+            --g-surface-soft: #F8FAFD;
+            --g-text: #102033;
+            --g-text-strong: #07111F;
+            --g-muted: #5B6B7F;
+            --g-border: #D9E1EA;
+            --g-border-strong: #C3CEDA;
+            --g-primary: #2563EB;
+            --g-primary-dark: #1D4ED8;
+            --g-success: #16A34A;
+            --g-warning: #F59E0B;
+            --g-danger: #DC2626;
+            --g-purple: #7C3AED;
             --g-radius: 16px;
-            --g-shadow: 0 8px 26px rgba(15, 23, 42, 0.065);
+            --g-shadow: 0 8px 24px rgba(15, 23, 42, 0.07);
         }
 
-        /* ---------- Lienzo máximo ---------- */
+        /* ---------- SOLO TEMA CLARO ---------- */
+        html,
+        body,
+        [data-testid="stAppViewContainer"],
+        [data-testid="stHeader"] {
+            color-scheme: light !important;
+        }
+
+        /* Oculta el menú nativo que permite cambiar tema/configuración.
+           El sistema queda visualmente bloqueado en tema claro. */
+        [data-testid="stToolbar"] button[aria-label="Main menu"],
+        button[aria-label="Main menu"] {
+            display: none !important;
+        }
+
+        /* ---------- Lienzo principal ---------- */
         [data-testid="stAppViewContainer"] {
-            background: var(--g-bg);
+            background: var(--g-bg) !important;
         }
 
-        [data-testid="stMainBlockContainer"] {
-            max-width: 100% !important;
-            width: 100% !important;
-            padding-top: 0.85rem !important;
-            padding-bottom: 2rem !important;
-            padding-left: clamp(0.65rem, 1.65vw, 1.65rem) !important;
-            padding-right: clamp(0.65rem, 1.65vw, 1.65rem) !important;
-        }
-
+        [data-testid="stMainBlockContainer"],
         .main .block-container {
-            max-width: 100% !important;
             width: 100% !important;
-            padding-top: 0.85rem !important;
-            padding-bottom: 2rem !important;
-            padding-left: clamp(0.65rem, 1.65vw, 1.65rem) !important;
-            padding-right: clamp(0.65rem, 1.65vw, 1.65rem) !important;
+            max-width: 100% !important;
+            padding-top: 0.80rem !important;
+            padding-bottom: 1.75rem !important;
+            padding-left: clamp(0.55rem, 1.40vw, 1.45rem) !important;
+            padding-right: clamp(0.55rem, 1.40vw, 1.45rem) !important;
         }
 
         html, body, [class*="css"] {
-            font-family: "Segoe UI", Arial, sans-serif;
-            color: var(--g-text);
+            font-family: "Inter", "Segoe UI", Arial, sans-serif;
+            color: var(--g-text) !important;
         }
 
-        /* ---------- Títulos ---------- */
+        /* ---------- Encabezados ---------- */
         h1 {
-            font-size: clamp(1.75rem, 2.7vw, 2.45rem) !important;
-            line-height: 1.05 !important;
+            font-size: clamp(1.75rem, 2.6vw, 2.45rem) !important;
+            line-height: 1.0 !important;
             font-weight: 850 !important;
             letter-spacing: -0.045em !important;
-            color: var(--g-text) !important;
-            margin: 0 0 0.20rem 0 !important;
+            color: var(--g-text-strong) !important;
+            margin: 0 0 0.18rem 0 !important;
         }
 
         h2, h3 {
-            color: var(--g-text) !important;
+            color: var(--g-text-strong) !important;
             letter-spacing: -0.025em !important;
         }
 
         [data-testid="stCaptionContainer"] {
             color: var(--g-muted) !important;
+            font-size: 0.88rem !important;
+            font-weight: 500 !important;
         }
 
         /* ---------- Sidebar ---------- */
         section[data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #0b1220 0%, #111b2d 100%);
-            border-right: 1px solid rgba(255,255,255,0.07);
+            background: linear-gradient(180deg, #0A1730 0%, #102A56 100%) !important;
+            border-right: 1px solid rgba(255,255,255,0.09) !important;
         }
 
         section[data-testid="stSidebar"] > div {
-            padding-top: 0.75rem;
+            padding-top: 0.75rem !important;
         }
 
         section[data-testid="stSidebar"] img {
             display: block;
-            margin: 0 auto 0.45rem auto;
-            max-width: 76px;
+            margin: 0 auto 0.55rem auto;
+            max-width: 78px;
             border-radius: 18px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.18);
         }
 
         section[data-testid="stSidebar"] h1,
         section[data-testid="stSidebar"] h2,
         section[data-testid="stSidebar"] h3,
         section[data-testid="stSidebar"] p,
-        section[data-testid="stSidebar"] label {
-            color: #f8fafc !important;
-        }
-
-        section[data-testid="stSidebar"] h1,
-        section[data-testid="stSidebar"] h2,
-        section[data-testid="stSidebar"] h3 {
-            letter-spacing: -0.02em !important;
+        section[data-testid="stSidebar"] label,
+        section[data-testid="stSidebar"] small {
+            color: #F8FAFC !important;
         }
 
         section[data-testid="stSidebar"] .stRadio > label {
-            font-size: 0.86rem !important;
-            font-weight: 800 !important;
+            font-size: 0.78rem !important;
+            font-weight: 850 !important;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            opacity: 0.72;
         }
 
         section[data-testid="stSidebar"] [role="radiogroup"] {
-            gap: 0.23rem;
+            gap: 0.20rem;
         }
 
         section[data-testid="stSidebar"] [role="radiogroup"] label {
-            border-radius: 11px;
-            padding: 0.34rem 0.48rem;
-            transition: background 0.15s ease;
+            border-radius: 12px;
+            padding: 0.42rem 0.52rem;
+            transition: background 0.15s ease, transform 0.15s ease;
         }
 
         section[data-testid="stSidebar"] [role="radiogroup"] label:hover {
-            background: rgba(255,255,255,0.075);
+            background: rgba(255,255,255,0.095);
+            transform: translateX(1px);
         }
 
         /* ---------- Contenedores ---------- */
         div[data-testid="stVerticalBlockBorderWrapper"] {
-            background: var(--g-surface);
+            background: var(--g-surface) !important;
             border: 1px solid var(--g-border) !important;
             border-radius: var(--g-radius) !important;
             box-shadow: var(--g-shadow);
@@ -157,126 +175,155 @@ def aplicar_estilos_profesionales():
 
         /* ---------- Botones ---------- */
         div.stButton > button {
-            min-height: 42px;
+            min-height: 43px;
             border-radius: 11px !important;
             font-weight: 750 !important;
-            border: 1px solid rgba(15,23,42,0.11) !important;
-            transition: transform 0.12s ease, box-shadow 0.12s ease;
+            font-size: 0.91rem !important;
+            border: 1px solid var(--g-border-strong) !important;
+            color: #17304C !important;
+            background: #FFFFFF !important;
+            transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
         }
 
         div.stButton > button:hover {
             transform: translateY(-1px);
-            box-shadow: 0 7px 18px rgba(15, 23, 42, 0.10);
+            box-shadow: 0 8px 18px rgba(15,23,42,0.10);
         }
 
         div.stButton > button[kind="primary"] {
-            background: linear-gradient(135deg, var(--g-primary), var(--g-primary-dark));
+            background: linear-gradient(135deg, var(--g-primary), var(--g-primary-dark)) !important;
             border-color: transparent !important;
-            color: #ffffff !important;
+            color: #FFFFFF !important;
+            box-shadow: 0 5px 14px rgba(37,99,235,0.24);
+        }
+
+        div.stButton > button[kind="primary"]:hover {
+            filter: brightness(1.035);
         }
 
         /* ---------- Inputs ---------- */
         div[data-baseweb="input"] > div,
         div[data-baseweb="select"] > div,
         div[data-baseweb="textarea"] > div {
-            min-height: 42px;
+            min-height: 43px;
             border-radius: 10px !important;
-            border-color: rgba(15,23,42,0.14) !important;
-            background: #ffffff !important;
+            border: 1px solid var(--g-border-strong) !important;
+            background: #FFFFFF !important;
+            box-shadow: none !important;
+        }
+
+        div[data-baseweb="input"]:focus-within > div,
+        div[data-baseweb="select"]:focus-within > div,
+        div[data-baseweb="textarea"]:focus-within > div {
+            border-color: var(--g-primary) !important;
+            box-shadow: 0 0 0 3px rgba(37,99,235,0.12) !important;
         }
 
         div[data-baseweb="input"] input,
-        div[data-baseweb="textarea"] textarea {
-            color: #0f172a !important;
-            font-weight: 550;
+        div[data-baseweb="textarea"] textarea,
+        div[data-baseweb="select"] * {
+            color: var(--g-text) !important;
         }
 
-        /* ---------- Expander / alerts ---------- */
+        input::placeholder,
+        textarea::placeholder {
+            color: #8290A1 !important;
+            opacity: 1 !important;
+        }
+
+        /* ---------- Radio / Checkbox ---------- */
+        div[data-testid="stRadio"] label,
+        div[data-testid="stCheckbox"] label {
+            color: var(--g-text) !important;
+            font-weight: 600 !important;
+        }
+
+        /* ---------- Expander ---------- */
         div[data-testid="stExpander"] {
             border: 1px solid var(--g-border) !important;
             border-radius: 13px !important;
-            background: rgba(255,255,255,0.85);
+            background: #FFFFFF !important;
         }
 
+        /* ---------- Alertas ---------- */
         div[data-testid="stAlert"] {
             border-radius: 11px !important;
+            border-width: 1px !important;
         }
 
-        /* ---------- Métricas nativas ---------- */
+        /* ---------- Métricas ---------- */
         div[data-testid="stMetric"] {
-            background: #ffffff;
-            border: 1px solid var(--g-border);
-            border-radius: 14px;
-            padding: 0.62rem 0.78rem;
-            box-shadow: 0 5px 18px rgba(15, 23, 42, 0.045);
+            background: #FFFFFF !important;
+            border: 1px solid var(--g-border) !important;
+            border-radius: 14px !important;
+            padding: 0.65rem 0.78rem !important;
+            box-shadow: 0 5px 18px rgba(15,23,42,0.045);
         }
 
         div[data-testid="stMetricLabel"] {
-            color: var(--g-muted);
-            font-weight: 700;
+            color: var(--g-muted) !important;
+            font-weight: 750 !important;
         }
 
         div[data-testid="stMetricValue"] {
-            color: var(--g-text);
-            font-weight: 850 !important;
+            color: var(--g-text-strong) !important;
+            font-weight: 880 !important;
             letter-spacing: -0.04em;
         }
 
         /* ---------- Data editor ---------- */
         div[data-testid="stDataEditor"] {
-            border: 1px solid var(--g-border);
-            border-radius: 12px;
-            overflow: hidden;
-            box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
-            background: #ffffff;
+            border: 1px solid var(--g-border) !important;
+            border-radius: 12px !important;
+            overflow: hidden !important;
+            box-shadow: 0 4px 14px rgba(15,23,42,0.045);
+            background: #FFFFFF !important;
         }
 
         /* ---------- Divisores ---------- */
         hr {
             margin-top: 0.55rem !important;
             margin-bottom: 0.65rem !important;
-            border-color: rgba(15,23,42,0.08) !important;
+            border-color: var(--g-border) !important;
         }
 
         /* ======================================================
-           CAJA — RESUMEN DEL DÍA
+           RESUMEN DE HOY — VISTA CARD
            ====================================================== */
         .resumen-hoy {
-            background: linear-gradient(135deg, #0f172a 0%, #172554 100%);
-            border: 1px solid rgba(255,255,255,0.06);
+            background: linear-gradient(135deg, #123A7A 0%, #2563EB 100%);
             border-radius: 18px;
-            padding: 14px;
-            margin: 0 0 18px 0;
-            box-shadow: 0 12px 30px rgba(15,23,42,0.13);
-            color: #ffffff;
+            padding: 13px;
+            margin: 0 0 17px 0;
+            box-shadow: 0 12px 30px rgba(37,99,235,0.17);
+            color: #FFFFFF;
         }
 
         .resumen-hoy-top {
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
-            gap: 12px;
-            margin-bottom: 12px;
+            gap: 10px;
+            margin-bottom: 11px;
         }
 
         .resumen-hoy-title {
-            font-size: 18px;
-            font-weight: 850;
-            line-height: 1.05;
+            font-size: 19px;
+            font-weight: 900;
             letter-spacing: -0.02em;
         }
 
         .resumen-hoy-date {
-            font-size: 12px;
-            opacity: 0.74;
+            font-size: 11px;
+            opacity: 0.80;
             margin-top: 3px;
         }
 
         .resumen-hoy-badge {
-            font-size: 11px;
-            font-weight: 800;
-            border: 1px solid rgba(255,255,255,0.15);
-            background: rgba(255,255,255,0.07);
+            font-size: 10px;
+            font-weight: 850;
+            border: 1px solid rgba(255,255,255,0.20);
+            background: rgba(255,255,255,0.10);
             border-radius: 999px;
             padding: 5px 8px;
             white-space: nowrap;
@@ -291,21 +338,30 @@ def aplicar_estilos_profesionales():
         .resumen-card {
             min-width: 0;
             border-radius: 13px;
-            background: rgba(255,255,255,0.085);
-            border: 1px solid rgba(255,255,255,0.09);
-            padding: 9px 10px;
+            background: #FFFFFF;
+            color: #102033;
+            border: 1px solid rgba(255,255,255,0.60);
+            border-top: 4px solid rgba(255,255,255,0.95);
+            padding: 8px 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.09);
         }
 
+        .resumen-card:nth-child(2) { border-top-color: #22C55E; }
+        .resumen-card:nth-child(3) { border-top-color: #7C3AED; }
+        .resumen-card:nth-child(4) { border-top-color: #F59E0B; }
+        .resumen-card:nth-child(5) { border-top-color: #0EA5E9; }
+
         .resumen-label {
-            font-size: 11px;
-            opacity: 0.74;
-            font-weight: 700;
+            color: #52657B;
+            font-size: 10px;
+            font-weight: 850;
+            letter-spacing: 0.045em;
             margin-bottom: 3px;
         }
 
         .resumen-value {
-            font-size: clamp(19px, 1.65vw, 27px);
-            line-height: 1.0;
+            font-size: clamp(19px, 1.55vw, 26px);
+            line-height: 1;
             font-weight: 900;
             letter-spacing: -0.04em;
             white-space: nowrap;
@@ -315,40 +371,52 @@ def aplicar_estilos_profesionales():
         }
 
         .resumen-sub {
-            font-size: 10px;
-            opacity: 0.62;
+            color: #75859A;
+            font-size: 9px;
             margin-top: 3px;
         }
 
         /* ======================================================
-           BUSCADOR DE PRODUCTOS — RESULTADOS
+           BUSCADOR
            ====================================================== */
         .busqueda-hint {
-            font-size: 12px;
-            color: #64748b;
-            margin: -6px 0 10px 0;
+            display: inline-block;
+            color: #5B6B7F;
+            background: #EEF4FF;
+            border: 1px solid #CFE0FF;
+            border-radius: 9px;
+            padding: 5px 8px;
+            font-size: 11px;
+            font-weight: 650;
+            margin: -4px 0 9px 0;
         }
 
         .producto-resultado {
-            background: #f8fafc;
-            border: 1px solid rgba(15,23,42,0.085);
+            background: #F8FAFD;
+            border: 1px solid #D9E2EC;
+            border-left: 4px solid #2563EB;
             border-radius: 12px;
             padding: 8px 10px;
-            min-height: 49px;
+            min-height: 51px;
             box-sizing: border-box;
+            box-shadow: 0 2px 7px rgba(15,23,42,0.025);
+        }
+
+        .producto-resultado:hover {
+            background: #F1F6FF;
         }
 
         .producto-nombre {
             font-size: 14px;
             line-height: 1.10;
-            font-weight: 800;
-            color: #0f172a;
+            font-weight: 850;
+            color: #0B1A2B;
         }
 
         .producto-meta {
             font-size: 10.5px;
             line-height: 1.20;
-            color: #64748b;
+            color: #64748B;
             margin-top: 3px;
             white-space: nowrap;
             overflow: hidden;
@@ -356,23 +424,29 @@ def aplicar_estilos_profesionales():
         }
 
         .producto-precio {
-            font-size: 19px;
+            display: inline-block;
+            background: #ECFDF3;
+            border: 1px solid #A7F3C2;
+            border-radius: 10px;
+            padding: 7px 9px;
+            font-size: 16px;
             font-weight: 900;
             line-height: 1;
-            color: #0f172a;
+            color: #116329;
             text-align: right;
             white-space: nowrap;
+            font-variant-numeric: tabular-nums;
         }
 
         /* ======================================================
-           VISOR — DASHBOARD
+           VISOR / DASHBOARD
            ====================================================== */
         .visor-title {
-            font-size: clamp(1.8rem, 2.8vw, 2.5rem);
-            font-weight: 850;
+            font-size: clamp(1.8rem, 2.7vw, 2.45rem);
+            font-weight: 900;
             letter-spacing: -0.045em;
-            margin: 0 0 0.8rem 0;
-            color: #0f172a;
+            margin: 0 0 0.65rem 0;
+            color: #0B1726;
         }
 
         .visor-grid-wrapper {
@@ -384,108 +458,99 @@ def aplicar_estilos_profesionales():
         .visor-grid {
             display: grid;
             grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-            column-gap: 22px;
-            row-gap: 22px;
+            column-gap: 18px;
+            row-gap: 18px;
             width: 100%;
-            margin-top: 8px;
+            margin-top: 7px;
         }
 
         .visor-card {
-            border: 1px solid rgba(15, 23, 42, 0.12);
-            background: #ffffff;
+            border: 1px solid #D6DFE9;
+            background: #FFFFFF;
             overflow: hidden;
             box-sizing: border-box;
             width: 100%;
             border-radius: 16px;
-            box-shadow: 0 7px 22px rgba(15, 23, 42, 0.07);
-            transition: transform 0.15s ease, box-shadow 0.15s ease;
-        }
-
-        .visor-card:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 11px 28px rgba(15, 23, 42, 0.10);
+            box-shadow: 0 8px 20px rgba(15,23,42,0.06);
         }
 
         .visor-header {
-            min-height: 50px;
+            min-height: 49px;
             display: flex;
             align-items: center;
             padding: 7px 13px;
             box-sizing: border-box;
-            font-size: clamp(18px, 1.40vw, 27px);
-            font-weight: 850;
+            font-size: clamp(18px, 1.34vw, 26px);
+            font-weight: 900;
             line-height: 1.05;
             letter-spacing: -0.025em;
         }
 
         .visor-body {
-            padding: 9px 13px 0 13px;
-            box-sizing: border-box;
+            padding: 8px 13px 0 13px;
         }
 
         .visor-line {
             display: grid;
             grid-template-columns: minmax(0, 1fr) auto;
             align-items: center;
-            min-height: 40px;
-            font-size: clamp(16px, 1.15vw, 23px);
+            min-height: 39px;
+            font-size: clamp(16px, 1.10vw, 22px);
             line-height: 1.05;
-            color: #111827;
-            column-gap: 12px;
+            color: #142337;
+            column-gap: 10px;
         }
 
         .visor-label {
             white-space: nowrap;
-            font-weight: 540;
+            font-weight: 650;
         }
 
         .visor-value {
             text-align: right;
             white-space: nowrap;
             font-variant-numeric: tabular-nums;
-            font-weight: 650;
+            font-weight: 750;
         }
 
         .visor-separator {
-            height: 1px;
-            background: rgba(15, 23, 42, 0.13);
-            margin-top: 5px;
+            height: 2px;
+            background: #DDE5EE;
+            margin-top: 4px;
         }
 
         .visor-total {
             display: grid;
             grid-template-columns: minmax(0, 1fr) auto;
             align-items: center;
-            min-height: 70px;
-            font-size: clamp(17px, 1.24vw, 25px);
-            line-height: 1.05;
-            color: #111827;
-            column-gap: 12px;
+            min-height: 68px;
+            font-size: clamp(17px, 1.18vw, 24px);
+            color: #102033;
+            column-gap: 10px;
         }
 
         .visor-total-label {
-            font-weight: 700;
+            font-weight: 800;
         }
 
         .visor-total-value {
-            font-size: clamp(28px, 2.0vw, 40px);
-            font-weight: 900;
+            font-size: clamp(28px, 1.95vw, 38px);
+            font-weight: 950;
             text-align: right;
             white-space: nowrap;
             font-variant-numeric: tabular-nums;
-            letter-spacing: -0.045em;
+            letter-spacing: -0.05em;
         }
 
         .visor-profit {
             display: grid;
             grid-template-columns: minmax(0, 1fr) auto;
             align-items: stretch;
-            min-height: 48px;
-            border-top: 1px solid rgba(15, 23, 42, 0.13);
-            font-size: clamp(15px, 1.00vw, 20px);
-            font-weight: 800;
-            line-height: 1.05;
-            color: #5f666d;
+            min-height: 47px;
+            border-top: 2px solid #DDE5EE;
+            font-size: clamp(15px, 0.96vw, 19px);
+            font-weight: 850;
+            color: #5B6B7F;
         }
 
         .visor-profit > div:first-child {
@@ -500,23 +565,22 @@ def aplicar_estilos_profesionales():
             align-items: center;
             justify-content: flex-end;
             padding: 0 12px;
-            min-width: 175px;
+            min-width: 165px;
             box-sizing: border-box;
-            color: #ffffff;
-            font-size: clamp(22px, 1.42vw, 29px);
-            font-weight: 900;
+            color: #FFFFFF;
+            font-size: clamp(22px, 1.38vw, 28px);
+            font-weight: 950;
             white-space: nowrap;
             font-variant-numeric: tabular-nums;
-            letter-spacing: -0.03em;
         }
 
         .visor-secondary {
             display: flex;
             justify-content: flex-end;
             align-items: center;
-            min-height: 31px;
-            font-size: clamp(15px, 1.05vw, 22px);
-            color: #64748b;
+            min-height: 30px;
+            font-size: clamp(15px, 1.02vw, 20px);
+            color: #708096;
             white-space: nowrap;
             font-variant-numeric: tabular-nums;
             margin-top: -3px;
@@ -527,96 +591,91 @@ def aplicar_estilos_profesionales():
             .resumen-grid {
                 grid-template-columns: repeat(3, minmax(0, 1fr));
             }
-
             .visor-grid {
                 grid-template-columns: 1fr;
-                column-gap: 0;
-                row-gap: 18px;
+                row-gap: 16px;
             }
         }
 
         @media (max-width: 700px) {
             [data-testid="stMainBlockContainer"],
             .main .block-container {
-                padding-left: 0.55rem !important;
-                padding-right: 0.55rem !important;
-                padding-top: 0.65rem !important;
+                padding: 0.55rem 0.45rem 1.5rem 0.45rem !important;
             }
 
             h1 {
-                font-size: 1.72rem !important;
+                font-size: 1.65rem !important;
+            }
+
+            [data-testid="stCaptionContainer"] {
+                font-size: 0.78rem !important;
             }
 
             .resumen-hoy {
-                padding: 11px;
                 border-radius: 15px;
+                padding: 10px;
+                margin-bottom: 12px;
             }
 
             .resumen-grid {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
-                gap: 7px;
+                gap: 6px;
+            }
+
+            .resumen-card:first-child {
+                grid-column: span 2;
             }
 
             .resumen-card {
                 padding: 8px;
+                border-radius: 11px;
             }
 
             .resumen-value {
-                font-size: 20px;
+                font-size: 19px;
             }
 
             .resumen-hoy-badge {
                 display: none;
             }
 
-            .producto-resultado {
-                min-height: 52px;
+            .busqueda-hint {
+                display: block;
+                line-height: 1.25;
             }
 
             .producto-nombre {
                 font-size: 13px;
             }
 
+            .producto-meta {
+                font-size: 9.5px;
+            }
+
             .producto-precio {
-                font-size: 17px;
+                font-size: 15px;
+                padding: 6px 8px;
             }
 
             .visor-header {
                 min-height: 47px;
+                padding-left: 11px;
+                padding-right: 11px;
             }
 
-            .visor-profit-value {
-                min-width: 145px;
-            }
-        }
-
-        @media (max-width: 430px) {
-            .resumen-hoy-top {
-                margin-bottom: 9px;
-            }
-
-            .resumen-grid {
-                gap: 6px;
-            }
-
-            .resumen-label {
-                font-size: 10px;
-            }
-
-            .resumen-value {
-                font-size: 18px;
-            }
-
-            .resumen-sub {
-                font-size: 9px;
+            .visor-body {
+                padding-left: 11px;
+                padding-right: 11px;
             }
 
             .visor-line {
                 font-size: 15px;
+                min-height: 37px;
             }
 
             .visor-total {
                 font-size: 17px;
+                min-height: 62px;
             }
 
             .visor-total-value {
@@ -625,11 +684,48 @@ def aplicar_estilos_profesionales():
 
             .visor-profit {
                 font-size: 14px;
+                min-height: 45px;
             }
 
             .visor-profit-value {
-                min-width: 128px;
-                font-size: 22px;
+                min-width: 130px;
+                font-size: 21px;
+            }
+
+            div.stButton > button {
+                min-height: 45px;
+                font-size: 0.86rem !important;
+            }
+        }
+
+        @media (max-width: 430px) {
+            .resumen-grid {
+                gap: 5px;
+            }
+
+            .resumen-value {
+                font-size: 17px;
+            }
+
+            .visor-line {
+                font-size: 14px;
+            }
+
+            .visor-total {
+                font-size: 16px;
+            }
+
+            .visor-total-value {
+                font-size: 25px;
+            }
+
+            .visor-profit {
+                font-size: 13px;
+            }
+
+            .visor-profit-value {
+                min-width: 118px;
+                font-size: 20px;
             }
         }
 
@@ -1007,6 +1103,7 @@ def mostrar_caja():
     # RESUMEN DE HOY
     # ------------------------------------------
     try:
+        ahora = ahora_ar()
         conn = obtener_conexion()
         df_hoy = conn.read(
             spreadsheet=URL_PLANILLA,
@@ -1014,8 +1111,9 @@ def mostrar_caja():
             ttl=0,
         )
         normalizar_fecha_columna(df_hoy)
+        fecha_hoy = ahora.date()
         df_hoy = df_hoy[
-            df_hoy["FECHA_REAL"].dt.date == ahora_ar().date()
+            df_hoy["FECHA_REAL"].dt.date == fecha_hoy
         ].copy()
 
         hoy_ventas = sumar_numerico(df_hoy, "TOTAL_VENTA")
@@ -1029,7 +1127,7 @@ def mostrar_caja():
             <div class="resumen-hoy-top">
                 <div>
                     <div class="resumen-hoy-title">📈 Resumen de hoy</div>
-                    <div class="resumen-hoy-date">{ahora_ar().strftime('%d/%m/%Y')} · actividad registrada</div>
+                    <div class="resumen-hoy-date">{ahora.strftime('%d/%m/%Y')} · actividad registrada</div>
                 </div>
                 <div class="resumen-hoy-badge">EN TIEMPO REAL</div>
             </div>
@@ -1638,8 +1736,8 @@ def mostrar_admin_productos():
                         st.session_state.admin_key += 1
                         st.rerun()
 
-    except Exception:
-        st.error("Error al cargar el panel de administración.")
+    except Exception as e:
+        st.error(f"Error al cargar el panel de administración. Detalle: {e}")
 
 
 # ==========================================
