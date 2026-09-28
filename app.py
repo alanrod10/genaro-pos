@@ -543,12 +543,199 @@ def mostrar_historial():
     except Exception as e:
         st.error(f"No se pudo cargar el historial. Detalle: {e}")
 def mostrar_visor():
+    import html
+
     st.markdown(
         """
-        # 📊 Dashboard Ejecutivo
+        <style>
+        .visor-title {
+            font-size: 32px;
+            font-weight: 800;
+            margin: 0 0 18px 0;
+            color: #111111;
+        }
+
+        .visor-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            column-gap: 14%;
+            row-gap: 34px;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .visor-card {
+            border: 4px solid #b7b7b7;
+            background: #ffffff;
+            overflow: hidden;
+            box-sizing: border-box;
+            width: 100%;
+        }
+
+        .visor-header {
+            min-height: 46px;
+            display: flex;
+            align-items: center;
+            padding: 4px 10px 5px 10px;
+            box-sizing: border-box;
+            font-size: 29px;
+            font-weight: 800;
+            line-height: 1.05;
+        }
+
+        .visor-body {
+            padding: 8px 10px 0 10px;
+            box-sizing: border-box;
+        }
+
+        .visor-line {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            min-height: 39px;
+            font-size: 26px;
+            line-height: 1.05;
+            color: #111111;
+            column-gap: 12px;
+        }
+
+        .visor-label {
+            white-space: nowrap;
+        }
+
+        .visor-value {
+            text-align: right;
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .visor-separator {
+            height: 5px;
+            background: #b7b7b7;
+            margin-top: 4px;
+        }
+
+        .visor-total {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            min-height: 67px;
+            font-size: 27px;
+            line-height: 1.05;
+            color: #111111;
+            column-gap: 12px;
+        }
+
+        .visor-total-label {
+            font-weight: 400;
+        }
+
+        .visor-total-value {
+            font-size: 40px;
+            font-weight: 900;
+            text-align: right;
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .visor-profit {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            min-height: 45px;
+            border-top: 5px solid #b7b7b7;
+            font-size: 23px;
+            font-weight: 800;
+            line-height: 1.05;
+            color: #5f666d;
+        }
+
+        .visor-profit-value {
+            align-self: stretch;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding: 0 10px;
+            min-width: 215px;
+            box-sizing: border-box;
+            color: #ffffff;
+            font-size: 29px;
+            font-weight: 900;
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .visor-secondary {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            min-height: 39px;
+            font-size: 27px;
+            color: #111111;
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+        }
+
+        @media (max-width: 1100px) {
+            .visor-grid {
+                grid-template-columns: 1fr;
+                column-gap: 0;
+                row-gap: 22px;
+            }
+
+            .visor-header {
+                font-size: 24px;
+            }
+
+            .visor-line {
+                font-size: 21px;
+            }
+
+            .visor-total {
+                font-size: 22px;
+            }
+
+            .visor-total-value {
+                font-size: 32px;
+            }
+
+            .visor-profit {
+                font-size: 19px;
+            }
+
+            .visor-profit-value {
+                min-width: 170px;
+                font-size: 25px;
+            }
+        }
+        </style>
         """,
         unsafe_allow_html=True
     )
+
+    def dinero(valor):
+        try:
+            valor = float(valor)
+        except Exception:
+            valor = 0
+
+        return f"${int(round(valor)):,.0f}"
+
+    def card_header(titulo, fondo, texto="#FFFFFF"):
+        return (
+            f'<div class="visor-header" '
+            f'style="background:{fondo};color:{texto};">'
+            f'{html.escape(titulo)}'
+            f'</div>'
+        )
+
+    def card_line(label, valor):
+        return (
+            '<div class="visor-line">'
+            f'<div class="visor-label">{html.escape(label)}</div>'
+            f'<div class="visor-value">{dinero(valor)}</div>'
+            '</div>'
+        )
 
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
@@ -565,6 +752,16 @@ def mostrar_visor():
             ttl=0
         )
 
+        df_gastos = conn.read(
+            spreadsheet=URL_PLANILLA,
+            worksheet="GASTOS_RETIROS",
+            ttl=0
+        )
+
+        # ==========================
+        # NORMALIZACIÓN DE DATOS
+        # ==========================
+
         df_caja["FECHA_REAL"] = pd.to_datetime(
             df_caja["FECHA"],
             dayfirst=True,
@@ -577,6 +774,21 @@ def mostrar_visor():
             errors="coerce"
         )
 
+        df_gastos["FECHA_REAL"] = pd.to_datetime(
+            df_gastos["FECHA"],
+            dayfirst=True,
+            errors="coerce"
+        )
+
+        # ==========================
+        # SELECTOR DE FECHA
+        # ==========================
+
+        st.markdown(
+            '<div class="visor-title">📊 Dashboard Ejecutivo</div>',
+            unsafe_allow_html=True
+        )
+
         with st.container(border=True):
             c1, c2, c3 = st.columns([3, 4, 3])
 
@@ -585,116 +797,405 @@ def mostrar_visor():
                 datetime.datetime.now(ZONA_AR).date()
             )
 
+        # ==========================
+        # FILTROS POR FECHA
+        # ==========================
+
         df_hoy_caja = df_caja[
             df_caja["FECHA_REAL"].dt.date == fecha_elegida
-        ]
+        ].copy()
 
         df_hoy_cargas = df_cargas[
             df_cargas["FECHA_REAL"].dt.date == fecha_elegida
-        ]
+        ].copy()
 
-        a_efvo = int(df_hoy_caja["MONTO_EFECTIVO"].sum())
-        a_transf = int(df_hoy_caja["MONTO_TRANSF"].sum())
-        a_total = int(df_hoy_caja["TOTAL_VENTA"].sum())
-        a_ganancia = int(a_total * 0.10)
+        df_hoy_gastos = df_gastos[
+            df_gastos["FECHA_REAL"].dt.date == fecha_elegida
+        ].copy()
 
-        b_efvo = b_transf = b_total = 0
-        c_efvo = c_transf = c_total = 0
-        e_efvo = e_transf = e_total = 0
+        # ==========================
+        # CAJA A - DRUGSTORE
+        # ==========================
+
+        a_efvo = pd.to_numeric(
+            df_hoy_caja.get("MONTO_EFECTIVO", 0),
+            errors="coerce"
+        ).fillna(0).sum()
+
+        a_transf = pd.to_numeric(
+            df_hoy_caja.get("MONTO_TRANSF", 0),
+            errors="coerce"
+        ).fillna(0).sum()
+
+        a_total = pd.to_numeric(
+            df_hoy_caja.get("TOTAL_VENTA", 0),
+            errors="coerce"
+        ).fillna(0).sum()
+
+        a_ganancia = a_total * 0.10
+
+        # ==========================
+        # VARIABLES DE RECARGAS
+        # ==========================
+
+        b_total = 0.0
+        b_transf = 0.0
+        b_efvo = 0.0
+
+        c_total = 0.0
+        c_transf = 0.0
+        c_efvo = 0.0
+
+        e_total = 0.0
+        e_transf = 0.0
+        e_efvo = 0.0
+
+        recargas_transferencias_total = 0.0
+        sube_mp_capital = 0.0
+
+        # ==========================
+        # RECORRIDO DE CARGAS
+        # ==========================
 
         for _, row in df_hoy_cargas.iterrows():
-            total_cobrado = float(row.get("TOTAL_COBRADO", 0))
-            monto_carga = float(row.get("MONTO_CARGA", 0))
-            monto_adic = float(row.get("MONTO_ADICIONAL", 0))
-            servicio = str(row.get("SERVICIO", "")).strip().upper()
+            try:
+                servicio = str(
+                    row.get("SERVICIO", "")
+                ).strip().upper()
 
-            ratio_efvo = (
-                float(row.get("PAGO_EFVO", 0)) / total_cobrado
-                if total_cobrado > 0
-                else 0
+                monto_carga = float(
+                    row.get("MONTO_CARGA", 0) or 0
+                )
+
+                monto_adic = float(
+                    row.get("MONTO_ADICIONAL", 0) or 0
+                )
+
+                pago_efvo = float(
+                    row.get("PAGO_EFVO", 0) or 0
+                )
+
+                pago_transf = float(
+                    row.get("PAGO_TRANSF", 0) or 0
+                )
+
+            except Exception:
+                continue
+
+            # Total transferencias de todas las recargas
+            recargas_transferencias_total += pago_transf
+
+            # Capital efectivamente pagado por transferencia.
+            # El excedente sobre el capital corresponde al adicional.
+            capital_transferido = min(
+                pago_transf,
+                monto_carga
             )
 
-            ratio_transf = (
-                float(row.get("PAGO_TRANSF", 0)) / total_cobrado
-                if total_cobrado > 0
-                else 0
+            adicional_transferido = max(
+                pago_transf - monto_carga,
+                0
             )
 
-            c_efvo += monto_adic * ratio_efvo
-            c_transf += monto_adic * ratio_transf
+            # ==========================
+            # CAJA C - ADICIONALES
+            # ==========================
+
             c_total += monto_adic
+            c_transf += adicional_transferido
+            c_efvo += max(
+                monto_adic - adicional_transferido,
+                0
+            )
+
+            # ==========================
+            # CAJA E - CLARO
+            # ==========================
 
             if servicio == "CLARO":
-                e_efvo += monto_carga * ratio_efvo
-                e_transf += monto_carga * ratio_transf
                 e_total += monto_carga
-            else:
-                b_efvo += monto_carga * ratio_efvo
-                b_transf += monto_carga * ratio_transf
+                e_transf += capital_transferido
+                e_efvo += max(
+                    monto_carga - capital_transferido,
+                    0
+                )
+
+            # ==========================
+            # CAJA B - TODO MENOS CLARO
+            # Y MENOS SUBE (MP)
+            # ==========================
+
+            elif servicio != "SUBE (MP)":
                 b_total += monto_carga
+                b_transf += capital_transferido
+                b_efvo += max(
+                    monto_carga - capital_transferido,
+                    0
+                )
 
-        st.write("---")
+            # ==========================
+            # SUBE (MP)
+            # No se contabiliza como
+            # caja B, pero se descuenta
+            # del total bancario.
+            # ==========================
 
-        col_izq, col_espacio, col_der = st.columns([10, 1, 10])
+            else:
+                sube_mp_capital += monto_carga
 
-        with col_izq:
-            st.markdown(
-                f"""
-                CAJA A - DRUGSTORE
+        # ==========================
+        # GASTOS / RETIROS
+        # ==========================
 
-                (+) EFECTIVO:${int(a_efvo):,.0f}
+        if not df_hoy_gastos.empty:
+            gastos_efvo = pd.to_numeric(
+                df_hoy_gastos.loc[
+                    df_hoy_gastos["METODO_PAGO"]
+                    .astype(str)
+                    .str.strip()
+                    .str.upper()
+                    == "EFECTIVO",
+                    "MONTO_SALIDA"
+                ],
+                errors="coerce"
+            ).fillna(0).sum()
 
-                (+) TRANSFERENCIAS:${int(a_transf):,.0f}
+            gastos_transf = pd.to_numeric(
+                df_hoy_gastos.loc[
+                    df_hoy_gastos["METODO_PAGO"]
+                    .astype(str)
+                    .str.strip()
+                    .str.upper()
+                    == "TRANSFERENCIA",
+                    "MONTO_SALIDA"
+                ],
+                errors="coerce"
+            ).fillna(0).sum()
+        else:
+            gastos_efvo = 0.0
+            gastos_transf = 0.0
 
-                TOTAL VENTAS:${int(a_total):,.0f}
+        gastos_total = gastos_efvo + gastos_transf
 
-                GANANCIA ESTIMADA (10%):${int(a_ganancia):,.0f}
-                """,
-                unsafe_allow_html=True
+        # ==========================
+        # CAJA D - TRANSFERENCIAS
+        # ==========================
+
+        d_ventas_drugstore = a_transf
+
+        d_recargas = recargas_transferencias_total
+
+        d_total_banco = (
+            d_ventas_drugstore
+            + d_recargas
+            - sube_mp_capital
+            - gastos_transf
+        )
+
+        # ==========================
+        # VALOR SECUNDARIO DE CAJA A
+        # Igual al criterio visible
+        # en el diseño original:
+        # efectivo - recargas transferidas
+        # ==========================
+
+        efectivo_disponible = (
+            a_efvo
+            - d_recargas
+        )
+
+        # ==========================
+        # HTML DE LAS 6 CAJAS
+        # ==========================
+
+        caja_a = (
+            '<div class="visor-card">'
+            + card_header(
+                "CAJA A - DRUGSTORE",
+                "#3510E8"
             )
-
-            st.markdown(
-                f"""
-                CAJA C - ADICIONALES (Ganancia)
-
-                (+) EFECTIVO:${int(c_efvo):,.0f}
-
-                (+) TRANSFERENCIA:${int(c_transf):,.0f}
-
-                TOTAL GANANCIA:${int(c_total):,.0f}
-                """,
-                unsafe_allow_html=True
+            + '<div class="visor-body">'
+            + card_line("(+) EFECTIVO:", a_efvo)
+            + (
+                '<div class="visor-secondary">'
+                f'{dinero(efectivo_disponible)}'
+                '</div>'
             )
-
-        with col_der:
-            st.markdown(
-                f"""
-                CAJA B - SUBE (Solo Capital)
-
-                (+) INGRESOS EFECTIVO:${int(b_efvo):,.0f}
-
-                (+) INGRESOS TRANSF:${int(b_transf):,.0f}
-
-                TOTAL (Sin Adic):${int(b_total):,.0f}
-                """,
-                unsafe_allow_html=True
+            + card_line("(+) TRANSFERENCIAS:", a_transf)
+            + '<div class="visor-separator"></div>'
+            + (
+                '<div class="visor-total">'
+                '<div class="visor-total-label">TOTAL VENTAS:</div>'
+                f'<div class="visor-total-value">{dinero(a_total)}</div>'
+                '</div>'
             )
-
-            st.markdown(
-                f"""
-                CAJA E - CLARO (Solo Capital)
-
-                (+) INGRESOS EFECTIVO:${int(e_efvo):,.0f}
-
-                (+) INGRESOS TRANSF:${int(e_transf):,.0f}
-
-                TOTAL (Sin Adic):${int(e_total):,.0f}
-                """,
-                unsafe_allow_html=True
+            + (
+                '<div class="visor-profit">'
+                '<div>GANANCIA ESTIMADA (10%):</div>'
+                '<div class="visor-profit-value" '
+                'style="background:#3510E8;">'
+                f'{dinero(a_ganancia)}'
+                '</div>'
+                '</div>'
             )
+            + '</div>'
+            + '</div>'
+        )
+
+        caja_b = (
+            '<div class="visor-card">'
+            + card_header(
+                "CAJA B - SUBE (Solo Capital)",
+                "#E9A238",
+                "#111111"
+            )
+            + '<div class="visor-body">'
+            + card_line(
+                "(+) INGRESOS EFECTIVO:",
+                b_efvo
+            )
+            + card_line(
+                "(+) INGRESOS TRANSF:",
+                b_transf
+            )
+            + '<div class="visor-separator"></div>'
+            + (
+                '<div class="visor-total">'
+                '<div class="visor-total-label">TOTAL (Sin Adic):</div>'
+                f'<div class="visor-total-value">{dinero(b_total)}</div>'
+                '</div>'
+            )
+            + '</div>'
+            + '</div>'
+        )
+
+        caja_c = (
+            '<div class="visor-card">'
+            + card_header(
+                "CAJA C - ADICIONALES (Ganancia)",
+                "#4B7930"
+            )
+            + '<div class="visor-body">'
+            + card_line(
+                "(+) EFECTIVO:",
+                c_efvo
+            )
+            + card_line(
+                "(+) TRANSFERENCIA:",
+                c_transf
+            )
+            + '<div class="visor-separator"></div>'
+            + (
+                '<div class="visor-total">'
+                '<div class="visor-total-label">TOTAL GANANCIA:</div>'
+                f'<div class="visor-total-value">{dinero(c_total)}</div>'
+                '</div>'
+            )
+            + '</div>'
+            + '</div>'
+        )
+
+        caja_d = (
+            '<div class="visor-card">'
+            + card_header(
+                "CAJA D - TRANSFERENCIAS (Total)",
+                "#8D19ED"
+            )
+            + '<div class="visor-body">'
+            + card_line(
+                "DE VENTAS DRUGSTORE:",
+                d_ventas_drugstore
+            )
+            + card_line(
+                "DE RECARGAS (Todas):",
+                d_recargas
+            )
+            + '<div class="visor-separator"></div>'
+            + (
+                '<div class="visor-total">'
+                '<div class="visor-total-label">TOTAL EN BANCO:</div>'
+                '<div class="visor-total-value" '
+                'style="background:#DDDDDD;padding:7px 10px;">'
+                f'{dinero(d_total_banco)}'
+                '</div>'
+                '</div>'
+            )
+            + '</div>'
+            + '</div>'
+        )
+
+        caja_e = (
+            '<div class="visor-card">'
+            + card_header(
+                "CAJA E - CLARO (Solo Capital)",
+                "#E53222"
+            )
+            + '<div class="visor-body">'
+            + card_line(
+                "(+) INGRESOS EFECTIVO:",
+                e_efvo
+            )
+            + card_line(
+                "(+) INGRESOS TRANSF:",
+                e_transf
+            )
+            + '<div class="visor-separator"></div>'
+            + (
+                '<div class="visor-total">'
+                '<div class="visor-total-label">TOTAL (Sin Adic):</div>'
+                f'<div class="visor-total-value">{dinero(e_total)}</div>'
+                '</div>'
+            )
+            + '</div>'
+            + '</div>'
+        )
+
+        caja_gastos = (
+            '<div class="visor-card">'
+            + card_header(
+                "GASTOS / RETIROS DEL DÍA",
+                "#000000"
+            )
+            + '<div class="visor-body">'
+            + card_line(
+                "(-) SALIDAS EFECTIVO:",
+                gastos_efvo
+            )
+            + card_line(
+                "(-) SALIDAS TRANSF:",
+                gastos_transf
+            )
+            + '<div class="visor-separator"></div>'
+            + (
+                '<div class="visor-total">'
+                '<div class="visor-total-label"></div>'
+                f'<div class="visor-total-value">{dinero(gastos_total)}</div>'
+                '</div>'
+            )
+            + '</div>'
+            + '</div>'
+        )
+
+        # ==========================
+        # DISTRIBUCIÓN FINAL
+        # ==========================
+
+        st.markdown(
+            f"""
+            <div class="visor-grid">
+                {caja_a}
+                {caja_b}
+                {caja_c}
+                {caja_d}
+                {caja_e}
+                {caja_gastos}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
     except Exception as e:
-        st.error("Error cargando el dashboard.")
+        st.error(f"Error cargando el dashboard: {e}")
 def mostrar_preventistas():
     st.title("🚚 Catálogo por Preventista")
 
