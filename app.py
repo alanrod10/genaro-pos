@@ -375,6 +375,36 @@ def aplicar_estilos_profesionales():
             margin-top: 3px;
         }
 
+        .resumen-card-impresiones {
+            border-top-color: #0EA5E9 !important;
+        }
+
+        .resumen-print-breakdown {
+            display: grid;
+            gap: 4px;
+            margin-top: 7px;
+            padding-top: 6px;
+            border-top: 1px solid #DCE5EF;
+        }
+
+        .resumen-print-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 7px;
+            color: #52657B;
+            font-size: clamp(9px, 0.72vw, 11px);
+            line-height: 1.15;
+            white-space: nowrap;
+        }
+
+        .resumen-print-row strong {
+            color: #102033;
+            font-size: clamp(10px, 0.78vw, 12px);
+            font-weight: 900;
+            font-variant-numeric: tabular-nums;
+        }
+
         /* ======================================================
            BUSCADOR
            ====================================================== */
@@ -634,6 +664,25 @@ def aplicar_estilos_profesionales():
                 font-size: 19px;
             }
 
+            .resumen-card-impresiones .resumen-value {
+                font-size: 18px;
+            }
+
+            .resumen-print-breakdown {
+                gap: 5px;
+                margin-top: 6px;
+                padding-top: 5px;
+            }
+
+            .resumen-print-row {
+                font-size: 9px;
+                gap: 4px;
+            }
+
+            .resumen-print-row strong {
+                font-size: 10px;
+            }
+
             .resumen-hoy-badge {
                 display: none;
             }
@@ -839,6 +888,24 @@ def normalizar_busqueda(valor):
         for caracter in texto
     )
     return " ".join(texto.split())
+
+
+# Productos que representan impresiones y fotocopias. Se normalizan para
+# ignorar mayúsculas, acentos, dobles espacios y signos de puntuación, pero
+# el match sigue siendo exacto por nombre para no sumar otros productos.
+PRODUCTOS_IMPRESIONES_RESUMEN = frozenset(
+    normalizar_busqueda(nombre)
+    for nombre in [
+        "Impresion a color",
+        "Impresion a color (doble faz)",
+        "Impresion a color en papel cartulina",
+        "Impresion a color en papel fotografico",
+        "Impresion en ByN",
+        "Impresion en ByN (doble faz)",
+        "Fotocopia (DNI, Carnet)",
+        "Fotocopia comun",
+    ]
+)
 
 
 def construir_indice_busqueda(df):
@@ -1160,6 +1227,7 @@ def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
 
         st.session_state.carrito = []
         cargar_movimientos_resumen.clear()
+        cargar_items_impresiones_resumen.clear()
         return True
 
     except Exception:
@@ -1270,6 +1338,143 @@ def cargar_movimientos_resumen():
     return normalizar_fecha_columna(df)
 
 
+@st.cache_data(ttl=15)
+def cargar_items_impresiones_resumen():
+    """Carga el historial de venta usado por el KPI de impresiones.
+
+    El TTL corto evita consultar las miles de filas del historial en cada
+    tecla del buscador. Tras una venta o corrección, se invalida el caché.
+    """
+    conn = obtener_conexion()
+    df = conn.read(
+        spreadsheet=URL_PLANILLA,
+        worksheet="DB_HISTORIAL_ITEMS",
+        ttl=0,
+    )
+    df = normalizar_fecha_columna(df)
+
+    # Precalcular texto normalizado y subtotal numérico una sola vez por TTL.
+    # El buscador reactivo puede disparar varios reruns seguidos en la Caja.
+    if "PRODUCTO" in df.columns:
+        df["__PRODUCTO_NORMALIZADO"] = df["PRODUCTO"].map(
+            normalizar_busqueda
+        )
+    if "SUBTOTAL" in df.columns:
+        df["__SUBTOTAL_NUM"] = pd.to_numeric(
+            df["SUBTOTAL"], errors="coerce"
+        ).fillna(0).clip(lower=0)
+
+    return df
+
+
+def calcular_resumen_impresiones(df_items, df_movimientos_hoy, fecha_hoy):
+    """Devuelve total, efectivo y transferencia de los 8 ítems solicitados.
+
+    DB_HISTORIAL_ITEMS guarda METODO_PAGO a nivel de ticket. Para tickets
+    mixtos, cada impresión/fotocopia se reparte proporcionalmente según el
+    efectivo y la transferencia registrados en DB_MOVIMIENTOS_CAJA. Así el
+    reparto de pagos suma exactamente el subtotal de cada ítem.
+    """
+    if df_items.empty or "PRODUCTO" not in df_items.columns:
+        return 0.0, 0.0, 0.0
+
+    if "FECHA_REAL" not in df_items.columns:
+        df_items = normalizar_fecha_columna(df_items.copy())
+
+    items_hoy = df_items[
+        df_items["FECHA_REAL"].dt.date == fecha_hoy
+    ].copy()
+    if items_hoy.empty:
+        return 0.0, 0.0, 0.0
+
+    if "__PRODUCTO_NORMALIZADO" not in items_hoy.columns:
+        items_hoy["__PRODUCTO_NORMALIZADO"] = items_hoy["PRODUCTO"].map(
+            normalizar_busqueda
+        )
+    items_hoy = items_hoy[
+        items_hoy["__PRODUCTO_NORMALIZADO"].isin(
+            PRODUCTOS_IMPRESIONES_RESUMEN
+        )
+    ].copy()
+    if items_hoy.empty:
+        return 0.0, 0.0, 0.0
+
+    if "__SUBTOTAL_NUM" not in items_hoy.columns:
+        items_hoy["__SUBTOTAL_NUM"] = pd.to_numeric(
+            items_hoy.get("SUBTOTAL", 0), errors="coerce"
+        ).fillna(0).clip(lower=0)
+
+    # Indexar los tickets del día una sola vez para resolver pagos mixtos.
+    pagos_por_ticket = {}
+    if not df_movimientos_hoy.empty and "TICKET_ID" in df_movimientos_hoy.columns:
+        for _, movimiento in df_movimientos_hoy.iterrows():
+            ticket = movimiento.get("TICKET_ID", "")
+            if pd.isna(ticket):
+                continue
+            ticket = str(ticket).strip()
+            if not ticket:
+                continue
+            pagos_por_ticket[ticket] = (
+                max(numero_seguro(movimiento.get("MONTO_EFECTIVO", 0)), 0.0),
+                max(numero_seguro(movimiento.get("MONTO_TRANSF", 0)), 0.0),
+                max(numero_seguro(movimiento.get("TOTAL_VENTA", 0)), 0.0),
+            )
+
+    efectivo_dia = sumar_numerico(df_movimientos_hoy, "MONTO_EFECTIVO")
+    transf_dia = sumar_numerico(df_movimientos_hoy, "MONTO_TRANSF")
+    total_pagos_dia = efectivo_dia + transf_dia
+    proporcion_efectivo_dia = (
+        efectivo_dia / total_pagos_dia if total_pagos_dia > 0 else 1.0
+    )
+
+    total_impresiones = 0.0
+    impresiones_efectivo = 0.0
+    impresiones_transferencia = 0.0
+
+    for _, item in items_hoy.iterrows():
+        subtotal = numero_seguro(item.get("__SUBTOTAL_NUM", 0))
+        if subtotal <= 0:
+            continue
+
+        total_impresiones += subtotal
+        metodo = normalizar_busqueda(item.get("METODO_PAGO", ""))
+
+        if metodo in {"efectivo", "efvo", "cash"}:
+            impresiones_efectivo += subtotal
+            continue
+
+        if metodo in {"transferencia", "transferencias", "transf", "transfer"}:
+            impresiones_transferencia += subtotal
+            continue
+
+        # Los tickets MIXTOS necesitan el desglose padre; si faltara el ID
+        # o el ticket histórico, se usa la proporción de cobros del día como
+        # respaldo, para no perder esas impresiones del total mostrado.
+        ticket = item.get("TICKET_ID", "")
+        ticket = "" if pd.isna(ticket) else str(ticket).strip()
+        pago_efectivo, pago_transferencia, _ = pagos_por_ticket.get(
+            ticket,
+            (efectivo_dia, transf_dia, total_pagos_dia),
+        )
+        suma_pago_ticket = pago_efectivo + pago_transferencia
+        proporcion_efectivo = (
+            pago_efectivo / suma_pago_ticket
+            if suma_pago_ticket > 0
+            else proporcion_efectivo_dia
+        )
+
+        monto_efectivo_item = min(
+            subtotal,
+            float(round(subtotal * proporcion_efectivo)),
+        )
+        monto_transferencia_item = subtotal - monto_efectivo_item
+
+        impresiones_efectivo += monto_efectivo_item
+        impresiones_transferencia += monto_transferencia_item
+
+    return total_impresiones, impresiones_efectivo, impresiones_transferencia
+
+
 def mostrar_caja():
     st.title("🛒 Caja Registradora")
     st.caption("Punto de venta · búsqueda rápida · cobro en efectivo, transferencia o mixto")
@@ -1289,7 +1494,15 @@ def mostrar_caja():
         hoy_efvo = sumar_numerico(df_hoy, "MONTO_EFECTIVO")
         hoy_transf = sumar_numerico(df_hoy, "MONTO_TRANSF")
         hoy_tickets = len(df_hoy)
-        hoy_ganancia = hoy_ventas * 0.10
+
+        df_items_impresiones = cargar_items_impresiones_resumen()
+        impresiones_total, impresiones_efectivo, impresiones_transferencia = (
+            calcular_resumen_impresiones(
+                df_items_impresiones,
+                df_hoy,
+                fecha_hoy,
+            )
+        )
 
         resumen_html = f"""
         <div class="resumen-hoy">
@@ -1321,10 +1534,19 @@ def mostrar_caja():
                     <div class="resumen-value">{hoy_tickets}</div>
                     <div class="resumen-sub">ventas registradas</div>
                 </div>
-                <div class="resumen-card">
-                    <div class="resumen-label">GANANCIA EST.</div>
-                    <div class="resumen-value">{dinero(hoy_ganancia)}</div>
-                    <div class="resumen-sub">10% estimado</div>
+                <div class="resumen-card resumen-card-impresiones">
+                    <div class="resumen-label">IMPRESIONES + FOTOCOPIAS</div>
+                    <div class="resumen-value">{dinero(impresiones_total)}</div>
+                    <div class="resumen-print-breakdown">
+                        <div class="resumen-print-row">
+                            <span>💵 EFECTIVO</span>
+                            <strong>{dinero(impresiones_efectivo)}</strong>
+                        </div>
+                        <div class="resumen-print-row">
+                            <span>📲 TRANSFERENCIA</span>
+                            <strong>{dinero(impresiones_transferencia)}</strong>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -2149,6 +2371,7 @@ def mostrar_historial():
                         data=df_caja,
                     )
                     cargar_movimientos_resumen.clear()
+                    cargar_items_impresiones_resumen.clear()
                     st.session_state.hist_msg = (
                         "✅ ¡Los ítems fueron corregidos y la Caja fue recalculada perfectamente!"
                     )
