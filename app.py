@@ -1,3 +1,15 @@
+"""Genaro POS — versión final auditada.
+
+Aplicación Streamlit para el punto de venta y la gestión del comercio.
+La aplicación utiliza Google Sheets como almacenamiento compartido. Se han
+mantenido los flujos funcionales de la versión V4.6; el único ajuste operativo
+es evitar limpiar todas las cachés al guardar el historial de cargas, ya que
+solo necesita invalidarse la caché de DB_CARGAS/PREPAY.
+
+Configuración de despliegue: conservar .streamlit/config.toml y la conexión
+GSheetsConnection ya configurada en los secretos del entorno de Streamlit.
+"""
+
 import datetime
 import html
 import math
@@ -2121,10 +2133,9 @@ def mostrar_historial_cargas():
                         data=df_final,
                     )
 
-                    # Invalida el indicador PREPAY del resumen y las demás
-                    # lecturas cacheadas afectadas por la corrección/eliminación.
+                    # La edición afecta a DB_CARGAS y al indicador PREPAY.
+                    # No hace falta borrar la caché del catálogo ni las ventas.
                     cargar_cargas_resumen.clear()
-                    st.cache_data.clear()
 
                     st.session_state.cargas_msg = (
                         "✅ ¡El historial de cargas fue corregido y actualizado exitosamente!"
