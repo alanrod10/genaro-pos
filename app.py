@@ -375,6 +375,64 @@ def aplicar_estilos_profesionales():
             margin-top: 3px;
         }
 
+        .resumen-card-prepay {
+            border-top-color: #F59E0B !important;
+        }
+
+        .resumen-prepay-breakdown {
+            display: grid;
+            gap: 4px;
+            margin-top: 7px;
+            padding-top: 6px;
+            border-top: 1px solid #DCE5EF;
+        }
+
+        .resumen-prepay-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 5px;
+            color: #52657B;
+            font-size: clamp(8px, 0.68vw, 10px);
+            line-height: 1.15;
+            white-space: nowrap;
+        }
+
+        .resumen-prepay-row span {
+            min-width: 0;
+        }
+
+        .resumen-prepay-row strong {
+            color: #102033;
+            font-size: clamp(10px, 0.76vw, 12px);
+            font-weight: 900;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+        }
+
+        .resumen-prepay-total {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 5px;
+            margin-top: 5px;
+            padding-top: 5px;
+            border-top: 1px solid #DCE5EF;
+            color: #304359;
+            font-size: clamp(8px, 0.68vw, 10px);
+            line-height: 1.1;
+            font-weight: 850;
+        }
+
+        .resumen-prepay-total strong {
+            color: #9A5A00;
+            font-size: clamp(15px, 1.10vw, 19px);
+            font-weight: 950;
+            letter-spacing: -0.025em;
+            white-space: nowrap;
+            font-variant-numeric: tabular-nums;
+        }
+
         .resumen-card-impresiones {
             border-top-color: #0EA5E9 !important;
         }
@@ -662,6 +720,29 @@ def aplicar_estilos_profesionales():
 
             .resumen-value {
                 font-size: 19px;
+            }
+
+            .resumen-prepay-row {
+                align-items: flex-start;
+                flex-direction: column;
+                gap: 2px;
+                white-space: normal;
+                font-size: 9px;
+            }
+
+            .resumen-prepay-row strong {
+                font-size: 12px;
+            }
+
+            .resumen-prepay-total {
+                align-items: flex-start;
+                flex-direction: column;
+                gap: 2px;
+                font-size: 9px;
+            }
+
+            .resumen-prepay-total strong {
+                font-size: 17px;
             }
 
             .resumen-card-impresiones .resumen-value {
@@ -1475,6 +1556,69 @@ def calcular_resumen_impresiones(df_items, df_movimientos_hoy, fecha_hoy):
     return total_impresiones, impresiones_efectivo, impresiones_transferencia
 
 
+@st.cache_data(ttl=15)
+def cargar_cargas_resumen():
+    """Lee DB_CARGAS con caché corto para evitar consultas en cada tecla."""
+    conn = obtener_conexion()
+    df = conn.read(
+        spreadsheet=URL_PLANILLA,
+        worksheet="DB_CARGAS",
+        ttl=0,
+    )
+    return normalizar_fecha_columna(df)
+
+
+def calcular_resumen_prepay(df_cargas_hoy):
+    """Calcula el capital de PREPAY separado por efectivo y transferencia.
+
+    Mantiene la clasificación de Caja B que ya usa el visor: se incluyen
+    los servicios distintos de Claro y SUBE (MP). El capital (MONTO_CARGA)
+    se distribuye proporcionalmente al pago real de la carga, sin incluir
+    los adicionales/recargos en el total de capital.
+    """
+    if df_cargas_hoy.empty or "SERVICIO" not in df_cargas_hoy.columns:
+        return 0.0, 0.0, 0.0
+
+    servicios = df_cargas_hoy["SERVICIO"].map(normalizar_busqueda)
+    df_prepay = df_cargas_hoy.loc[~servicios.isin({"claro", "sube mp"})]
+
+    if df_prepay.empty:
+        return 0.0, 0.0, 0.0
+
+    total_capital = 0.0
+    capital_efectivo = 0.0
+    capital_transferencia = 0.0
+
+    for _, row in df_prepay.iterrows():
+        capital = max(numero_seguro(row.get("MONTO_CARGA", 0)), 0.0)
+        if capital <= 0:
+            continue
+
+        pago_efectivo = max(numero_seguro(row.get("PAGO_EFVO", 0)), 0.0)
+        pago_transferencia = max(numero_seguro(row.get("PAGO_TRANSF", 0)), 0.0)
+        pago_total = pago_efectivo + pago_transferencia
+
+        if pago_total > 0:
+            # Redondeamos un solo lado y asignamos el resto al otro para
+            # que efectivo + transferencia siempre sea igual al capital.
+            parte_efectivo = min(
+                capital,
+                float(round(capital * pago_efectivo / pago_total)),
+            )
+            parte_transferencia = capital - parte_efectivo
+        else:
+            # En registros antiguos sin detalle de pago conservamos el
+            # capital total y lo imputamos a efectivo como valor por defecto.
+            parte_efectivo = capital
+            parte_transferencia = 0.0
+
+        total_capital += capital
+        capital_efectivo += parte_efectivo
+        capital_transferencia += parte_transferencia
+
+    return total_capital, capital_efectivo, capital_transferencia
+
+
 def mostrar_caja():
     st.title("🛒 Caja Registradora")
     st.caption("Punto de venta · búsqueda rápida · cobro en efectivo, transferencia o mixto")
@@ -1493,7 +1637,14 @@ def mostrar_caja():
         hoy_ventas = sumar_numerico(df_hoy, "TOTAL_VENTA")
         hoy_efvo = sumar_numerico(df_hoy, "MONTO_EFECTIVO")
         hoy_transf = sumar_numerico(df_hoy, "MONTO_TRANSF")
-        hoy_tickets = len(df_hoy)
+
+        df_cargas_resumen = cargar_cargas_resumen()
+        df_cargas_hoy = df_cargas_resumen[
+            df_cargas_resumen["FECHA_REAL"].dt.date == fecha_hoy
+        ].copy()
+        prepay_total, prepay_efectivo, prepay_transferencia = (
+            calcular_resumen_prepay(df_cargas_hoy)
+        )
 
         df_items_impresiones = cargar_items_impresiones_resumen()
         impresiones_total, impresiones_efectivo, impresiones_transferencia = (
@@ -1529,10 +1680,22 @@ def mostrar_caja():
                     <div class="resumen-value">{dinero(hoy_transf)}</div>
                     <div class="resumen-sub">cobros</div>
                 </div>
-                <div class="resumen-card">
-                    <div class="resumen-label">TICKETS</div>
-                    <div class="resumen-value">{hoy_tickets}</div>
-                    <div class="resumen-sub">ventas registradas</div>
+                <div class="resumen-card resumen-card-prepay">
+                    <div class="resumen-label">PREPAY · SOLO CAPITAL</div>
+                    <div class="resumen-prepay-breakdown">
+                        <div class="resumen-prepay-row">
+                            <span>(+) INGRESOS EFECTIVO:</span>
+                            <strong>{dinero(prepay_efectivo)}</strong>
+                        </div>
+                        <div class="resumen-prepay-row">
+                            <span>(+) INGRESOS TRANSF:</span>
+                            <strong>{dinero(prepay_transferencia)}</strong>
+                        </div>
+                    </div>
+                    <div class="resumen-prepay-total">
+                        <span>TOTAL (SIN ADIC.):</span>
+                        <strong>{dinero(prepay_total)}</strong>
+                    </div>
                 </div>
                 <div class="resumen-card resumen-card-impresiones">
                     <div class="resumen-label">IMPRESIONES + FOTOCOPIAS</div>
@@ -1805,6 +1968,7 @@ def mostrar_servicios():
                             data=pd.concat([df_cargas, nueva_carga], ignore_index=True),
                         )
 
+                    cargar_cargas_resumen.clear()
                     st.toast("✅ Carga guardada.", icon="📲")
                     st.session_state.pop("input_monto_carga", None)
                     st.session_state.pop("input_monto_adic", None)
@@ -1948,10 +2112,9 @@ def mostrar_historial_cargas():
                         data=df_final,
                     )
 
-                    # Las lecturas normales de DB_CARGAS usan ttl=0, por lo que
-                    # dashboard/historial siempre vuelven a consultar la hoja.
-                    # Se mantiene además la limpieza por seguridad ante otros
-                    # lectores cacheados de la aplicación.
+                    # Invalida el indicador PREPAY del resumen y las demás
+                    # lecturas cacheadas afectadas por la corrección/eliminación.
+                    cargar_cargas_resumen.clear()
                     st.cache_data.clear()
 
                     st.session_state.cargas_msg = (
