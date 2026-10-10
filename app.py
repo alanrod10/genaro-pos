@@ -1893,7 +1893,16 @@ def mostrar_servicios():
         with col1:
             servicio = st.selectbox(
                 "Empresa / Servicio",
-                ["Claro", "Personal", "Movistar", "Tuenti", "DIRECTV", "SUBE", "Otro"],
+                [
+                    "Claro",
+                    "Personal",
+                    "Movistar",
+                    "Tuenti",
+                    "DIRECTV",
+                    "SUBE",
+                    "SUBE (MP)",  # Cargas pagadas con Mercado Pago del Drugstore.
+                    "Otro",
+                ],
             )
             monto_carga = st.number_input(
                 "Monto a Cargar ($)",
@@ -2640,10 +2649,15 @@ def mostrar_visor():
                 e_transf += capital_transferido
                 e_efvo += max(monto_carga - capital_transferido, 0)
             elif servicio != "SUBE (MP)":
+                # PREPAY: contabiliza el capital de los servicios habituales.
                 b_total += monto_carga
                 b_transf += capital_transferido
                 b_efvo += max(monto_carga - capital_transferido, 0)
             else:
+                # SUBE (MP): no suma el capital a PREPAY ni a Claro.
+                # El adicional ya quedó contabilizado arriba en Caja C.
+                # El capital se descuenta en el neto bancario para reflejar
+                # que sale del saldo de Mercado Pago utilizado para la carga.
                 sube_mp_capital += monto_carga
 
         if not df_hoy_gastos.empty and "METODO_PAGO" in df_hoy_gastos.columns:
