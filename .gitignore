@@ -1,0 +1,40 @@
+# Archivos de entorno y configuración sensible
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+*.json
+!package.json
+!manifest.json
+
+# Entornos virtuales de Python
+.venv/
+venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# Archivos de caché y compilación
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Bases de datos locales de prueba y backups
+*.sqlite3
+*.db
+*.parquet
+*.bak
+backups/
+export/
+data_exports/
+
+# Archivos del sistema y de editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
