@@ -13,6 +13,7 @@ GSheetsConnection ya configurada en los secretos del entorno de Streamlit.
 import datetime
 import html
 import math
+import os
 import unicodedata
 
 import pandas as pd
@@ -1209,6 +1210,38 @@ inicializar_memoria()
 @st.cache_data(ttl=600)
 def cargar_productos():
     """Carga y deja listo el catálogo para Caja y Preventistas."""
+    from db.catalog import (
+        BACKEND_TURSO,
+        ErrorAccesoCatalogoTurso,
+        cargar_catalogo_turso,
+        obtener_backend_catalogo,
+    )
+
+    backend = obtener_backend_catalogo()
+
+    if backend == BACKEND_TURSO:
+        try:
+            resultado = cargar_catalogo_turso()
+            if resultado is None:
+                raise ErrorAccesoCatalogoTurso("El adaptador Turso retornó None.")
+            if isinstance(resultado, pd.DataFrame):
+                df = resultado
+            else:
+                df = pd.DataFrame(resultado.to_dict())
+            if df.empty:
+                return df
+            texto, nombre = construir_indice_busqueda(df)
+            df["__BUSQ_TEXTO"] = texto
+            df["__BUSQ_NOMBRE"] = nombre
+            return df
+        except Exception as e:
+            st.error(
+                f"❌ [TURSO DEV ERROR]: Falló la carga del catálogo desde Turso: {e}"
+            )
+            raise ErrorAccesoCatalogoTurso(
+                f"Fallo en lectura de catálogo desde Turso: {e}"
+            ) from e
+
     try:
         conn = obtener_conexion()
         df = conn.read(
@@ -1571,6 +1604,18 @@ def calcular_resumen_impresiones(df_items, df_movimientos_hoy, fecha_hoy):
 @st.cache_data(ttl=15)
 def cargar_cargas_resumen():
     """Lee DB_CARGAS con caché corto para evitar consultas en cada tecla."""
+    from db.services import (
+        BACKEND_TURSO as BACKEND_SERVICIOS_TURSO,
+        COLUMNA_ID_INTERNO,
+        cargar_cargas_turso,
+        obtener_backend_servicios,
+    )
+    if obtener_backend_servicios() == BACKEND_SERVICIOS_TURSO:
+        df_cargas = cargar_cargas_turso().drop(
+            columns=[COLUMNA_ID_INTERNO], errors="ignore"
+        )
+        normalizar_fecha_columna(df_cargas)
+        return df_cargas
     conn = obtener_conexion()
     df = conn.read(
         spreadsheet=URL_PLANILLA,
@@ -1976,18 +2021,33 @@ def mostrar_servicios():
                 ])
 
                 try:
-                    conn = obtener_conexion()
+                    from db.services import (
+                        BACKEND_TURSO as BACKEND_SERVICIOS_TURSO,
+                        obtener_backend_servicios,
+                        registrar_carga_turso,
+                    )
+                    backend_servicios = obtener_backend_servicios()
+
                     with st.spinner("Guardando en el sistema..."):
-                        df_cargas = conn.read(
-                            spreadsheet=URL_PLANILLA,
-                            worksheet="DB_CARGAS",
-                            ttl=0,
-                        )
-                        conn.update(
-                            spreadsheet=URL_PLANILLA,
-                            worksheet="DB_CARGAS",
-                            data=pd.concat([df_cargas, nueva_carga], ignore_index=True),
-                        )
+                        if backend_servicios == BACKEND_SERVICIOS_TURSO:
+                            registrar_carga_turso(
+                                nueva_carga.iloc[0].to_dict()
+                            )
+                        else:
+                            conn = obtener_conexion()
+                            df_cargas = conn.read(
+                                spreadsheet=URL_PLANILLA,
+                                worksheet="DB_CARGAS",
+                                ttl=0,
+                            )
+                            conn.update(
+                                spreadsheet=URL_PLANILLA,
+                                worksheet="DB_CARGAS",
+                                data=pd.concat(
+                                    [df_cargas, nueva_carga],
+                                    ignore_index=True,
+                                ),
+                            )
 
                     cargar_cargas_resumen.clear()
                     st.toast("✅ Carga guardada.", icon="📲")
@@ -2010,12 +2070,24 @@ def mostrar_historial_cargas():
         del st.session_state.cargas_msg
 
     try:
-        conn = obtener_conexion()
-        df_full = conn.read(
-            spreadsheet=URL_PLANILLA,
-            worksheet="DB_CARGAS",
-            ttl=0,
+        from db.services import (
+            BACKEND_TURSO as BACKEND_SERVICIOS_TURSO,
+            COLUMNA_ID_INTERNO,
+            cargar_cargas_turso,
+            guardar_ediciones_cargas_turso,
+            obtener_backend_servicios,
         )
+        backend_servicios = obtener_backend_servicios()
+
+        if backend_servicios == BACKEND_SERVICIOS_TURSO:
+            df_full = cargar_cargas_turso()
+        else:
+            conn = obtener_conexion()
+            df_full = conn.read(
+                spreadsheet=URL_PLANILLA,
+                worksheet="DB_CARGAS",
+                ttl=0,
+            )
 
         if df_full.empty:
             st.info("No hay cargas registradas en la base de datos.")
@@ -2127,11 +2199,54 @@ def mostrar_historial_cargas():
                         errors="ignore",
                     )
 
-                    conn.update(
-                        spreadsheet=URL_PLANILLA,
-                        worksheet="DB_CARGAS",
-                        data=df_final,
-                    )
+                    if backend_servicios == BACKEND_SERVICIOS_TURSO:
+                        ids_anulados = [
+                            int(
+                                df_filtrado.loc[
+                                    indices_originales[pos],
+                                    COLUMNA_ID_INTERNO,
+                                ]
+                            )
+                            for pos in filas_eliminadas
+                            if 0 <= pos < len(indices_originales)
+                        ]
+
+                        actualizaciones = []
+                        for pos in range(filas_existentes):
+                            idx_real = indices_supervivientes[pos]
+                            id_turso = int(
+                                df_filtrado.loc[
+                                    idx_real,
+                                    COLUMNA_ID_INTERNO,
+                                ]
+                            )
+                            valores_editados = (
+                                edited_cargas.iloc[pos][columnas_editor]
+                                .to_dict()
+                            )
+                            actualizaciones.append(
+                                (id_turso, valores_editados)
+                            )
+
+                        filas_nuevas_turso = [
+                            edited_cargas.iloc[pos][columnas_editor].to_dict()
+                            for pos in range(
+                                filas_existentes,
+                                len(edited_cargas),
+                            )
+                        ]
+
+                        guardar_ediciones_cargas_turso(
+                            actualizaciones=actualizaciones,
+                            ids_anulados=ids_anulados,
+                            nuevas=filas_nuevas_turso,
+                        )
+                    else:
+                        conn.update(
+                            spreadsheet=URL_PLANILLA,
+                            worksheet="DB_CARGAS",
+                            data=df_final,
+                        )
 
                     # La edición afecta a DB_CARGAS y al indicador PREPAY.
                     # No hace falta borrar la caché del catálogo ni las ventas.
@@ -3011,6 +3126,15 @@ menu = st.sidebar.radio(
         "📊 Visor (Dashboard)",
         "🚚 Preventistas",
     ],
+    index=(
+        1
+        if os.getenv("ENV_NAME") == "genaro-pos-dev"
+        and os.getenv("SERVICIOS_BACKEND", "").strip().upper() == "TURSO"
+        and os.getenv("CATALOGO_BACKEND", "").strip().upper() == "TURSO"
+        and os.getenv("TURSO_DEV_DATABASE_URL", "").strip()
+            == "turso://genaro-pos-dev-alanrod10.aws-sa-east-1.turso.io"
+        else 0
+    ),
 )
 
 if menu == "🛒 Caja":
