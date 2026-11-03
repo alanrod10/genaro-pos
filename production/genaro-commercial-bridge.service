@@ -1,0 +1,36 @@
+[Unit]
+Description=Genaro Commercial Bridge Worker (Producción) — Sincronizador Outbox & Tesoreria
+Documentation=https://github.com/alanrod10/genaro-pos-turso-lab
+After=network.target
+
+[Service]
+Type=simple
+User=alanrod10
+Group=alanrod10
+WorkingDirectory=/home/alanrod10/workspace/genaro-pos-turso-lab
+EnvironmentFile=/home/alanrod10/production/.env
+ExecStart=/home/alanrod10/workspace/genaro-pos-turso-lab/.venv/bin/python /home/alanrod10/workspace/genaro-pos-turso-lab/scripts/run_commercial_bridge_worker.py --db-comm /home/alanrod10/production/data/genaro-pos.db --db-tes /home/alanrod10/production/data/tesoreria.db --pid-file /home/alanrod10/production/run/genaro_bridge.pid --interval 5.0 --batch-size 50
+ExecStop=/bin/kill -s TERM $MAINPID
+
+# Reinicio automático y recuperación de fallos
+Restart=always
+RestartSec=5s
+
+# Apagado ordenado
+TimeoutStopSec=15s
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Logs y entorno
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=genaro-bridge-prod
+
+# Aislamiento de proceso
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

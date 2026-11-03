@@ -1,0 +1,23 @@
+name = "genaro-pos-api"
+main = "src/worker.js"
+compatibility_date = "2026-10-24"
+compatibility_flags = ["nodejs_compat"]
+
+# Configuración base local
+[vars]
+ENVIRONMENT = "local"
+
+# Entorno de preproducción / staging
+[env.staging]
+name = "genaro-pos-staging-api"
+[env.staging.vars]
+ENVIRONMENT = "staging"
+
+# Entorno nuevo para operación en vivo (aislado de genaro-pos-prod)
+[env.live]
+name = "genaro-pos-live-api"
+[env.live.vars]
+ENVIRONMENT = "production"
+TURSO_DATABASE_URL = "https://genaro-pos-live-ops-alanrod10.aws-sa-east-1.turso.io"
+ALLOWED_ORIGINS = "https://genaro-pos-live.pages.dev"
+
