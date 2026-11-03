@@ -80,11 +80,15 @@ async def lifespan(app: FastAPI):
         _global_bridge_worker.stop()
 
 
+_ES_PRODUCCION = os.getenv("GENARO_ENV", "").strip().lower() == "production"
+
 app = FastAPI(
     title="GenaroPOS Local API",
     description="API REST local para desacoplamiento progresivo de GenaroPOS.",
     version="0.1.0",
-    docs_url="/docs",
+    # En producción no se exponen la documentación interactiva ni el esquema OpenAPI.
+    docs_url=None if _ES_PRODUCCION else "/docs",
+    openapi_url=None if _ES_PRODUCCION else "/openapi.json",
     redoc_url=None,
     lifespan=lifespan,
 )
