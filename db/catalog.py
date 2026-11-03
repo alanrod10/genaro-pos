@@ -98,7 +98,12 @@ def _obtener_conexion_turso() -> Any:
   try:
     import turso_serverless
 
-    return turso_serverless.connect(url, auth_token=token)
+    conn = turso_serverless.connect(url, auth_token=token)
+    try:
+      conn.execute("PRAGMA foreign_keys = ON")
+    except Exception:
+      pass
+    return conn
   except Exception as e:
     raise ErrorAccesoCatalogoTurso(
         f"Fallo al conectar con el servidor Turso: {e}"
@@ -132,7 +137,7 @@ def cargar_catalogo_turso_filas(
             costo,
             precio_dia,
             precio_noche,
-            margen_ratio,
+            (CASE WHEN costo > 0 THEN ROUND((CAST(precio_dia AS REAL) - costo) / costo, 4) ELSE 0.0 END) AS margen_ratio,
             fecha_actualizacion
         FROM productos
         WHERE activo = 1

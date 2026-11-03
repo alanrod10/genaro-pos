@@ -29,6 +29,7 @@ def conn():
             pago_transferencia INTEGER NOT NULL DEFAULT 0
                 CHECK (pago_transferencia >= 0),
             anulado INTEGER NOT NULL DEFAULT 0 CHECK (anulado IN (0, 1)),
+            idempotency_key TEXT DEFAULT NULL,
             CHECK (total_cobrado = monto_carga + monto_adicional),
             CHECK (
                 total_cobrado = pago_efectivo + pago_transferencia
@@ -40,6 +41,27 @@ def conn():
         """
         CREATE UNIQUE INDEX uq_cargas_legacy_row_id
         ON cargas_servicios (legacy_row_id)
+        """
+    )
+    conexion.execute(
+        """
+        CREATE UNIQUE INDEX uq_cargas_idempotency_key
+        ON cargas_servicios (idempotency_key)
+        WHERE idempotency_key IS NOT NULL
+        """
+    )
+    conexion.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cargas_servicios_auditoria (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            carga_id INTEGER NOT NULL,
+            accion TEXT NOT NULL CHECK (accion IN ('CREAR', 'EDITAR', 'ANULAR')),
+            valores_anteriores TEXT,
+            valores_nuevos TEXT NOT NULL,
+            fecha_utc TEXT NOT NULL DEFAULT (datetime('now')),
+            actor TEXT NOT NULL DEFAULT 'sistema',
+            FOREIGN KEY (carga_id) REFERENCES cargas_servicios (id) ON DELETE CASCADE
+        )
         """
     )
     conexion.commit()
@@ -140,3 +162,31 @@ def test_actualizacion_atomica_si_un_id_ya_no_existe(conn):
     assert len(df) == 1
     assert df.iloc[0]["SERVICIO"] == "Claro"
     assert int(df.iloc[0]["MONTO_CARGA"]) == 7000
+
+
+@pytest.mark.parametrize(
+    "nombre_servicio,esperado",
+    [
+        ("Claro", "CLARO"),
+        ("CLARO", "CLARO"),
+        ("  claro  ", "CLARO"),
+        ("Claro Recarga", "CLARO"),
+        ("SUBE (MP)", "SUBE_MP"),
+        ("sube (mp)", "SUBE_MP"),
+        ("SUBE MP", "SUBE_MP"),
+        ("SUBE MercadoPago", "SUBE_MP"),
+        ("SUBE - Mercado Pago", "SUBE_MP"),
+        ("SUBE Mercado Pago", "SUBE_MP"),
+        ("SUBE", "PREPAY"),
+        ("Personal", "PREPAY"),
+        ("Movistar", "PREPAY"),
+        ("Tuenti", "PREPAY"),
+        ("DirecTV", "PREPAY"),
+        ("PREPAY", "PREPAY"),
+    ],
+)
+def test_clasificar_servicio_canonico(nombre_servicio, esperado):
+    """P1-03: Verifica que clasificar_servicio normalice todas las variantes de nombres."""
+    from db.services import clasificar_servicio
+
+    assert clasificar_servicio(nombre_servicio) == esperado

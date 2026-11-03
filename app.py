@@ -1327,29 +1327,48 @@ def procesar_venta(metodo_pago, monto_efvo=None, monto_transf=None):
     ])
 
     try:
-        conn = obtener_conexion()
-        with st.spinner("💾 Guardando transacción en la nube..."):
-            df_mov = conn.read(
-                spreadsheet=URL_PLANILLA,
-                worksheet="DB_MOVIMIENTOS_CAJA",
-                ttl=0,
-            )
-            conn.update(
-                spreadsheet=URL_PLANILLA,
-                worksheet="DB_MOVIMIENTOS_CAJA",
-                data=pd.concat([df_mov, nueva_venta], ignore_index=True),
-            )
+        from db.sales import (
+            BACKEND_TURSO as BACKEND_VENTAS_TURSO,
+            obtener_backend_ventas,
+            registrar_venta_turso,
+        )
 
-            df_historial = conn.read(
-                spreadsheet=URL_PLANILLA,
-                worksheet="DB_HISTORIAL_ITEMS",
-                ttl=0,
-            )
-            conn.update(
-                spreadsheet=URL_PLANILLA,
-                worksheet="DB_HISTORIAL_ITEMS",
-                data=pd.concat([df_historial, df_items_nuevos], ignore_index=True),
-            )
+        backend_ventas = obtener_backend_ventas()
+
+        if backend_ventas == BACKEND_VENTAS_TURSO:
+            ticket_turso = {
+                **nueva_venta.iloc[0].to_dict(),
+                "METODO_PAGO": metodo_pago,
+            }
+            with st.spinner("💾 Guardando transacción en Turso DEV..."):
+                registrar_venta_turso(
+                    ticket=ticket_turso,
+                    items=df_items_nuevos.to_dict(orient="records"),
+                )
+        else:
+            conn = obtener_conexion()
+            with st.spinner("💾 Guardando transacción en la nube..."):
+                df_mov = conn.read(
+                    spreadsheet=URL_PLANILLA,
+                    worksheet="DB_MOVIMIENTOS_CAJA",
+                    ttl=0,
+                )
+                conn.update(
+                    spreadsheet=URL_PLANILLA,
+                    worksheet="DB_MOVIMIENTOS_CAJA",
+                    data=pd.concat([df_mov, nueva_venta], ignore_index=True),
+                )
+
+                df_historial = conn.read(
+                    spreadsheet=URL_PLANILLA,
+                    worksheet="DB_HISTORIAL_ITEMS",
+                    ttl=0,
+                )
+                conn.update(
+                    spreadsheet=URL_PLANILLA,
+                    worksheet="DB_HISTORIAL_ITEMS",
+                    data=pd.concat([df_historial, df_items_nuevos], ignore_index=True),
+                )
 
         st.session_state.carrito = []
         cargar_movimientos_resumen.clear()
@@ -1455,12 +1474,22 @@ def cargar_movimientos_resumen():
     Después de registrar una venta el caché se limpia explícitamente para
     que el resumen se actualice inmediatamente.
     """
-    conn = obtener_conexion()
-    df = conn.read(
-        spreadsheet=URL_PLANILLA,
-        worksheet="DB_MOVIMIENTOS_CAJA",
-        ttl=0,
+    from db.sales import (
+        BACKEND_TURSO as BACKEND_VENTAS_TURSO,
+        cargar_movimientos_turso,
+        obtener_backend_ventas,
     )
+
+    if obtener_backend_ventas() == BACKEND_VENTAS_TURSO:
+        df = cargar_movimientos_turso()
+    else:
+        conn = obtener_conexion()
+        df = conn.read(
+            spreadsheet=URL_PLANILLA,
+            worksheet="DB_MOVIMIENTOS_CAJA",
+            ttl=0,
+        )
+
     return normalizar_fecha_columna(df)
 
 
@@ -1471,12 +1500,22 @@ def cargar_items_impresiones_resumen():
     El TTL corto evita consultar las miles de filas del historial en cada
     tecla del buscador. Tras una venta o corrección, se invalida el caché.
     """
-    conn = obtener_conexion()
-    df = conn.read(
-        spreadsheet=URL_PLANILLA,
-        worksheet="DB_HISTORIAL_ITEMS",
-        ttl=0,
+    from db.sales import (
+        BACKEND_TURSO as BACKEND_VENTAS_TURSO,
+        cargar_items_turso,
+        obtener_backend_ventas,
     )
+
+    if obtener_backend_ventas() == BACKEND_VENTAS_TURSO:
+        df = cargar_items_turso()
+    else:
+        conn = obtener_conexion()
+        df = conn.read(
+            spreadsheet=URL_PLANILLA,
+            worksheet="DB_HISTORIAL_ITEMS",
+            ttl=0,
+        )
+
     df = normalizar_fecha_columna(df)
 
     # Precalcular texto normalizado y subtotal numérico una sola vez por TTL.
@@ -3107,47 +3146,48 @@ def mostrar_preventistas():
 # ==========================================
 # 13. ENRUTADOR PRINCIPAL
 # ==========================================
-st.sidebar.image(
-    "https://cdn-icons-png.flaticon.com/512/3514/3514491.png",
-    width=120,
-)
+if __name__ == "__main__":
+    st.sidebar.image(
+        "https://cdn-icons-png.flaticon.com/512/3514/3514491.png",
+        width=120,
+    )
 
-st.sidebar.title("Sistema Genaro")
-st.sidebar.caption("POS · Gestión · Control")
+    st.sidebar.title("Sistema Genaro")
+    st.sidebar.caption("POS · Gestión · Control")
 
-menu = st.sidebar.radio(
-    "Navegación",
-    [
-        "🛒 Caja",
-        "📱 Servicios",
-        "📋 Historial de Cargas",
-        "⚙️ Admin Productos",
-        "📜 Historial de Ítems",
-        "📊 Visor (Dashboard)",
-        "🚚 Preventistas",
-    ],
-    index=(
-        1
-        if os.getenv("ENV_NAME") == "genaro-pos-dev"
-        and os.getenv("SERVICIOS_BACKEND", "").strip().upper() == "TURSO"
-        and os.getenv("CATALOGO_BACKEND", "").strip().upper() == "TURSO"
-        and os.getenv("TURSO_DEV_DATABASE_URL", "").strip()
-            == "turso://genaro-pos-dev-alanrod10.aws-sa-east-1.turso.io"
-        else 0
-    ),
-)
+    menu = st.sidebar.radio(
+        "Navegación",
+        [
+            "🛒 Caja",
+            "📱 Servicios",
+            "📋 Historial de Cargas",
+            "⚙️ Admin Productos",
+            "📜 Historial de Ítems",
+            "📊 Visor (Dashboard)",
+            "🚚 Preventistas",
+        ],
+        index=(
+            1
+            if os.getenv("ENV_NAME") == "genaro-pos-dev"
+            and os.getenv("SERVICIOS_BACKEND", "").strip().upper() == "TURSO"
+            and os.getenv("CATALOGO_BACKEND", "").strip().upper() == "TURSO"
+            and os.getenv("TURSO_DEV_DATABASE_URL", "").strip()
+                == "turso://genaro-pos-dev-alanrod10.aws-sa-east-1.turso.io"
+            else 0
+        ),
+    )
 
-if menu == "🛒 Caja":
-    mostrar_caja()
-elif menu == "📱 Servicios":
-    mostrar_servicios()
-elif menu == "📋 Historial de Cargas":
-    mostrar_historial_cargas()
-elif menu == "⚙️ Admin Productos":
-    mostrar_admin_productos()
-elif menu == "📜 Historial de Ítems":
-    mostrar_historial()
-elif menu == "📊 Visor (Dashboard)":
-    mostrar_visor()
-elif menu == "🚚 Preventistas":
-    mostrar_preventistas()
+    if menu == "🛒 Caja":
+        mostrar_caja()
+    elif menu == "📱 Servicios":
+        mostrar_servicios()
+    elif menu == "📋 Historial de Cargas":
+        mostrar_historial_cargas()
+    elif menu == "⚙️ Admin Productos":
+        mostrar_admin_productos()
+    elif menu == "📜 Historial de Ítems":
+        mostrar_historial()
+    elif menu == "📊 Visor (Dashboard)":
+        mostrar_visor()
+    elif menu == "🚚 Preventistas":
+        mostrar_preventistas()

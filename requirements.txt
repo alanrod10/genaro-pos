@@ -2,3 +2,6 @@ streamlit
 st-gsheets-connection
 streamlit-keyup
 pandas
+fastapi
+httpx
+pydantic
