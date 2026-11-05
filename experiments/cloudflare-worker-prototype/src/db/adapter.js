@@ -838,6 +838,8 @@ function mapearFilaServicio(c, status = undefined) {
     pago_transferencia: Number(c.pago_transferencia),
     anulado: Boolean(c.anulado),
     idempotency_key: c.idempotency_key || undefined,
+    plataforma_origen: c.plataforma_origen || null,
+    servicio_destino: c.servicio_destino || null,
   };
   if (status) out.status = status;
   return out;
@@ -906,10 +908,13 @@ export async function registrarCargaIdempotente(client, { servicio, usuario, ide
     }
   }
 
+  const plataformaOrigen = servicio.plataforma_origen ? String(servicio.plataforma_origen).trim().toUpperCase() : null;
+  const servicioDestino = servicio.servicio_destino ? String(servicio.servicio_destino).trim().toUpperCase() : null;
+
   const res = await client.execute({
-    sql: `INSERT INTO cargas_servicios (fecha_hora_utc, servicio, monto_carga, monto_adicional, total_cobrado, pago_efectivo, pago_transferencia, anulado, idempotency_key)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?);`,
-    args: [nowUtc, tipo, montoCarga, montoAdicional, totalCobrado, pagoEfvo, pagoTransf, key],
+    sql: `INSERT INTO cargas_servicios (fecha_hora_utc, servicio, monto_carga, monto_adicional, total_cobrado, pago_efectivo, pago_transferencia, anulado, idempotency_key, plataforma_origen, servicio_destino)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?);`,
+    args: [nowUtc, tipo, montoCarga, montoAdicional, totalCobrado, pagoEfvo, pagoTransf, key, plataformaOrigen, servicioDestino],
   });
   const cargaId = Number(res.lastInsertRowid) || 1;
 
@@ -933,14 +938,16 @@ export async function registrarCargaIdempotente(client, { servicio, usuario, ide
       pago_transferencia: pagoTransf,
       anulado: 0,
       idempotency_key: key,
+      plataforma_origen: plataformaOrigen,
+      servicio_destino: servicioDestino,
     },
     "registrado"
   );
 }
 
-export async function listarServicios(client, { fecha = null, tipo = null, incluir_anuladas = false } = {}) {
+export async function listarServicios(client, { fecha = null, tipo = null, incluir_anuladas = false, plataforma_origen = null, servicio_destino = null } = {}) {
   let sql = `
-    SELECT id, fecha_hora_utc, servicio, monto_carga, monto_adicional, total_cobrado, pago_efectivo, pago_transferencia, anulado, idempotency_key
+    SELECT id, fecha_hora_utc, servicio, monto_carga, monto_adicional, total_cobrado, pago_efectivo, pago_transferencia, anulado, idempotency_key, plataforma_origen, servicio_destino
     FROM cargas_servicios
     WHERE 1=1
   `;
@@ -951,6 +958,14 @@ export async function listarServicios(client, { fecha = null, tipo = null, inclu
   if (tipo) {
     sql += " AND servicio = ?";
     args.push(tipo);
+  }
+  if (plataforma_origen) {
+    sql += " AND plataforma_origen = ?";
+    args.push(plataforma_origen);
+  }
+  if (servicio_destino) {
+    sql += " AND servicio_destino = ?";
+    args.push(servicio_destino);
   }
   if (fecha) {
     const { desdeUtc, hastaUtc } = obtenerRangoUtcDiaJujuy(fecha);
@@ -1100,12 +1115,19 @@ export async function editarCargaServicio(client, cargaId, datos, usuario) {
     throw new Error("INVALID_INPUT: pago_efvo + pago_transf debe igualar total_cobrado.");
   }
 
+  const nuevaPlat = datos.plataforma_origen !== undefined
+    ? (datos.plataforma_origen ? String(datos.plataforma_origen).trim().toUpperCase() : null)
+    : (actual.plataforma_origen || null);
+  const nuevoDest = datos.servicio_destino !== undefined
+    ? (datos.servicio_destino ? String(datos.servicio_destino).trim().toUpperCase() : null)
+    : (actual.servicio_destino || null);
+
   await client.batch([
     {
       sql: `UPDATE cargas_servicios
-            SET servicio = ?, monto_carga = ?, monto_adicional = ?, total_cobrado = ?, pago_efectivo = ?, pago_transferencia = ?
+            SET servicio = ?, monto_carga = ?, monto_adicional = ?, total_cobrado = ?, pago_efectivo = ?, pago_transferencia = ?, plataforma_origen = ?, servicio_destino = ?
             WHERE id = ?;`,
-      args: [nuevoServicio, nuevoMontoCarga, nuevoAdicional, nuevoTotal, nuevoEfvo, nuevoTransf, cargaId],
+      args: [nuevoServicio, nuevoMontoCarga, nuevoAdicional, nuevoTotal, nuevoEfvo, nuevoTransf, nuevaPlat, nuevoDest, cargaId],
     },
     {
       sql: `INSERT INTO cargas_servicios_auditoria (carga_id, accion, valores_anteriores, valores_nuevos, fecha_utc, actor)
@@ -2416,11 +2438,15 @@ export async function inicializarEsquemaCompleto(client) {
       pago_efectivo INTEGER NOT NULL DEFAULT 0 CHECK (pago_efectivo >= 0),
       pago_transferencia INTEGER NOT NULL DEFAULT 0 CHECK (pago_transferencia >= 0),
       anulado INTEGER NOT NULL DEFAULT 0 CHECK (anulado IN (0, 1)),
-      idempotency_key TEXT DEFAULT NULL
+      idempotency_key TEXT DEFAULT NULL,
+      plataforma_origen TEXT DEFAULT NULL,
+      servicio_destino TEXT DEFAULT NULL
     );`,
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_cargas_servicios_idempotency_key
       ON cargas_servicios (idempotency_key)
       WHERE idempotency_key IS NOT NULL;`,
+    `CREATE INDEX IF NOT EXISTS idx_cargas_plataforma_origen ON cargas_servicios(plataforma_origen);`,
+    `CREATE INDEX IF NOT EXISTS idx_cargas_servicio_destino ON cargas_servicios(servicio_destino);`,
     `CREATE TABLE IF NOT EXISTS cargas_servicios_auditoria (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       carga_id INTEGER NOT NULL,
@@ -2507,7 +2533,76 @@ export async function inicializarEsquemaCompleto(client) {
       creado_en_utc TEXT NOT NULL DEFAULT (datetime('now'))
     );`,
     `CREATE INDEX IF NOT EXISTS idx_scram_challenges_exp ON auth_scram_challenges(exp);`,
-    `CREATE INDEX IF NOT EXISTS idx_scram_challenges_used ON auth_scram_challenges(used, exp);`
+    `CREATE INDEX IF NOT EXISTS idx_scram_challenges_used ON auth_scram_challenges(used, exp);`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_fondos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      codigo TEXT NOT NULL UNIQUE,
+      nombre TEXT NOT NULL,
+      naturaleza TEXT NOT NULL,
+      titularidad TEXT NOT NULL,
+      moneda TEXT NOT NULL DEFAULT 'ARS',
+      estado TEXT NOT NULL DEFAULT 'ACTIVO',
+      saldo_centavos INTEGER NOT NULL DEFAULT 0,
+      permite_sobregiro INTEGER NOT NULL DEFAULT 0,
+      version INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      creado_por TEXT NOT NULL DEFAULT 'SISTEMA',
+      actualizado_por TEXT NOT NULL DEFAULT 'SISTEMA',
+      saldo_inicial_cents INTEGER NOT NULL DEFAULT 0,
+      saldo_inicial_configurado_en TEXT DEFAULT NULL,
+      saldo_inicial_configurado_por TEXT DEFAULT NULL,
+      estado_configuracion TEXT NOT NULL DEFAULT 'INICIAL_CERO'
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_obligaciones_apertura (
+      codigo TEXT PRIMARY KEY,
+      nombre TEXT NOT NULL,
+      descripcion TEXT NOT NULL,
+      saldo_inicial_cents INTEGER NOT NULL DEFAULT 0,
+      configurado_en TEXT DEFAULT NULL,
+      configurado_por TEXT DEFAULT NULL,
+      estado_configuracion TEXT NOT NULL DEFAULT 'INICIAL_CERO'
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_saldos_iniciales_auditoria (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_codigo TEXT NOT NULL,
+      item_nombre TEXT NOT NULL,
+      categoria TEXT NOT NULL,
+      saldo_anterior_cents INTEGER NOT NULL,
+      saldo_nuevo_cents INTEGER NOT NULL,
+      fecha_hora TEXT NOT NULL,
+      usuario_responsable TEXT NOT NULL,
+      motivo TEXT NOT NULL,
+      referencia_autorizacion TEXT,
+      jornada_id INTEGER,
+      es_apertura_inicial INTEGER NOT NULL DEFAULT 0
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_movimientos (
+      movement_id TEXT PRIMARY KEY,
+      codigo_fondo TEXT NOT NULL,
+      monto_centavos INTEGER NOT NULL,
+      tipo TEXT NOT NULL,
+      creado_en_utc TEXT NOT NULL DEFAULT (datetime('now'))
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_cuenta_corriente_david (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      tipo_operacion TEXT NOT NULL,
+      monto_cents INTEGER NOT NULL,
+      saldo_deuda_resultante_cents INTEGER NOT NULL,
+      creado_en_utc TEXT NOT NULL DEFAULT (datetime('now')),
+      actor TEXT NOT NULL,
+      motivo TEXT NOT NULL
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_anticipos_preventistas (
+      id TEXT PRIMARY KEY,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      proveedor TEXT NOT NULL,
+      monto_original_cents INTEGER NOT NULL,
+      motivo TEXT NOT NULL,
+      creado_por TEXT NOT NULL,
+      creado_en_utc TEXT NOT NULL DEFAULT (datetime('now'))
+    );`
   ], "write");
 
   const nombresMigraciones = {
@@ -2530,6 +2625,42 @@ export async function inicializarEsquemaCompleto(client) {
       args: [m, nombresMigraciones[m] || `00${m}_migration`],
     });
   }
+
+  // Sembrar 10 fondos canónicos y 3 obligaciones si no existen
+  const fondosInit = [
+    { codigo: "1110", nombre: "Drugstore Diario", nat: "EFECTIVO", tit: "PROPIA" },
+    { codigo: "1120", nombre: "Drugstore Acumulado", nat: "EFECTIVO", tit: "PROPIA" },
+    { codigo: "1130", nombre: "Prepay Efectivo", nat: "EFECTIVO", tit: "PROPIA" },
+    { codigo: "1140", nombre: "Adicionales Efectivo", nat: "ADICIONALES_PARTICULARES", tit: "PROPIA" },
+    { codigo: "1150", nombre: "Claro Efectivo", nat: "RECAUDACION_TERCEROS", tit: "PROPIA" },
+    { codigo: "1160", nombre: "Prepay Diario Efectivo", nat: "EFECTIVO", tit: "PROPIA" },
+    { codigo: "1210", nombre: "Mercado Pago", nat: "BILLETERA_VIRTUAL", tit: "PROPIA" },
+    { codigo: "1220", nombre: "Prepay Digital", nat: "BILLETERA_VIRTUAL", tit: "CUSTODIA" },
+    { codigo: "1230", nombre: "Claro Comercios", nat: "BILLETERA_VIRTUAL", tit: "CUSTODIA" },
+    { codigo: "1310", nombre: "Tránsito Preventistas", nat: "TRANSITO_PREVENTISTAS", tit: "TRANSITO" },
+  ];
+
+  for (const f of fondosInit) {
+    await client.execute({
+      sql: `INSERT OR IGNORE INTO tesoreria_fondos (codigo, nombre, naturaleza, titularidad, saldo_centavos, saldo_inicial_cents, estado_configuracion)
+            VALUES (?, ?, ?, ?, 0, 0, 'INICIAL_CERO');`,
+      args: [f.codigo, f.nombre, f.nat, f.tit],
+    });
+  }
+
+  const obligInit = [
+    { codigo: "DAVID", nombre: "Deuda pendiente con David", desc: "Obligación acumulada por liquidaciones PREPAY" },
+    { codigo: "CLARO", nombre: "Obligaciones circuito Claro / Ezequiel", desc: "Liquidaciones pendientes servicio Claro" },
+    { codigo: "PREVENTISTAS", nombre: "Obligaciones de reposición Preventistas (histórico)", desc: "Anticipos y reposiciones de mercadería" },
+  ];
+
+  for (const ob of obligInit) {
+    await client.execute({
+      sql: `INSERT OR IGNORE INTO tesoreria_obligaciones_apertura (codigo, nombre, descripcion, saldo_inicial_cents, estado_configuracion)
+            VALUES (?, ?, ?, 0, 'INICIAL_CERO');`,
+      args: [ob.codigo, ob.nombre, ob.desc],
+    });
+  }
 }
 
 export async function poblarDatosPrueba(client) {
@@ -2547,4 +2678,301 @@ export async function poblarDatosPrueba(client) {
             VALUES (3, 'Producto Descontinuado', 'Kiosco', 'Distribuidora San Salvador', 'Unidad', 300, 500, 0);`,
     }
   ], "write");
+}
+
+// --- Módulo Tesorería y Saldos Iniciales / Aperturas ---
+
+export async function obtenerSaldosInicialesWorker(client) {
+  const resFondos = await client.execute({
+    sql: `SELECT codigo, nombre, saldo_centavos, saldo_inicial_cents, saldo_inicial_configurado_en,
+                 saldo_inicial_configurado_por, estado_configuracion
+          FROM tesoreria_fondos ORDER BY codigo ASC;`
+  });
+
+  const resOblig = await client.execute({
+    sql: `SELECT codigo, nombre, descripcion, saldo_inicial_cents, configurado_en,
+                 configurado_por, estado_configuracion
+          FROM tesoreria_obligaciones_apertura ORDER BY codigo ASC;`
+  });
+
+  const fondosFisicos = [];
+  const cuentasDigitales = [];
+  let totalFisicosCents = 0;
+  let totalDigitalesCents = 0;
+
+  for (const row of resFondos.rows) {
+    const cod = String(row.codigo);
+    const item = {
+      codigo: cod,
+      nombre: String(row.nombre),
+      categoria: ["1110", "1120", "1130", "1140", "1150", "1160"].includes(cod) ? "FONDO_FISICO" : "CUENTA_DIGITAL",
+      saldo_inicial_cents: Number(row.saldo_inicial_cents ?? 0),
+      saldo_actual_cents: Number(row.saldo_centavos ?? 0),
+      configurado_en: row.saldo_inicial_configurado_en || null,
+      configurado_por: row.saldo_inicial_configurado_por || null,
+      estado_configuracion: row.estado_configuracion || "INICIAL_CERO",
+      editable: true,
+    };
+    if (item.categoria === "FONDO_FISICO") {
+      fondosFisicos.push(item);
+      totalFisicosCents += item.saldo_inicial_cents;
+    } else {
+      cuentasDigitales.push(item);
+      totalDigitalesCents += item.saldo_inicial_cents;
+    }
+  }
+
+  const obligaciones = [];
+  let totalObligacionesCents = 0;
+  for (const row of resOblig.rows) {
+    const sInit = Number(row.saldo_inicial_cents ?? 0);
+    obligaciones.push({
+      codigo: String(row.codigo),
+      nombre: String(row.nombre),
+      categoria: "OBLIGACION",
+      saldo_inicial_cents: sInit,
+      saldo_actual_cents: sInit,
+      configurado_en: row.configurado_en || null,
+      configurado_por: row.configurado_por || null,
+      estado_configuracion: row.estado_configuracion || "INICIAL_CERO",
+      editable: true,
+    });
+    totalObligacionesCents += sInit;
+  }
+
+  return {
+    fondos_fisicos: fondosFisicos,
+    cuentas_digitales: cuentasDigitales,
+    obligaciones,
+    total_fondos_fisicos_cents: totalFisicosCents,
+    total_cuentas_digitales_cents: totalDigitalesCents,
+    total_obligaciones_cents: totalObligacionesCents,
+  };
+}
+
+export async function modificarSaldoInicialWorker(client, { codigo, saldo_nuevo_cents, usuario, motivo, referencia_autorizacion = null }) {
+  if (!usuario || typeof usuario !== "string" || !usuario.trim()) {
+    throw new Error("INVALID_INPUT: El usuario responsable es obligatorio.");
+  }
+  if (!motivo || typeof motivo !== "string" || !motivo.trim()) {
+    throw new Error("INVALID_INPUT: El motivo de modificación de saldo inicial es obligatorio para auditoría.");
+  }
+  if (!Number.isInteger(saldo_nuevo_cents) || saldo_nuevo_cents < 0) {
+    throw new Error("INVALID_INPUT: El saldo nuevo debe ser un número entero mayor o igual a 0 centavos.");
+  }
+
+  const cod = String(codigo).trim().toUpperCase();
+
+  // 1. Verificar si es un fondo
+  const resFondo = await client.execute({
+    sql: "SELECT id, codigo, nombre, saldo_centavos, saldo_inicial_cents FROM tesoreria_fondos WHERE codigo = ?;",
+    args: [cod]
+  });
+
+  if (resFondo.rows.length > 0) {
+    const f = resFondo.rows[0];
+    const movCount = await client.execute({
+      sql: "SELECT count(*) as cnt FROM tesoreria_movimientos WHERE codigo_fondo = ?;",
+      args: [cod]
+    });
+    if (movCount.rows.length > 0 && Number(movCount.rows[0].cnt) > 0) {
+      throw new Error(`CONFLICT: El fondo ${cod} ya posee movimientos registrados. No se puede alterar retroactivamente el saldo inicial sin un procedimiento de regularización auditado.`);
+    }
+
+    const saldoAnterior = Number(f.saldo_inicial_cents ?? 0);
+    const cat = ["1110", "1120", "1130", "1140", "1150", "1160"].includes(cod) ? "FONDO_FISICO" : "CUENTA_DIGITAL";
+
+    await client.batch([
+      {
+        sql: `UPDATE tesoreria_fondos
+              SET saldo_inicial_cents = ?,
+                  saldo_centavos = ?,
+                  saldo_inicial_configurado_en = datetime('now'),
+                  saldo_inicial_configurado_por = ?,
+                  estado_configuracion = 'CONFIGURADO'
+              WHERE codigo = ?;`,
+        args: [saldo_nuevo_cents, saldo_nuevo_cents, usuario, cod]
+      },
+      {
+        sql: `INSERT INTO tesoreria_saldos_iniciales_auditoria (
+                item_codigo, item_nombre, categoria, saldo_anterior_cents, saldo_nuevo_cents,
+                fecha_hora, usuario_responsable, motivo, referencia_autorizacion, es_apertura_inicial
+              ) VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, 0);`,
+        args: [cod, String(f.nombre), cat, saldoAnterior, saldo_nuevo_cents, usuario, motivo.trim(), referencia_autorizacion ? String(referencia_autorizacion).trim() : null]
+      }
+    ], "write");
+
+    return {
+      status: "SUCCESS",
+      item_codigo: cod,
+      item_nombre: String(f.nombre),
+      categoria: cat,
+      saldo_anterior_cents: saldoAnterior,
+      saldo_nuevo_cents,
+      usuario_responsable: usuario,
+      motivo: motivo.trim(),
+      referencia_autorizacion: referencia_autorizacion || null,
+      fecha_hora: new Date().toISOString()
+    };
+  }
+
+  // 2. Verificar si es una obligación
+  const resOblig = await client.execute({
+    sql: "SELECT codigo, nombre, descripcion, saldo_inicial_cents FROM tesoreria_obligaciones_apertura WHERE codigo = ?;",
+    args: [cod]
+  });
+
+  if (resOblig.rows.length > 0) {
+    const ob = resOblig.rows[0];
+    if (cod === "DAVID") {
+      const movDavid = await client.execute("SELECT count(*) as cnt FROM tesoreria_cuenta_corriente_david;");
+      if (movDavid.rows.length > 0 && Number(movDavid.rows[0].cnt) > 0) {
+        throw new Error("CONFLICT: La cuenta corriente de David ya posee movimientos registrados. Debe utilizar el procedimiento de regularización/reconocimiento formal.");
+      }
+    }
+
+    const saldoAnterior = Number(ob.saldo_inicial_cents ?? 0);
+
+    await client.batch([
+      {
+        sql: `UPDATE tesoreria_obligaciones_apertura
+              SET saldo_inicial_cents = ?,
+                  configurado_en = datetime('now'),
+                  configurado_por = ?,
+                  estado_configuracion = 'CONFIGURADO'
+              WHERE codigo = ?;`,
+        args: [saldo_nuevo_cents, usuario, cod]
+      },
+      {
+        sql: `INSERT INTO tesoreria_saldos_iniciales_auditoria (
+                item_codigo, item_nombre, categoria, saldo_anterior_cents, saldo_nuevo_cents,
+                fecha_hora, usuario_responsable, motivo, referencia_autorizacion, es_apertura_inicial
+              ) VALUES (?, ?, 'OBLIGACION', ?, ?, datetime('now'), ?, ?, ?, 0);`,
+        args: [cod, String(ob.nombre), saldoAnterior, saldo_nuevo_cents, usuario, motivo.trim(), referencia_autorizacion ? String(referencia_autorizacion).trim() : null]
+      }
+    ], "write");
+
+    return {
+      status: "SUCCESS",
+      item_codigo: cod,
+      item_nombre: String(ob.nombre),
+      categoria: "OBLIGACION",
+      saldo_anterior_cents: saldoAnterior,
+      saldo_nuevo_cents,
+      usuario_responsable: usuario,
+      motivo: motivo.trim(),
+      referencia_autorizacion: referencia_autorizacion || null,
+      fecha_hora: new Date().toISOString()
+    };
+  }
+
+  throw new Error(`NOT_FOUND: Código '${cod}' no reconocido como fondo de tesorería ni obligación configurable.`);
+}
+
+export async function obtenerHistorialAperturasWorker(client) {
+  const res = await client.execute(
+    "SELECT * FROM tesoreria_saldos_iniciales_auditoria ORDER BY fecha_hora DESC, id DESC;"
+  );
+  return res.rows.map(r => ({
+    id: Number(r.id),
+    item_codigo: String(r.item_codigo),
+    item_nombre: String(r.item_nombre),
+    categoria: String(r.categoria),
+    saldo_anterior_cents: Number(r.saldo_anterior_cents),
+    saldo_nuevo_cents: Number(r.saldo_nuevo_cents),
+    fecha_hora: String(r.fecha_hora),
+    usuario_responsable: String(r.usuario_responsable),
+    motivo: String(r.motivo),
+    referencia_autorizacion: r.referencia_autorizacion ? String(r.referencia_autorizacion) : null,
+    jornada_id: r.jornada_id ? Number(r.jornada_id) : null,
+    es_apertura_inicial: Boolean(r.es_apertura_inicial)
+  }));
+}
+
+export async function obtenerFondosTesoreriaWorker(client) {
+  const res = await client.execute(
+    "SELECT id, codigo, nombre, naturaleza, titularidad, moneda, estado, saldo_centavos, permite_sobregiro, version, saldo_inicial_cents, estado_configuracion FROM tesoreria_fondos ORDER BY codigo ASC;"
+  );
+  return res.rows.map(r => ({
+    id: Number(r.id),
+    codigo: String(r.codigo),
+    nombre: String(r.nombre),
+    naturaleza: String(r.naturaleza),
+    titularidad: String(r.titularidad),
+    moneda: String(r.moneda),
+    estado: String(r.estado),
+    saldo_centavos: Number(r.saldo_centavos),
+    permite_sobregiro: Number(r.permite_sobregiro),
+    version: Number(r.version),
+    saldo_inicial_cents: Number(r.saldo_inicial_cents ?? 0),
+    estado_configuracion: String(r.estado_configuracion || "INICIAL_CERO")
+  }));
+}
+
+export async function obtenerResumenTesoreriaWorker(client) {
+  const fondos = await obtenerFondosTesoreriaWorker(client);
+  const fisica = fondos.filter(f => ["1110", "1120", "1130", "1140", "1150", "1160"].includes(f.codigo));
+  const digital = fondos.filter(f => ["1210", "1220", "1230", "1310"].includes(f.codigo));
+
+  const totalFisicoCents = fisica.reduce((acc, f) => acc + f.saldo_centavos, 0);
+  const totalDigitalCents = digital.reduce((acc, f) => acc + f.saldo_centavos, 0);
+
+  return {
+    total_efectivo_fisico_cents: totalFisicoCents,
+    total_cuentas_digitales_cents: totalDigitalCents,
+    total_disponible_cents: totalFisicoCents + totalDigitalCents,
+    fondos_count: fondos.length,
+    fondos
+  };
+}
+
+export async function obtenerCCDavidWorker(client) {
+  const obRes = await client.execute({
+    sql: "SELECT saldo_inicial_cents FROM tesoreria_obligaciones_apertura WHERE codigo = 'DAVID';",
+  });
+  const saldoInicialDavid = obRes.rows.length > 0 ? Number(obRes.rows[0].saldo_inicial_cents ?? 0) : 0;
+
+  let movimientos = [];
+  try {
+    const movRes = await client.execute("SELECT * FROM tesoreria_cuenta_corriente_david ORDER BY creado_en_utc DESC;");
+    movimientos = movRes.rows.map(r => ({
+      id: Number(r.id),
+      idempotency_key: String(r.idempotency_key),
+      tipo_operacion: String(r.tipo_operacion),
+      monto_cents: Number(r.monto_cents),
+      saldo_deuda_resultante_cents: Number(r.saldo_deuda_resultante_cents),
+      creado_en_utc: String(r.creado_en_utc),
+      actor: String(r.actor),
+      motivo: String(r.motivo)
+    }));
+  } catch {}
+
+  const deudaActual = movimientos.length > 0 ? movimientos[0].saldo_deuda_resultante_cents : saldoInicialDavid;
+
+  return {
+    obligacion_pendiente_cents: deudaActual,
+    saldo_inicial_cents: saldoInicialDavid,
+    total_movimientos: movimientos.length,
+    movimientos
+  };
+}
+
+export async function obtenerPreventistasResumenWorker(client) {
+  let anticipos = [];
+  try {
+    const antRes = await client.execute("SELECT * FROM tesoreria_anticipos_preventistas ORDER BY creado_en_utc DESC;");
+    anticipos = antRes.rows.map(r => ({
+      id: String(r.id),
+      proveedor: String(r.proveedor),
+      monto_original_cents: Number(r.monto_original_cents),
+      motivo: String(r.motivo),
+      creado_por: String(r.creado_por),
+      creado_en_utc: String(r.creado_en_utc)
+    }));
+  } catch {}
+
+  return {
+    total_anticipos: anticipos.length,
+    anticipos
+  };
 }

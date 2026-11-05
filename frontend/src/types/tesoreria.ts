@@ -678,3 +678,51 @@ export interface ReponerAnticipoPreventistaPayload {
   motivo?: string;
 }
 
+// ==========================================
+// --- APERTURAS Y SALDOS INICIALES (Saldos en $0 y Configuración Auditada) ---
+// ==========================================
+
+export interface SaldoInicialItem {
+  codigo: string;
+  nombre: string;
+  categoria: "FONDO_FISICO" | "CUENTA_DIGITAL" | "OBLIGACION";
+  saldo_inicial_cents: number;
+  saldo_actual_cents: number;
+  configurado_en: string | null;
+  configurado_por: string | null;
+  estado_configuracion: "INICIAL_CERO" | "CONFIGURADO";
+  editable: boolean;
+}
+
+export interface SaldosInicialesResponse {
+  fondos_fisicos: SaldoInicialItem[];
+  cuentas_digitales: SaldoInicialItem[];
+  obligaciones: SaldoInicialItem[];
+  total_fondos_fisicos_cents: number;
+  total_cuentas_digitales_cents: number;
+  total_obligaciones_cents: number;
+}
+
+export interface ModificarSaldoInicialPayload {
+  codigo: string;
+  saldo_nuevo_cents: number;
+  motivo: string;
+  referencia_autorizacion?: string | null;
+}
+
+export interface AuditoriaSaldoInicialItem {
+  id: number;
+  item_codigo: string;
+  item_nombre: string;
+  categoria: string;
+  saldo_anterior_cents: number;
+  saldo_nuevo_cents: number;
+  fecha_hora: string;
+  usuario_responsable: string;
+  motivo: string;
+  referencia_autorizacion: string | null;
+  jornada_id?: number | null;
+  es_apertura_inicial: boolean;
+}
+
+

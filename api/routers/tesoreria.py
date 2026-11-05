@@ -15,8 +15,15 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
-from api.dependencies import get_current_user
+from api.dependencies import get_current_user, require_admin_or_socio
 from api.auth import AuthenticatedUser
+from tesoreria.aperturas import (
+    ErrorAperturaTesoreria,
+    ErrorFondoConMovimientos,
+    modificar_saldo_inicial,
+    obtener_historial_aperturas,
+    obtener_saldos_iniciales_completos,
+)
 from tesoreria.isolation import (
     ErrorViolacionAislamiento,
     conectar_db_laboratorio,
@@ -157,6 +164,53 @@ class FondoResponse(BaseModel):
     updated_at: str
     creado_por: str
     actualizado_por: str
+
+
+class SaldoInicialItem(BaseModel):
+    codigo: str
+    nombre: str
+    categoria: str
+    saldo_inicial_cents: int
+    saldo_actual_cents: int
+    saldo_inicial_formateado: str
+    saldo_actual_formateado: str
+    configurado_por: Optional[str] = None
+    configurado_en: Optional[str] = None
+    tiene_movimientos: bool = False
+    puede_editar_apertura: bool = True
+    estado_configuracion: str
+
+
+class SaldosInicialesResponse(BaseModel):
+    fondos_fisicos: List[SaldoInicialItem]
+    cuentas_digitales: List[SaldoInicialItem]
+    obligaciones: List[SaldoInicialItem]
+    total_fondos_fisicos_cents: int
+    total_cuentas_digitales_cents: int
+    total_obligaciones_cents: int
+
+
+class ModificarSaldoInicialRequest(BaseModel):
+    codigo: str = Field(..., description="Código de fondo (1110-1310) u obligación (DAVID, CLARO, PREVENTISTAS)")
+    saldo_nuevo_cents: int = Field(..., ge=0, description="Nuevo saldo inicial en centavos (entero >= 0)")
+    motivo: str = Field(..., min_length=3, description="Motivo obligatorio de la modificación")
+    referencia_autorizacion: Optional[str] = Field(None, description="Referencia de autorización o acta")
+
+
+class AuditoriaSaldoInicialItem(BaseModel):
+    id: int
+    item_codigo: str
+    item_nombre: str
+    categoria: str
+    saldo_anterior_cents: int
+    saldo_nuevo_cents: int
+    saldo_anterior_formateado: str
+    saldo_nuevo_formateado: str
+    fecha_hora: str
+    usuario_responsable: str
+    motivo: str
+    referencia_autorizacion: Optional[str] = None
+    es_apertura_inicial: bool = False
 
 
 class ResumenTesoreriaResponse(BaseModel):
@@ -389,6 +443,53 @@ def patch_estado_fondo(
     f_dict = dict(fondo_act)
     f_dict["saldo_formateado"] = formatMoney(f_dict["saldo_centavos"])
     return FondoResponse(**f_dict)
+
+
+@router.get("/apertura/saldos-iniciales", response_model=SaldosInicialesResponse, summary="Consultar saldos iniciales y estado de aperturas")
+def get_saldos_iniciales(user: AuthenticatedUser = Depends(get_current_user)):
+    conn = _get_lab_db()
+    try:
+        data = obtener_saldos_iniciales_completos(conn)
+        return SaldosInicialesResponse(**data)
+    finally:
+        conn.close()
+
+
+@router.post("/apertura/saldos-iniciales", summary="Modificar saldo inicial con auditoría (Alan y Yilda)")
+def post_modificar_saldo_inicial(
+    payload: ModificarSaldoInicialRequest,
+    user: AuthenticatedUser = Depends(require_admin_or_socio),
+):
+    conn = _get_lab_db()
+    try:
+        jornada = obtener_jornada_actual(conn)
+        j_id = jornada["id"] if jornada else None
+        res = modificar_saldo_inicial(
+            conn,
+            codigo=payload.codigo,
+            saldo_nuevo_cents=payload.saldo_nuevo_cents,
+            usuario=user.username,
+            motivo=payload.motivo,
+            referencia_autorizacion=payload.referencia_autorizacion,
+            jornada_id=j_id,
+        )
+        return res
+    except ErrorFondoConMovimientos as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except ErrorAperturaTesoreria as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.get("/apertura/historial", response_model=List[AuditoriaSaldoInicialItem], summary="Historial inmutable de auditoría de aperturas")
+def get_historial_aperturas(user: AuthenticatedUser = Depends(get_current_user)):
+    conn = _get_lab_db()
+    try:
+        registros = obtener_historial_aperturas(conn)
+        return [AuditoriaSaldoInicialItem(**r) for r in registros]
+    finally:
+        conn.close()
 
 
 @router.get("/jornada/actual", summary="Obtener jornada de tesorería actualmente activa")

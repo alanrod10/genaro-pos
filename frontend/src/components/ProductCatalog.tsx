@@ -165,6 +165,7 @@ export const ProductCatalog: React.FC<ProductCatalogProps> = ({
 
       if (producto) {
         onSelectProduct(producto);
+        setBusqueda("");
         setFeedbackWithTimeout({
           mensaje: `Escaneado: ${producto.nombre} ($${producto.precio_venta.toLocaleString("es-AR")})`,
           tipo: "exito",

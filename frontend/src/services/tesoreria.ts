@@ -44,10 +44,17 @@ import {
   ResumenPreventistasResponse,
   CrearAnticipoPreventistaPayload,
   ReponerAnticipoPreventistaPayload,
+  SaldosInicialesResponse,
+  ModificarSaldoInicialPayload,
+  AuditoriaSaldoInicialItem,
 } from "../types/tesoreria";
 import { addMoney, subtractMoney } from "../utils/money";
 
 function getApiBaseUrl(): string {
+  const envUrl = (import.meta as any).env?.VITE_API_URL;
+  if (envUrl && typeof envUrl === "string" && envUrl.trim()) {
+    return `${envUrl.replace(/\/+$/, "")}/api/tesoreria`;
+  }
   if (
     typeof window !== "undefined" &&
     window.location?.origin &&
@@ -1376,5 +1383,28 @@ export const TesoreriaService = {
       headers: getAuthHeaders(),
     });
     return handleResponse<ResumenPreventistasResponse>(res);
+  },
+
+  async getSaldosIniciales(): Promise<SaldosInicialesResponse> {
+    const res = await fetch(`${getApiBaseUrl()}/apertura/saldos-iniciales`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<SaldosInicialesResponse>(res);
+  },
+
+  async modificarSaldoInicial(payload: ModificarSaldoInicialPayload): Promise<any> {
+    const res = await fetch(`${getApiBaseUrl()}/apertura/saldos-iniciales`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse<any>(res);
+  },
+
+  async getHistorialAperturas(): Promise<AuditoriaSaldoInicialItem[]> {
+    const res = await fetch(`${getApiBaseUrl()}/apertura/historial`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<AuditoriaSaldoInicialItem[]>(res);
   },
 };

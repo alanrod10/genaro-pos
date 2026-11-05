@@ -50,6 +50,13 @@ import {
   cambiarEstadoPedido,
   calcularMetricasDashboard,
   comprobarReadinessEsquema,
+  obtenerSaldosInicialesWorker,
+  modificarSaldoInicialWorker,
+  obtenerHistorialAperturasWorker,
+  obtenerFondosTesoreriaWorker,
+  obtenerResumenTesoreriaWorker,
+  obtenerCCDavidWorker,
+  obtenerPreventistasResumenWorker,
 } from "../db/adapter.js";
 
 // --- Validación Fail-Closed de JWT_SECRET y Orígenes CORS ---
@@ -445,8 +452,10 @@ export async function handleRequest(request, env, dbClient, scramServer) {
     if (method === "GET" && path === "/api/services") {
       const fecha = url.searchParams.get("fecha");
       const tipo = url.searchParams.get("tipo_servicio") || url.searchParams.get("servicio");
+      const plataforma_origen = url.searchParams.get("plataforma_origen");
+      const servicio_destino = url.searchParams.get("servicio_destino");
       const incAnul = url.searchParams.get("incluir_anuladas") === "true";
-      const cargas = await listarServicios(dbClient, { fecha, tipo, incluir_anuladas: incAnul });
+      const cargas = await listarServicios(dbClient, { fecha, tipo, incluir_anuladas: incAnul, plataforma_origen, servicio_destino });
       return jsonResponse({ total: cargas.length, cargas });
     }
 
@@ -802,6 +811,66 @@ export async function handleRequest(request, env, dbClient, scramServer) {
       }
       const data = await compararPeriodosHistoricos(dbClient, { desde_a, hasta_a, desde_b, hasta_b });
       return jsonResponse(data);
+    }
+
+    // ==========================================
+    // --- TESORERÍA Y APERTURAS ---
+    // ==========================================
+
+    // GET /api/tesoreria/apertura/saldos-iniciales
+    if (method === "GET" && path === "/api/tesoreria/apertura/saldos-iniciales") {
+      const saldos = await obtenerSaldosInicialesWorker(dbClient);
+      return jsonResponse(saldos);
+    }
+
+    // POST /api/tesoreria/apertura/saldos-iniciales (Alan y Yilda - admin/socio)
+    if (method === "POST" && path === "/api/tesoreria/apertura/saldos-iniciales") {
+      const authErr = requireRole(["admin", "socio", "administrador"], "configurar saldos iniciales de apertura");
+      if (authErr) return authErr;
+
+      const body = await request.json();
+      if (!body.codigo || body.saldo_nuevo_cents === undefined || !body.motivo) {
+        return errorResponse("INVALID_INPUT: 'codigo', 'saldo_nuevo_cents' y 'motivo' son obligatorios.", 400);
+      }
+
+      const res = await modificarSaldoInicialWorker(dbClient, {
+        codigo: body.codigo,
+        saldo_nuevo_cents: body.saldo_nuevo_cents,
+        usuario: currentUser,
+        motivo: body.motivo,
+        referencia_autorizacion: body.referencia_autorizacion || null,
+      });
+      return jsonResponse(res);
+    }
+
+    // GET /api/tesoreria/apertura/historial
+    if (method === "GET" && path === "/api/tesoreria/apertura/historial") {
+      const historial = await obtenerHistorialAperturasWorker(dbClient);
+      return jsonResponse(historial);
+    }
+
+    // GET /api/tesoreria/fondos
+    if (method === "GET" && path === "/api/tesoreria/fondos") {
+      const fondos = await obtenerFondosTesoreriaWorker(dbClient);
+      return jsonResponse(fondos);
+    }
+
+    // GET /api/tesoreria/resumen
+    if (method === "GET" && path === "/api/tesoreria/resumen") {
+      const resumen = await obtenerResumenTesoreriaWorker(dbClient);
+      return jsonResponse(resumen);
+    }
+
+    // GET /api/tesoreria/cuenta-corriente/david
+    if (method === "GET" && path === "/api/tesoreria/cuenta-corriente/david") {
+      const david = await obtenerCCDavidWorker(dbClient);
+      return jsonResponse(david);
+    }
+
+    // GET /api/tesoreria/preventistas/resumen
+    if (method === "GET" && path === "/api/tesoreria/preventistas/resumen") {
+      const prev = await obtenerPreventistasResumenWorker(dbClient);
+      return jsonResponse(prev);
     }
 
     return errorResponse(`Ruta no encontrada: ${method} ${path}`, 404);

@@ -680,8 +680,10 @@ def inicializar_esquema_laboratorio(conn: sqlite3.Connection) -> None:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT;")
 
     # Sincronizar control de versiones estructurales de Tesorería
+    from tesoreria.catalog import sembrar_catalogo_canónico
     from tesoreria.migrations_runner import ejecutar_migraciones_tesoreria, migrar_tabla_fondos_si_requiere_1160
     migrar_tabla_fondos_si_requiere_1160(conn)
+    sembrar_catalogo_canónico(conn)
     ejecutar_migraciones_tesoreria(conn)
 
     conn.commit()

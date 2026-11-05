@@ -25,12 +25,15 @@ import {
   AnticipoPreventistaItem,
   ReposicionPreventistaItem,
   ResumenPreventistasResponse,
+  SaldosInicialesResponse,
+  SaldoInicialItem,
+  AuditoriaSaldoInicialItem,
 } from "../types/tesoreria";
 import { TesoreriaService } from "../services/tesoreria";
 import { formatMoney, parseMoney } from "../utils/money";
 
 interface TesoreriaLabProps {
-  currentUser?: { username: string; display_name?: string };
+  currentUser?: { username: string; display_name?: string; role?: string };
 }
 
 type TabActiva =
@@ -44,7 +47,8 @@ type TabActiva =
   | "auditoria"
   | "outbox"
   | "cuenta_corriente_david"
-  | "anticipos_preventistas";
+  | "anticipos_preventistas"
+  | "aperturas";
 
 // Matriz canónica de transferencias internas autorizadas
 const TRANSFERENCIAS_PERMITIDAS_SET = new Set([
@@ -1249,6 +1253,80 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
     }
   };
 
+  // --- Estados de Saldos Iniciales / Aperturas ---
+  const [saldosApertura, setSaldosApertura] = useState<SaldosInicialesResponse | null>(null);
+  const [historialAperturas, setHistorialAperturas] = useState<AuditoriaSaldoInicialItem[]>([]);
+  const [cargandoAperturas, setCargandoAperturas] = useState(false);
+  const [errorAperturas, setErrorAperturas] = useState<string | null>(null);
+  const [modalEditarApertura, setModalEditarApertura] = useState<SaldoInicialItem | null>(null);
+  const [nuevoSaldoAperturaInput, setNuevoSaldoAperturaInput] = useState("");
+  const [motivoAperturaInput, setMotivoAperturaInput] = useState("");
+  const [referenciaAperturaInput, setReferenciaAperturaInput] = useState("");
+  const [guardandoApertura, setGuardandoApertura] = useState(false);
+  const [confirmandoApertura, setConfirmandoApertura] = useState(false);
+
+  const cargarSaldosApertura = useCallback(async () => {
+    setCargandoAperturas(true);
+    setErrorAperturas(null);
+    try {
+      const [saldos, hist] = await Promise.all([
+        TesoreriaService.getSaldosIniciales(),
+        TesoreriaService.getHistorialAperturas(),
+      ]);
+      setSaldosApertura(saldos);
+      setHistorialAperturas(hist);
+    } catch (err: any) {
+      setErrorAperturas(err.message || "Error al cargar saldos iniciales de apertura.");
+    } finally {
+      setCargandoAperturas(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tabActiva === "aperturas") {
+      cargarSaldosApertura();
+    }
+  }, [tabActiva, cargarSaldosApertura]);
+
+  const handleGuardarSaldoInicial = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!modalEditarApertura) return;
+    if (!motivoAperturaInput.trim()) {
+      alert("El motivo de la modificación es obligatorio para la pista de auditoría append-only.");
+      return;
+    }
+    const nuevoCents = parseMoney(nuevoSaldoAperturaInput);
+    if (nuevoCents < 0) {
+      alert("El nuevo saldo inicial debe ser mayor o igual a 0.");
+      return;
+    }
+    if (!confirmandoApertura) {
+      setConfirmandoApertura(true);
+      return;
+    }
+
+    setGuardandoApertura(true);
+    try {
+      await TesoreriaService.modificarSaldoInicial({
+        codigo: modalEditarApertura.codigo,
+        saldo_nuevo_cents: nuevoCents,
+        motivo: motivoAperturaInput.trim(),
+        referencia_autorizacion: referenciaAperturaInput.trim() || undefined,
+      });
+      setModalEditarApertura(null);
+      setNuevoSaldoAperturaInput("");
+      setMotivoAperturaInput("");
+      setReferenciaAperturaInput("");
+      setConfirmandoApertura(false);
+      await Promise.all([cargarSaldosApertura(), cargarDatos()]);
+      alert("Saldo inicial configurado correctamente con trazabilidad y auditoría.");
+    } catch (err: any) {
+      alert(`Error al configurar saldo inicial: ${err.message}`);
+    } finally {
+      setGuardandoApertura(false);
+    }
+  };
+
   return (
     <div className="space-y-6 p-4 md:p-6 max-w-7xl mx-auto" data-testid="tesoreria-lab-container">
       {/* Encabezado y Badges de Aislamiento */}
@@ -1429,6 +1507,18 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
           }`}
         >
           🚚 Anticipos Preventistas (1130)
+        </button>
+        <button
+          type="button"
+          onClick={() => setTabActiva("aperturas")}
+          data-testid="tab-aperturas"
+          className={`px-3 py-1.5 text-xs font-bold rounded-lg transition whitespace-nowrap flex-shrink-0 ${
+            tabActiva === "aperturas"
+              ? "bg-[#C97B5A] text-white shadow-sm"
+              : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200"
+          }`}
+        >
+          ⚙️ Saldos Iniciales / Apertura
         </button>
       </div>
 
@@ -4486,6 +4576,461 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: SALDOS INICIALES / APERTURA DE TESORERÍA (MEGA SYSTEM PROMPT DIRECTIVAS 2 Y 3) */}
+      {tabActiva === "aperturas" && (
+        <div className="space-y-6" data-testid="seccion-aperturas-tesoreria">
+          {/* Banner Informativo Directiva de Apertura */}
+          <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200 text-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-sm">
+            <div className="flex items-center gap-2.5">
+              <span className="text-xl">⚙️</span>
+              <div>
+                <p className="font-bold text-sm">Configuración de Saldos Iniciales / Apertura Oficial en $0</p>
+                <p className="text-[11px] text-blue-700 dark:text-blue-300">
+                  Todos los saldos abren estrictamente en $0 (fondos físicos, digitales y obligaciones). Toda modificación de apertura genera auditoría append-only inmutable con motivo obligatorio. Si el fondo ya posee movimientos, la alteración silenciosa queda bloqueada.
+                </p>
+                {errorAperturas && <p className="text-red-600 font-bold mt-1">{errorAperturas}</p>}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={cargarSaldosApertura}
+              disabled={cargandoAperturas}
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-sm transition whitespace-nowrap"
+            >
+              {cargandoAperturas ? "Actualizando..." : "🔄 Refrescar Saldos"}
+            </button>
+          </div>
+
+          {/* Tarjetas Resumen de Apertura */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Apertura Fondos Físicos</p>
+              <p className="text-xl font-bold font-mono text-gray-900 dark:text-gray-100 mt-1" data-testid="total-apertura-fisicos">
+                {formatMoney(saldosApertura?.total_fondos_fisicos_cents ?? 0)}
+              </p>
+              <p className="text-[10px] text-gray-400 mt-1">Cajas 1110, 1120, 1130, 1140, 1150, 1160</p>
+            </div>
+            <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Apertura Cuentas Digitales</p>
+              <p className="text-xl font-bold font-mono text-gray-900 dark:text-gray-100 mt-1" data-testid="total-apertura-digitales">
+                {formatMoney(saldosApertura?.total_cuentas_digitales_cents ?? 0)}
+              </p>
+              <p className="text-[10px] text-gray-400 mt-1">Cuentas 1210, 1220, 1230, 1310</p>
+            </div>
+            <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-200 dark:border-gray-800 shadow-sm">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Obligaciones Iniciales</p>
+              <p className="text-xl font-bold font-mono text-amber-600 dark:text-amber-400 mt-1" data-testid="total-apertura-obligaciones">
+                {formatMoney(saldosApertura?.total_obligaciones_cents ?? 0)}
+              </p>
+              <p className="text-[10px] text-gray-400 mt-1">David, Claro/Ezequiel, Preventistas</p>
+            </div>
+          </div>
+
+          {/* GRUPO 1: FONDOS FÍSICOS */}
+          <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <span>💵</span> 2.1. Fondos Físicos de Tesorería
+              </h3>
+              <span className="text-xs text-gray-400 font-mono">Total: {formatMoney(saldosApertura?.total_fondos_fisicos_cents ?? 0)}</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left" data-testid="tabla-apertura-fisicos">
+                <thead className="text-[11px] text-gray-500 bg-gray-50 dark:bg-gray-800/50 uppercase border-y border-gray-100 dark:border-gray-800">
+                  <tr>
+                    <th className="py-2 px-3">Código</th>
+                    <th className="py-2 px-3">Fondo Físico</th>
+                    <th className="py-2 px-3 text-right">Saldo Inicial Apertura</th>
+                    <th className="py-2 px-3 text-right">Saldo Actual Libros</th>
+                    <th className="py-2 px-3 text-center">Estado Configuración</th>
+                    <th className="py-2 px-3 text-right">Acción</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                  {saldosApertura?.fondos_fisicos.map((f) => (
+                    <tr key={f.codigo} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition">
+                      <td className="py-2.5 px-3 font-mono font-bold text-gray-900 dark:text-gray-100">{f.codigo}</td>
+                      <td className="py-2.5 px-3 font-semibold text-gray-800 dark:text-gray-200">{f.nombre}</td>
+                      <td className="py-2.5 px-3 text-right font-mono font-bold text-gray-900 dark:text-gray-100">
+                        {formatMoney(f.saldo_inicial_cents)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono text-gray-500">
+                        {formatMoney(f.saldo_actual_cents)}
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        {f.estado_configuracion === "CONFIGURADO" ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                            CONFIGURADO {f.configurado_por ? `(${f.configurado_por})` : ""}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                            $0 PREDETERMINADO
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setModalEditarApertura(f);
+                            setNuevoSaldoAperturaInput((f.saldo_inicial_cents / 100).toFixed(2));
+                            setMotivoAperturaInput("");
+                            setReferenciaAperturaInput("");
+                            setConfirmandoApertura(false);
+                          }}
+                          data-testid={`btn-configurar-apertura-${f.codigo}`}
+                          className="px-2.5 py-1 text-xs font-semibold rounded bg-[#C97B5A] hover:bg-[#b06748] text-white shadow-sm transition"
+                        >
+                          Configurar
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* GRUPO 2: CUENTAS DIGITALES */}
+          <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <span>💳</span> 2.2. Cuentas Digitales y Tránsito
+              </h3>
+              <span className="text-xs text-gray-400 font-mono">Total: {formatMoney(saldosApertura?.total_cuentas_digitales_cents ?? 0)}</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left" data-testid="tabla-apertura-digitales">
+                <thead className="text-[11px] text-gray-500 bg-gray-50 dark:bg-gray-800/50 uppercase border-y border-gray-100 dark:border-gray-800">
+                  <tr>
+                    <th className="py-2 px-3">Código</th>
+                    <th className="py-2 px-3">Cuenta Digital</th>
+                    <th className="py-2 px-3 text-right">Saldo Inicial Apertura</th>
+                    <th className="py-2 px-3 text-right">Saldo Actual Libros</th>
+                    <th className="py-2 px-3 text-center">Estado Configuración</th>
+                    <th className="py-2 px-3 text-right">Acción</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                  {saldosApertura?.cuentas_digitales.map((c) => (
+                    <tr key={c.codigo} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition">
+                      <td className="py-2.5 px-3 font-mono font-bold text-gray-900 dark:text-gray-100">{c.codigo}</td>
+                      <td className="py-2.5 px-3 font-semibold text-gray-800 dark:text-gray-200">{c.nombre}</td>
+                      <td className="py-2.5 px-3 text-right font-mono font-bold text-gray-900 dark:text-gray-100">
+                        {formatMoney(c.saldo_inicial_cents)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono text-gray-500">
+                        {formatMoney(c.saldo_actual_cents)}
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        {c.estado_configuracion === "CONFIGURADO" ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                            CONFIGURADO {c.configurado_por ? `(${c.configurado_por})` : ""}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                            $0 PREDETERMINADO
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setModalEditarApertura(c);
+                            setNuevoSaldoAperturaInput((c.saldo_inicial_cents / 100).toFixed(2));
+                            setMotivoAperturaInput("");
+                            setReferenciaAperturaInput("");
+                            setConfirmandoApertura(false);
+                          }}
+                          data-testid={`btn-configurar-apertura-${c.codigo}`}
+                          className="px-2.5 py-1 text-xs font-semibold rounded bg-[#C97B5A] hover:bg-[#b06748] text-white shadow-sm transition"
+                        >
+                          Configurar
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* GRUPO 3: OBLIGACIONES Y CUENTAS CORRIENTES */}
+          <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <span>📋</span> 2.3. Obligaciones y Cuentas Corrientes
+              </h3>
+              <span className="text-xs text-amber-500 font-mono font-bold">Total: {formatMoney(saldosApertura?.total_obligaciones_cents ?? 0)}</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left" data-testid="tabla-apertura-obligaciones">
+                <thead className="text-[11px] text-gray-500 bg-gray-50 dark:bg-gray-800/50 uppercase border-y border-gray-100 dark:border-gray-800">
+                  <tr>
+                    <th className="py-2 px-3">Código</th>
+                    <th className="py-2 px-3">Obligación / Contraparte</th>
+                    <th className="py-2 px-3 text-right">Deuda Inicial Apertura</th>
+                    <th className="py-2 px-3 text-center">Estado Configuración</th>
+                    <th className="py-2 px-3 text-right">Acción</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                  {saldosApertura?.obligaciones.map((ob) => (
+                    <tr key={ob.codigo} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition">
+                      <td className="py-2.5 px-3 font-mono font-bold text-gray-900 dark:text-gray-100">{ob.codigo}</td>
+                      <td className="py-2.5 px-3 font-semibold text-gray-800 dark:text-gray-200">{ob.nombre}</td>
+                      <td className="py-2.5 px-3 text-right font-mono font-bold text-amber-600 dark:text-amber-400">
+                        {formatMoney(ob.saldo_inicial_cents)}
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        {ob.estado_configuracion === "CONFIGURADO" ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                            CONFIGURADO {ob.configurado_por ? `(${ob.configurado_por})` : ""}
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                            $0 PREDETERMINADO
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setModalEditarApertura(ob);
+                            setNuevoSaldoAperturaInput((ob.saldo_inicial_cents / 100).toFixed(2));
+                            setMotivoAperturaInput("");
+                            setReferenciaAperturaInput("");
+                            setConfirmandoApertura(false);
+                          }}
+                          data-testid={`btn-configurar-apertura-${ob.codigo}`}
+                          className="px-2.5 py-1 text-xs font-semibold rounded bg-[#C97B5A] hover:bg-[#b06748] text-white shadow-sm transition"
+                        >
+                          Configurar
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* HISTORIAL DE MODIFICACIONES (PISTA DE AUDITORÍA APPEND-ONLY) */}
+          <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <span>📜</span> 3.4. Pista de Auditoría de Aperturas y Saldos Iniciales (Append-Only)
+              </h3>
+              <span className="text-xs text-gray-400 font-mono">{historialAperturas.length} registros</span>
+            </div>
+            <div className="overflow-x-auto max-h-96">
+              <table className="w-full text-xs text-left" data-testid="tabla-historial-aperturas">
+                <thead className="text-[11px] text-gray-500 bg-gray-50 dark:bg-gray-800/50 uppercase border-y border-gray-100 dark:border-gray-800 sticky top-0">
+                  <tr>
+                    <th className="py-2 px-3">Fecha y Hora</th>
+                    <th className="py-2 px-3">Ítem</th>
+                    <th className="py-2 px-3">Categoría</th>
+                    <th className="py-2 px-3 text-right">Saldo Anterior</th>
+                    <th className="py-2 px-3 text-right">Saldo Nuevo</th>
+                    <th className="py-2 px-3">Responsable</th>
+                    <th className="py-2 px-3">Motivo Obligatorio</th>
+                    <th className="py-2 px-3">Referencia</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                  {historialAperturas.map((h) => (
+                    <tr key={h.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition text-[11px]">
+                      <td className="py-2 px-3 font-mono text-gray-500 whitespace-nowrap">
+                        {new Date(h.fecha_hora).toLocaleString("es-AR", {
+                          day: "2-digit",
+                          month: "2-digit",
+                          year: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          second: "2-digit",
+                        })}
+                      </td>
+                      <td className="py-2 px-3 font-semibold text-gray-900 dark:text-gray-100 whitespace-nowrap">
+                        <span className="font-mono text-gray-500 mr-1.5">{h.item_codigo}</span>
+                        {h.item_nombre}
+                      </td>
+                      <td className="py-2 px-3 whitespace-nowrap">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
+                          {h.categoria}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 text-right font-mono text-gray-500 whitespace-nowrap">
+                        {formatMoney(h.saldo_anterior_cents)}
+                      </td>
+                      <td className="py-2 px-3 text-right font-mono font-bold text-gray-900 dark:text-gray-100 whitespace-nowrap">
+                        {formatMoney(h.saldo_nuevo_cents)}
+                      </td>
+                      <td className="py-2 px-3 font-semibold text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                        {h.usuario_responsable}
+                      </td>
+                      <td className="py-2 px-3 text-gray-600 dark:text-gray-400 max-w-xs truncate" title={h.motivo}>
+                        {h.motivo}
+                      </td>
+                      <td className="py-2 px-3 text-gray-400 font-mono text-[10px] whitespace-nowrap">
+                        {h.referencia_autorizacion || "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: CONFIGURAR SALDO INICIAL CON CONFIRMACIÓN OBLIGATORIA */}
+      {modalEditarApertura && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" data-testid="modal-configurar-apertura">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-800 space-y-4">
+            <div>
+              <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <span>⚙️</span> Configurar Saldo Inicial
+              </h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                {modalEditarApertura.codigo} — {modalEditarApertura.nombre} ({modalEditarApertura.categoria})
+              </p>
+            </div>
+
+            <div className="bg-amber-50 dark:bg-amber-950/40 p-3 rounded-lg border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-200 space-y-1">
+              <p className="font-semibold">⚠️ Regla de Inmutabilidad Económica:</p>
+              <p>
+                Esta modificación se registrará inmutablemente en la pista de auditoría. Si el fondo u obligación ya registra movimientos, el sistema bloqueará la alteración silenciosa.
+              </p>
+            </div>
+
+            <form onSubmit={handleGuardarSaldoInicial} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-2 gap-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800">
+                <div>
+                  <span className="text-gray-500 block text-[10px] uppercase font-bold">Valor Anterior</span>
+                  <span className="text-base font-bold font-mono text-gray-700 dark:text-gray-300">
+                    {formatMoney(modalEditarApertura.saldo_inicial_cents)}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-500 block text-[10px] uppercase font-bold">Valor Nuevo</span>
+                  <span className="text-base font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                    {formatMoney(parseMoney(nuevoSaldoAperturaInput))}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-gray-700 dark:text-gray-300 font-semibold mb-1">
+                  Nuevo Saldo Inicial ($ ARS) *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="0,00"
+                  value={nuevoSaldoAperturaInput}
+                  onChange={(e) => {
+                    setNuevoSaldoAperturaInput(e.target.value);
+                    setConfirmandoApertura(false);
+                  }}
+                  disabled={confirmandoApertura || guardandoApertura}
+                  className="w-full p-2.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-gray-900 dark:text-gray-100 font-mono text-sm"
+                  data-testid="input-nuevo-saldo-apertura"
+                />
+              </div>
+
+              <div>
+                <label className="block text-gray-700 dark:text-gray-300 font-semibold mb-1">
+                  Motivo de la Modificación * (Obligatorio para Auditoría)
+                </label>
+                <textarea
+                  required
+                  rows={2}
+                  placeholder="Motivo formal de la apertura / regularización..."
+                  value={motivoAperturaInput}
+                  onChange={(e) => {
+                    setMotivoAperturaInput(e.target.value);
+                    setConfirmandoApertura(false);
+                  }}
+                  disabled={confirmandoApertura || guardandoApertura}
+                  className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-gray-900 dark:text-gray-100 text-xs"
+                  data-testid="input-motivo-apertura"
+                />
+              </div>
+
+              <div>
+                <label className="block text-gray-700 dark:text-gray-300 font-semibold mb-1">
+                  Referencia de Autorización (Opcional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: Acta Arqueo Conjunto, Firma Alan/Yilda"
+                  value={referenciaAperturaInput}
+                  onChange={(e) => setReferenciaAperturaInput(e.target.value)}
+                  disabled={confirmandoApertura || guardandoApertura}
+                  className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-gray-900 dark:text-gray-100 text-xs"
+                  data-testid="input-referencia-apertura"
+                />
+              </div>
+
+              {confirmandoApertura && (
+                <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-lg text-red-900 dark:text-red-200 space-y-1">
+                  <p className="font-bold text-xs">⚠️ ¿Confirmás guardar esta apertura?</p>
+                  <p className="text-[11px]">
+                    El saldo inicial de <strong>{modalEditarApertura.codigo}</strong> cambiará de{" "}
+                    <strong>{formatMoney(modalEditarApertura.saldo_inicial_cents)}</strong> a{" "}
+                    <strong>{formatMoney(parseMoney(nuevoSaldoAperturaInput))}</strong>.
+                  </p>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setModalEditarApertura(null);
+                    setConfirmandoApertura(false);
+                  }}
+                  disabled={guardandoApertura}
+                  className="px-3.5 py-2 text-xs font-semibold rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition"
+                >
+                  Cancelar
+                </button>
+                {confirmandoApertura ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmandoApertura(false)}
+                      disabled={guardandoApertura}
+                      className="px-3 py-2 text-xs font-semibold rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 transition"
+                    >
+                      Volver
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={guardandoApertura}
+                      data-testid="btn-confirmar-guardar-apertura"
+                      className="px-4 py-2 text-xs font-bold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition"
+                    >
+                      {guardandoApertura ? "Guardando..." : "Confirmar y Guardar"}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="submit"
+                    data-testid="btn-guardar-apertura-previa"
+                    className="px-4 py-2 text-xs font-bold rounded-lg bg-[#C97B5A] hover:bg-[#b06748] text-white shadow-sm transition"
+                  >
+                    Revisar y Confirmar
+                  </button>
+                )}
+              </div>
+            </form>
           </div>
         </div>
       )}
