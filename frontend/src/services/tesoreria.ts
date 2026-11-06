@@ -39,6 +39,11 @@ import {
   AcreditacionDavidPayload,
   PagoDavidPayload,
   ReconocimientoDeudaHistoricaPayload,
+  EstadoCuentaEzequielResponse,
+  AcreditacionEzequielPayload,
+  LiquidacionEzequielPayload,
+  ReconocimientoDeudaHistoricaEzequielPayload,
+  FondeoPendienteItem,
   AnticipoPreventistaItem,
   ReposicionPreventistaItem,
   ResumenPreventistasResponse,
@@ -992,6 +997,81 @@ export const TesoreriaService = {
       method: "POST",
       headers: getAuthHeaders(key),
       body: JSON.stringify(payload),
+    });
+    return handleResponse<any>(res);
+  },
+
+  // =====================================================================
+  // CUENTA CORRIENTE CLARO COMERCIOS / EZEQUIEL
+  // =====================================================================
+
+  async getCuentaCorrienteEzequiel(fechaCorte?: string): Promise<EstadoCuentaEzequielResponse> {
+    const query = fechaCorte ? `?fecha_corte=${encodeURIComponent(fechaCorte)}` : "";
+    const res = await fetch(`${getApiBaseUrl()}/cuenta-corriente/ezequiel${query}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<EstadoCuentaEzequielResponse>(res);
+  },
+
+  async registrarAcreditacionEzequiel(
+    payload: AcreditacionEzequielPayload,
+    idempotencyKey?: string,
+  ): Promise<any> {
+    const key = idempotencyKey || `acr_ezequiel_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const res = await fetch(`${getApiBaseUrl()}/cuenta-corriente/ezequiel/acreditacion`, {
+      method: "POST",
+      headers: getAuthHeaders(key),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse<any>(res);
+  },
+
+  async registrarLiquidacionEzequiel(
+    payload: LiquidacionEzequielPayload,
+    idempotencyKey?: string,
+  ): Promise<any> {
+    const key = idempotencyKey || `liq_ezequiel_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const res = await fetch(`${getApiBaseUrl()}/cuenta-corriente/ezequiel/liquidacion`, {
+      method: "POST",
+      headers: getAuthHeaders(key),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse<any>(res);
+  },
+
+  async registrarReconocimientoDeudaHistoricaEzequiel(
+    payload: ReconocimientoDeudaHistoricaEzequielPayload,
+    idempotencyKey?: string,
+  ): Promise<any> {
+    const key = idempotencyKey || `his_ezequiel_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const res = await fetch(`${getApiBaseUrl()}/cuenta-corriente/ezequiel/reconocimiento-historico`, {
+      method: "POST",
+      headers: getAuthHeaders(key),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse<any>(res);
+  },
+
+  // =====================================================================
+  // FONDEOS FÍSICOS PENDIENTES (DEC-02)
+  // =====================================================================
+
+  async getFondeosPendientes(estado: string = "PENDIENTE", tipoCircuito?: string): Promise<FondeoPendienteItem[]> {
+    const params = new URLSearchParams();
+    if (estado && estado !== "ALL") params.append("estado", estado);
+    if (tipoCircuito) params.append("tipo_circuito", tipoCircuito);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    const res = await fetch(`${getApiBaseUrl()}/fondeos-pendientes${query}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<FondeoPendienteItem[]>(res);
+  },
+
+  async ejecutarFondeoPendiente(fondeoId: number, observaciones?: string): Promise<any> {
+    const res = await fetch(`${getApiBaseUrl()}/fondeos-pendientes/${fondeoId}/ejecutar`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ observaciones }),
     });
     return handleResponse<any>(res);
   },

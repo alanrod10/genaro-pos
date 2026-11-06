@@ -3,6 +3,7 @@ import { PeriodoTipo, MetricasDashboard } from "../types/dashboard";
 import {
   SaldosInicialesResponse,
   EstadoCuentaDavidResponse,
+  EstadoCuentaEzequielResponse,
   ResumenPreventistasResponse,
 } from "../types/tesoreria";
 import { getApiClient } from "../services/api";
@@ -46,6 +47,7 @@ export const DashboardAdmin: React.FC<DashboardAdminProps> = ({ onAddToast, isDe
   const [metricas, setMetricas] = useState<MetricasDashboard | null>(null);
   const [saldosTesoreria, setSaldosTesoreria] = useState<SaldosInicialesResponse>(FALLBACK_SALDOS_TESORERIA);
   const [ccDavid, setCcDavid] = useState<EstadoCuentaDavidResponse | null>(null);
+  const [ccEzequiel, setCcEzequiel] = useState<EstadoCuentaEzequielResponse | null>(null);
   const [resumenPreventistas, setResumenPreventistas] = useState<ResumenPreventistasResponse | null>(null);
 
   const cargarMetricas = useCallback(async (
@@ -64,9 +66,10 @@ export const DashboardAdmin: React.FC<DashboardAdminProps> = ({ onAddToast, isDe
       }
 
       if (!isDemo) {
-        const [saldosRes, davidRes, prevRes] = await Promise.allSettled([
+        const [saldosRes, davidRes, ezequielRes, prevRes] = await Promise.allSettled([
           TesoreriaService.getSaldosIniciales(),
           TesoreriaService.getCuentaCorrienteDavid(),
+          TesoreriaService.getCuentaCorrienteEzequiel(),
           TesoreriaService.getResumenPreventistas(),
         ]);
         if (saldosRes.status === "fulfilled" && saldosRes.value) {
@@ -74,6 +77,9 @@ export const DashboardAdmin: React.FC<DashboardAdminProps> = ({ onAddToast, isDe
         }
         if (davidRes.status === "fulfilled" && davidRes.value) {
           setCcDavid(davidRes.value);
+        }
+        if (ezequielRes.status === "fulfilled" && ezequielRes.value) {
+          setCcEzequiel(ezequielRes.value);
         }
         if (prevRes.status === "fulfilled" && prevRes.value) {
           setResumenPreventistas(prevRes.value);
@@ -983,9 +989,12 @@ export const DashboardAdmin: React.FC<DashboardAdminProps> = ({ onAddToast, isDe
           {saldosTesoreria.obligaciones.map((obl) => {
             const codigoCan = obl.codigo.startsWith("OBL_") ? obl.codigo : `OBL_${obl.codigo}`;
             const esDavid = codigoCan === "OBL_DAVID";
+            const esEzequiel = codigoCan === "OBL_CLARO";
             const esPrev = codigoCan === "OBL_PREVENTISTAS";
             const saldoOperativoCents = esDavid && ccDavid
               ? (ccDavid.obligacion_pendiente_cents ?? (ccDavid as unknown as Record<string, number>).obligacion_pendiente_david_cents ?? obl.saldo_actual_cents)
+              : esEzequiel && ccEzequiel
+              ? (ccEzequiel.obligacion_pendiente_cents ?? obl.saldo_actual_cents)
               : esPrev && resumenPreventistas
               ? (resumenPreventistas.total_pendiente_reposicion_cents ?? (resumenPreventistas as unknown as Record<string, number>).obligacion_pendiente_reposicion_cents ?? obl.saldo_actual_cents)
               : obl.saldo_actual_cents;
@@ -1008,6 +1017,9 @@ export const DashboardAdmin: React.FC<DashboardAdminProps> = ({ onAddToast, isDe
                   <span>Apertura inicial: {formatoCentavos(obl.saldo_inicial_cents)}</span>
                   {esDavid && ccDavid && (
                     <span> · {ccDavid.cantidad_movimientos ?? 0} mov(s) registrados</span>
+                  )}
+                  {esEzequiel && ccEzequiel && (
+                    <span> · {ccEzequiel.cantidad_movimientos ?? 0} mov(s) registrados</span>
                   )}
                   {esPrev && resumenPreventistas && (
                     <span> · {resumenPreventistas.cantidad_anticipos ?? 0} anticipo(s)</span>

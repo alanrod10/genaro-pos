@@ -59,6 +59,34 @@ def validar_politica_traslado(
     if origin_fund_code == destination_fund_code:
         raise ErrorTraslado("El fondo origen y destino deben ser diferentes.")
 
+    # Excepción de dominio restrictiva: Fondeo de Custodia Claro (DEC-02)
+    if origin_fund_code == "1110" and destination_fund_code == "1150":
+        ctx_upper = (context or "").strip().upper()
+        if ctx_upper != "FONDEO_CUSTODIA_CLARO":
+            raise ErrorTraslado(
+                "Fondo 1150 (Claro Efectivo) es recaudación de terceros en custodia; "
+                "no admite traslados internos comerciales hacia o desde fondos propios del negocio "
+                "salvo fondeo controlado con contexto 'FONDEO_CUSTODIA_CLARO'."
+            )
+        if not evidence_reference or not evidence_reference.strip():
+            raise ErrorTraslado(
+                "FONDEO CLARO: El traslado 1110 -> 1150 exige referencia obligatoria al servicio en evidence_reference."
+            )
+        return
+
+    # Excepción de dominio restrictiva: Liquidación a Ezequiel vía transferencia digital Mercado Pago -> Claro Comercios
+    if origin_fund_code == "1210" and destination_fund_code == "1230":
+        ctx_upper = (context or "").strip().upper()
+        if ctx_upper != "LIQUIDACION_EZEQUIEL_TRANSFERENCIA":
+            raise ErrorTraslado(
+                "Transferencia 1210 -> 1230 solo autorizada bajo contexto 'LIQUIDACION_EZEQUIEL_TRANSFERENCIA'."
+            )
+        if not evidence_reference or not evidence_reference.strip():
+            raise ErrorTraslado(
+                "LIQUIDACION EZEQUIEL: La transferencia 1210 -> 1230 exige comprobante o referencia en evidence_reference."
+            )
+        return
+
     if (origin_fund_code, destination_fund_code) not in TRANSFERENCIAS_PERMITIDAS:
         # Validaciones explicativas según la política económica violada
         if "1150" in (origin_fund_code, destination_fund_code):
@@ -327,6 +355,18 @@ def transferFunds(
                         f"GOBERNANZA: Ya existe una compensación física activa para el ticket #{coord_data['commercial_ticket_id']} "
                         f"(traslado #{dup_id}). Prohibida la doble compensación."
                     )
+
+    # Validación canónica para Fondeo Claro 1110 -> 1150
+    if origin_fund_code == "1110" and destination_fund_code == "1150":
+        ctx_upper = (context or "").strip().upper()
+        if ctx_upper != "FONDEO_CUSTODIA_CLARO":
+            raise ErrorTraslado(
+                "GOBERNANZA: El traslado 1110 -> 1150 requiere obligatoriamente contexto 'FONDEO_CUSTODIA_CLARO'."
+            )
+        if not evidence_reference or not evidence_reference.strip():
+            raise ErrorTraslado(
+                "GOBERNANZA: El traslado 1110 -> 1150 requiere referencia obligatoria al servicio en evidence_reference."
+            )
 
     # Validación canónica y relacional para 1110 -> 1130 con base de datos en contexto de reposición
     if origin_fund_code == "1110" and destination_fund_code == "1130":

@@ -616,28 +616,69 @@ def _handle_service_confirmed(
         # CASO 3: PLATAFORMA CLARO COMERCIOS
         # --------------------------------------------------------------------
         elif plat == "CLARO COMERCIOS":
-            # Destino es Claro en custodia (1150)
-            if pago_efvo > 0:
-                res_claro = registerEntry(
+            # Consumo de saldo digital 1230 si hay saldo disponible
+            cur_1230 = tes_conn.cursor()
+            cur_1230.execute("SELECT saldo_centavos FROM tesoreria_fondos WHERE codigo = '1230' AND estado = 'ACTIVO';")
+            row_1230 = cur_1230.fetchone()
+            cur_1230.close()
+            saldo_1230 = row_1230[0] if row_1230 else 0
+            if saldo_1230 >= monto_carga and monto_carga > 0:
+                res_debito_1230 = registerExit(
                     conn=tes_conn,
-                    fund_code="1150",
-                    amount_cents=pago_efvo,
-                    counterpart="RECAUDACION_TERCEROS_CLARO",
-                    reason=f"Cobro Claro en efectivo custodia #{servicio_id}",
-                    created_by=actor,
+                    fund_code="1230",
+                    amount_cents=monto_carga,
+                    counterpart="CLARO_CAPITAL_DEBIT",
+                    reason=f"Consumo saldo digital Claro Comercios #{servicio_id}",
+                    performed_by=actor,
                     terminal_id="TERM-POS-01",
-                    idempotency_key=f"{event['idempotency_key']}_CLARO_CUSTODIA_ENTRY",
+                    idempotency_key=f"{event['idempotency_key']}_CLARO_1230_EXIT",
                     evidence_reference=f"CLARO_{servicio_id}",
                     occurred_at=fecha_utc,
                 )
-                movements.append(res_claro["movement_id"])
+                movements.append(res_debito_1230["movement_id"])
+
+            if pago_efvo > 0:
+                # Capital a 1150 Claro físico
+                capital_efvo = min(monto_carga, pago_efvo) if monto_carga > 0 else pago_efvo
+                if capital_efvo > 0:
+                    res_claro = registerEntry(
+                        conn=tes_conn,
+                        fund_code="1150",
+                        amount_cents=capital_efvo,
+                        counterpart="RECAUDACION_TERCEROS_CLARO",
+                        reason=f"Cobro Claro en efectivo custodia #{servicio_id}",
+                        created_by=actor,
+                        terminal_id="TERM-POS-01",
+                        idempotency_key=f"{event['idempotency_key']}_CLARO_CUSTODIA_ENTRY",
+                        evidence_reference=f"CLARO_{servicio_id}",
+                        occurred_at=fecha_utc,
+                    )
+                    movements.append(res_claro["movement_id"])
+
+                # Adicional a 1140
+                adicional_efvo = monto_adicional if monto_adicional > 0 else max(0, pago_efvo - capital_efvo)
+                if adicional_efvo > 0:
+                    res_adic = registerEntry(
+                        conn=tes_conn,
+                        fund_code="1140",
+                        amount_cents=adicional_efvo,
+                        counterpart="ADICIONAL_CLARO_EFECTIVO",
+                        reason=f"Cobro adicional servicio Claro #{servicio_id}",
+                        created_by=actor,
+                        terminal_id="TERM-POS-01",
+                        idempotency_key=f"{event['idempotency_key']}_CLARO_ADIC_ENTRY",
+                        evidence_reference=f"CLARO_{servicio_id}",
+                        occurred_at=fecha_utc,
+                    )
+                    movements.append(res_adic["movement_id"])
 
             if pago_transf > 0:
+                # Cobranza digital entra a 1210 Mercado Pago
                 res_gen_transf = registerEntry(
                     conn=tes_conn,
                     fund_code="1210",
                     amount_cents=pago_transf,
-                    counterpart="SERVICIO_CLARO_DIGITAL",
+                    counterpart="RECAUDACION_CLARO_TRANSFERENCIA",
                     reason=f"Cobro digital servicio CLARO #{servicio_id}",
                     created_by=actor,
                     terminal_id="TERM-POS-01",
@@ -646,6 +687,49 @@ def _handle_service_confirmed(
                     occurred_at=fecha_utc,
                 )
                 movements.append(res_gen_transf["movement_id"])
+
+                # Fondeo físico de custodia Claro (DEC-02 Alternativa 1)
+                cur_1110 = tes_conn.cursor()
+                cur_1110.execute("SELECT saldo_centavos FROM tesoreria_fondos WHERE codigo = '1110' AND estado = 'ACTIVO';")
+                row_1110 = cur_1110.fetchone()
+                cur_1110.close()
+                saldo_1110 = row_1110[0] if row_1110 else 0
+
+                if saldo_1110 >= monto_carga and monto_carga > 0:
+                    from tesoreria.transfers import transferFunds, confirmTransferReceipt
+                    res_trf = transferFunds(
+                        conn=tes_conn,
+                        origin_fund_code="1110",
+                        destination_fund_code="1150",
+                        amount_cents=monto_carga,
+                        dispatched_by=actor,
+                        reason=f"Fondeo físico custodia Claro recarga #{servicio_id}",
+                        idempotency_key=f"{event['idempotency_key']}_CLARO_FONDEO_TRF",
+                        evidence_reference=f"SRV_{servicio_id}",
+                        context="FONDEO_CUSTODIA_CLARO",
+                        occurred_at=fecha_utc,
+                    )
+                    confirmTransferReceipt(
+                        conn=tes_conn,
+                        transfer_id=res_trf["transfer_id"],
+                        received_by=actor,
+                        idempotency_key=f"{event['idempotency_key']}_CLARO_FONDEO_CONF",
+                    )
+                    movements.append(f"TRANSFER_{res_trf['transfer_id']}")
+                elif monto_carga > 0:
+                    from tesoreria.cuenta_corriente_ezequiel import registrar_fondeo_pendiente
+                    registrar_fondeo_pendiente(
+                        conn=tes_conn,
+                        tipo_circuito="CLARO",
+                        servicio_id=int(servicio_id) if str(servicio_id).isdigit() else 0,
+                        monto_capital_cents=monto_carga,
+                        fondo_origen_esperado="1110",
+                        fondo_destino_custodia="1150",
+                        actor=actor,
+                        idempotency_key=f"FOND_PEND_CLARO_{event['idempotency_key']}",
+                        observaciones=f"Falta de efectivo transitoria en 1110 para recarga #{servicio_id} (Disponible: {saldo_1110})",
+                        auto_commit=False,
+                    )
 
     else:
         # ====================================================================

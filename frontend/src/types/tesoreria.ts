@@ -600,6 +600,102 @@ export interface ReconocimientoDeudaHistoricaPayload {
 }
 
 // ============================================================================
+// CUENTA CORRIENTE CLARO COMERCIOS / EZEQUIEL Y FONDEOS PENDIENTES
+// ============================================================================
+
+export interface MovimientoCCEzequiel {
+  id: number;
+  operation_id: string;
+  idempotency_key: string;
+  tipo_movimiento: "ACREDITACION_SALDO" | "PAGO_LIQUIDACION" | "RECONOCIMIENTO_DEUDA_HISTORICA";
+  monto_cents: number;
+  monto_formatted: string;
+  fecha_referencia: string;
+  recorded_at_utc: string;
+  movement_id?: string | null;
+  fondo_afectado?: string | null;
+  referencia_externa?: string | null;
+  motivo: string;
+  actor: string;
+  jornada_id?: number | null;
+  detalle_liquidacion?: {
+    monto_1150_cents: number;
+    monto_drugstore_cents: number;
+    fondo_drugstore?: string | null;
+    monto_transferencia_cents: number;
+    total_cents: number;
+    movements: string[];
+  } | null;
+  created_at: string;
+  saldo_obligacion_resultante_cents: number;
+  saldo_obligacion_resultante_formatted: string;
+}
+
+export interface EstadoCuentaEzequielResponse {
+  obligacion_pendiente_cents: number;
+  obligacion_pendiente_formatted: string;
+  total_acreditaciones_cents: number;
+  total_acreditaciones_formatted: string;
+  total_pagos_cents: number;
+  total_pagos_formatted: string;
+  total_deuda_historica_cents: number;
+  total_deuda_historica_formatted: string;
+  saldo_disponible_1150_cents: number;
+  saldo_disponible_1150_formatted: string;
+  saldo_disponible_1230_cents: number;
+  saldo_disponible_1230_formatted: string;
+  saldo_disponible_1110_cents: number;
+  saldo_disponible_1110_formatted: string;
+  saldo_disponible_1120_cents: number;
+  saldo_disponible_1120_formatted: string;
+  fecha_corte?: string | null;
+  cantidad_movimientos: number;
+  movimientos: MovimientoCCEzequiel[];
+}
+
+export interface AcreditacionEzequielPayload {
+  monto_centavos: number;
+  referencia: string;
+  motivo?: string;
+  fecha_referencia?: string;
+}
+
+export interface LiquidacionEzequielPayload {
+  monto_1150_cents?: number;
+  monto_drugstore_cents?: number;
+  fondo_drugstore?: string;
+  monto_transferencia_cents?: number;
+  referencia: string;
+  motivo?: string;
+  fecha_referencia?: string;
+}
+
+export interface ReconocimientoDeudaHistoricaEzequielPayload {
+  monto_centavos: number;
+  fecha_referencia: string;
+  motivo: string;
+  referencia_externa?: string;
+  confirmacion_explicita: boolean;
+}
+
+export interface FondeoPendienteItem {
+  id: number;
+  tipo_circuito: "CLARO" | "PREPAY";
+  servicio_id: number;
+  idempotency_key: string;
+  monto_capital_cents: number;
+  monto_capital_formatted: string;
+  fondo_origen_esperado: string;
+  fondo_destino_custodia: string;
+  estado: "PENDIENTE" | "FONDEADO" | "CANCELADO";
+  movement_id_traslado?: string | null;
+  actor: string;
+  created_at_utc: string;
+  funded_at_utc?: string | null;
+  observaciones?: string | null;
+}
+
+// ============================================================================
 // ANTICIPOS Y REPOSICIÓN DE PREVENTISTAS (FONDOS 1130, 1120, 1110)
 // ============================================================================
 
