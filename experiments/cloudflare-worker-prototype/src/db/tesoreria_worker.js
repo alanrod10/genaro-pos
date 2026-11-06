@@ -461,9 +461,12 @@ export async function obtenerResumenGeneralWorker(client) {
   const totalDisp = summary.fondos_propios.total_disponible_cents;
   const activosCount = fondos.filter((f) => f.estado === "ACTIVO").length;
 
+  const dbPath = client?.url || "turso://staging-isolated";
+  const isIsolated = !String(dbPath).toLowerCase().includes("live-ops") && !String(dbPath).toLowerCase().includes("prod");
+
   return {
-    aislamiento_confirmado: true,
-    db_path: "turso://genaro-pos-live-ops",
+    aislamiento_confirmado: isIsolated,
+    db_path: dbPath,
     total_saldo_registrado_centavos: totalReg,
     total_saldo_registrado_formateado: formatMoney(totalReg),
     total_saldo_disponible_centavos: totalDisp,
@@ -3459,45 +3462,39 @@ export async function ejecutarCircuitoServicioTesoreriaWorker(
 }
 
 export async function triggerDrainCommercialBridgeWorker(client) {
+  // Arquitectura CENTRAL: La contabilización es responsabilidad exclusiva del motor central Python.
+  // El Worker comercial de Cloudflare NO finge drenaje marcando 'PUBLISHED' sin asientos contables.
   try {
     await reconciliarCoordinacionesPrepayWorker(client, { usuario: "bridge_drain" });
-    const pendingRes = await client.execute(
-      "SELECT * FROM commercial_events_outbox WHERE status IN ('PENDING', 'FAILED') ORDER BY sequence_id ASC LIMIT 50;"
-    );
-    const nowUtc = new Date().toISOString();
-    for (const r of pendingRes.rows) {
-      const evId = String(r.event_id);
-      await client.execute({
-        sql: "UPDATE commercial_events_outbox SET status = 'PUBLISHED', updated_at = ?, published_at = ? WHERE event_id = ?;",
-        args: [nowUtc, nowUtc, evId],
-      });
-    }
   } catch {}
   const st = await obtenerBridgeStatusWorker(client);
   return {
     published: st.published,
     failed: st.failed,
     dead_letter: st.dead_letter,
-    message: `Ciclo completado: ${st.published} confirmados, ${st.failed} con fallo, ${st.dead_letter} en letra muerta.`,
+    pending: st.pending,
+    message: `Estado actual del bridge outbox: ${st.pending} pendientes de contabilización central, ${st.published} publicados, ${st.failed} con fallo.`,
   };
 }
 
 export async function reprocesarCommercialEventWorker(client, eventId, usuario) {
   const nowUtc = new Date().toISOString();
+  // Al reencolar, se restablece a PENDING para que el motor central lo contabilice genuinamente
   await client.execute({
     sql: `UPDATE commercial_events_outbox
-          SET status = 'PUBLISHED', reprocessed_by = ?, reprocessed_at = ?, updated_at = ?, published_at = ?
+          SET status = 'PENDING', retry_count = 0, error_message = NULL, reprocessed_by = ?, reprocessed_at = ?, updated_at = ?
           WHERE event_id = ?;`,
-    args: [usuario, nowUtc, nowUtc, nowUtc, eventId],
+    args: [usuario, nowUtc, nowUtc, eventId],
   });
+  const st = await obtenerBridgeStatusWorker(client);
   return {
     event_id: eventId,
-    status: "PUBLISHED",
+    status: "PENDING",
     tesoreria_movement_id: null,
     error_message: null,
     authorized_by: usuario,
     reprocessed_at: nowUtc,
-    drain_stats: { published: 1, failed: 0, dead_letter: 0 },
+    drain_stats: { published: st.published, failed: st.failed, dead_letter: st.dead_letter, pending: st.pending },
   };
 }
 

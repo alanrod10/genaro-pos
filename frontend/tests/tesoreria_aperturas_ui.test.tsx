@@ -6,6 +6,21 @@ import { TesoreriaService } from "../src/services/tesoreria";
 describe("TesoreriaLab — Pestaña de Saldos Iniciales / Apertura", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(window, "alert").mockImplementation(() => {});
+
+    vi.spyOn(TesoreriaService, "obtenerResumen").mockResolvedValue({
+      total_fondos: 9,
+      fondos_activos: 9,
+      total_saldo_registrado_centavos: 0,
+      total_saldo_registrado_formateado: "$0,00",
+      total_saldo_disponible_centavos: 0,
+      total_saldo_disponible_formateado: "$0,00",
+      jornada_activa: null,
+      aislamiento_confirmado: true,
+      db_path: "db/tesoreria_lab.db",
+    });
+    vi.spyOn(TesoreriaService, "obtenerFondos").mockResolvedValue([] as any);
+    vi.spyOn(TesoreriaService, "obtenerJornadaActiva").mockResolvedValue(null);
 
     vi.spyOn(TesoreriaService, "getSaldosIniciales").mockResolvedValue({
       fondos_fisicos: [
@@ -114,6 +129,7 @@ describe("TesoreriaLab — Pestaña de Saldos Iniciales / Apertura", () => {
         referencia_autorizacion: undefined,
       });
       expect(screen.queryByTestId("modal-configurar-apertura")).not.toBeInTheDocument();
+      expect(screen.getByTestId("btn-configurar-apertura-1110")).not.toBeDisabled();
     });
   });
 });

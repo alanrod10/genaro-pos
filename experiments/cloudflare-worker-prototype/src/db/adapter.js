@@ -78,6 +78,29 @@ export function obtenerRangoUtcDiaJujuy(fechaStr = null) {
   return { desdeUtc, hastaUtc, fechaJujuy: `${y}-${pad(m)}-${pad(d)}` };
 }
 
+export function enqueueOutboxStatement({ eventType, entityType, entityId, actionType, idempotencyKey, payload, createdAt = null }) {
+  const eventId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `evt_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  const now = createdAt || new Date().toISOString();
+  return {
+    sql: `INSERT OR IGNORE INTO commercial_events_outbox (
+      event_id, event_type, entity_type, entity_id, action_type,
+      idempotency_key, payload_canonical_hash, payload, status,
+      retry_count, max_retries, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'cf_hash', ?, 'PENDING', 0, 5, ?, ?);`,
+    args: [
+      eventId,
+      eventType,
+      entityType,
+      String(entityId),
+      actionType,
+      idempotencyKey,
+      JSON.stringify(payload),
+      now,
+      now,
+    ],
+  };
+}
+
 // --- Módulo Catálogo ---
 export async function listarProductos(client, { includeInactive = false, search = null, category = null } = {}) {
   let sql = `
@@ -498,6 +521,27 @@ export async function registrarVentaIdempotente(client, { ticket, items, usuario
     ],
   });
 
+  statements.push(
+    enqueueOutboxStatement({
+      eventType: "SALE_CONFIRMED",
+      entityType: "TICKET",
+      entityId: cabecera.id,
+      actionType: "CONFIRM",
+      idempotencyKey: `COMM_SALE_${cabecera.id}_CONFIRM`,
+      payload: {
+        ticket_id: cabecera.id,
+        fecha_hora_utc: cabecera.fecha_hora_utc,
+        total_venta_cents: Math.round(cabecera.total_venta * 100),
+        monto_efectivo_cents: Math.round(cabecera.monto_efectivo * 100),
+        monto_transferencia_cents: Math.round(cabecera.monto_transferencia * 100),
+        metodo_pago: cabecera.metodo_pago,
+        usuario: usuario || "sistema",
+        items_count: detalle.length,
+      },
+      createdAt: cabecera.fecha_hora_utc,
+    })
+  );
+
   await client.batch(statements, "write");
 
   return {
@@ -629,6 +673,25 @@ export async function anularVenta(client, ticketId, usuario, motivo) {
     throw new Error(`NOT_FOUND: El ticket '${ticketId}' no existe.`);
   }
   const nowUtc = new Date().toISOString();
+  const outboxStmt = enqueueOutboxStatement({
+    eventType: "SALE_VOIDED",
+    entityType: "TICKET",
+    entityId: ticketId,
+    actionType: "VOID",
+    idempotencyKey: `COMM_SALE_${ticketId}_VOID`,
+    payload: {
+      ticket_id: ticketId,
+      motivo,
+      usuario: usuario || "sistema",
+      total_venta_cents: Math.round(Number(existing.ticket?.total_venta || 0) * 100),
+      monto_efectivo_cents: Math.round(Number(existing.ticket?.monto_efectivo || 0) * 100),
+      monto_transferencia_cents: Math.round(Number(existing.ticket?.monto_transferencia || 0) * 100),
+      metodo_pago: existing.ticket?.metodo_pago,
+      reference_action: "CONFIRM",
+      reference_idempotency_key: `COMM_SALE_${ticketId}_CONFIRM`,
+    },
+    createdAt: nowUtc,
+  });
   await client.batch([
     {
       sql: "UPDATE tickets SET anulado = 1, motivo_anulacion = ? WHERE id = ?;",
@@ -639,6 +702,7 @@ export async function anularVenta(client, ticketId, usuario, motivo) {
             VALUES (?, NULL, 'ANULACION', ?, ?, ?);`,
       args: [ticketId, motivo, usuario, nowUtc],
     },
+    outboxStmt,
   ], "write");
   const updated = await obtenerDetalleVenta(client, ticketId);
   return {
@@ -799,6 +863,32 @@ export async function editarItemVenta(
     costo_unitario: iRow.costo_unitario !== null ? Number(iRow.costo_unitario) : null,
   };
 
+  const isMixedReduction = Boolean(diff > 0 && efvo > 0 && transf > 0);
+  const outboxStmt = enqueueOutboxStatement({
+    eventType: "SALE_ADJUSTED",
+    entityType: "TICKET",
+    entityId: ticketId,
+    actionType: "ADJUST",
+    idempotencyKey: `COMM_SALE_${ticketId}_ADJUST_${itemId}_${Date.now()}`,
+    payload: {
+      ticket_id: ticketId,
+      item_id: itemId,
+      usuario: usuario || "sistema",
+      old_total_venta_cents: Math.round(oldTotal * 100),
+      new_total_venta_cents: Math.round(newTotal * 100),
+      old_monto_efectivo_cents: Math.round(efvo * 100),
+      old_monto_transferencia_cents: Math.round(transf * 100),
+      monto_efectivo_cents: Math.round(newEfvo * 100),
+      monto_transferencia_cents: Math.round(newTransf * 100),
+      metodo_pago: newMetodo,
+      diff_cents: Math.round(diff * 100),
+      is_mixed_reduction: isMixedReduction,
+      reference_action: "CONFIRM",
+      reference_idempotency_key: `COMM_SALE_${ticketId}_CONFIRM`,
+    },
+    createdAt: nowUtc,
+  });
+
   await client.batch([
     {
       sql: "UPDATE ticket_items SET cantidad = ?, precio_unitario = ?, subtotal = ? WHERE id = ? AND ticket_id = ?;",
@@ -820,6 +910,7 @@ export async function editarItemVenta(
         nowUtc,
       ],
     },
+    outboxStmt,
   ], "write");
 
   return obtenerDetalleVenta(client, ticketId);
@@ -1295,6 +1386,34 @@ export async function editarCargaServicio(client, cargaId, datos, usuario) {
     servicioFinal = matchDest;
   }
 
+  const outboxStmt = enqueueOutboxStatement({
+    eventType: "SERVICE_ADJUSTED",
+    entityType: "SERVICIO",
+    entityId: cargaId,
+    actionType: "ADJUST",
+    idempotencyKey: `COMM_SERVICE_${cargaId}_ADJUST_${Date.now()}`,
+    payload: {
+      servicio_id: cargaId,
+      servicio: servicioFinal,
+      old_monto_carga_cents: Math.round(Number(actual.monto_carga || 0) * 100),
+      old_monto_adicional_cents: Math.round(Number(actual.monto_adicional || 0) * 100),
+      old_total_cobrado_cents: Math.round(Number(actual.total_cobrado || 0) * 100),
+      old_pago_efectivo_cents: Math.round(Number(actual.pago_efvo || 0) * 100),
+      old_pago_transferencia_cents: Math.round(Number(actual.pago_transf || 0) * 100),
+      monto_carga_cents: Math.round(nuevoMontoCarga * 100),
+      monto_adicional_cents: Math.round(nuevoAdicional * 100),
+      total_cobrado_cents: Math.round(nuevoTotal * 100),
+      pago_efectivo_cents: Math.round(nuevoEfvo * 100),
+      pago_transferencia_cents: Math.round(nuevoTransf * 100),
+      plataforma_origen: nuevaPlat,
+      servicio_destino: nuevoDest,
+      actor: usuario || "sistema",
+      reference_action: "CONFIRM",
+      reference_idempotency_key: `COMM_SERVICE_${cargaId}_CONFIRM`,
+    },
+    createdAt: nowUtc,
+  });
+
   await client.batch([
     {
       sql: `UPDATE cargas_servicios
@@ -1306,7 +1425,8 @@ export async function editarCargaServicio(client, cargaId, datos, usuario) {
       sql: `INSERT INTO cargas_servicios_auditoria (carga_id, accion, valores_anteriores, valores_nuevos, fecha_utc, actor)
             VALUES (?, 'EDITAR', ?, ?, ?, ?);`,
       args: [cargaId, JSON.stringify(actual), JSON.stringify(datos), nowUtc, usuario || "sistema"],
-    }
+    },
+    outboxStmt,
   ], "write");
 
   return obtenerCargaPorId(client, cargaId);
@@ -1314,6 +1434,22 @@ export async function editarCargaServicio(client, cargaId, datos, usuario) {
 
 export async function anularCargaServicio(client, cargaId, usuario, motivo) {
   const nowUtc = new Date().toISOString();
+  const outboxStmt = enqueueOutboxStatement({
+    eventType: "SERVICE_VOIDED",
+    entityType: "SERVICIO",
+    entityId: cargaId,
+    actionType: "VOID",
+    idempotencyKey: `COMM_SERVICE_${cargaId}_VOID`,
+    payload: {
+      servicio_id: cargaId,
+      motivo,
+      actor: usuario || "sistema",
+      reference_action: "CONFIRM",
+      reference_idempotency_key: `COMM_SERVICE_${cargaId}_CONFIRM`,
+    },
+    createdAt: nowUtc,
+  });
+
   await client.batch([
     {
       sql: "UPDATE cargas_servicios SET anulado = 1 WHERE id = ?;",
@@ -1323,7 +1459,8 @@ export async function anularCargaServicio(client, cargaId, usuario, motivo) {
       sql: `INSERT INTO cargas_servicios_auditoria (carga_id, accion, valores_nuevos, fecha_utc, actor)
             VALUES (?, 'ANULAR', ?, ?, ?);`,
       args: [cargaId, JSON.stringify({ motivo }), nowUtc, usuario || "sistema"],
-    }
+    },
+    outboxStmt,
   ], "write");
   return { id: cargaId, anulado: true, motivo };
 }
@@ -1403,6 +1540,27 @@ export async function registrarGastoIdempotente(client, { gasto, usuario, idempo
           VALUES (?, 'CREAR', ?, ?, ?);`,
     args: [gastoId, JSON.stringify({ tipo: cat, detalle: concepto, monto_salida: monto, origen_fondos: origenFondos, metodo_pago: metodo }), nowUtc, usuario || "sistema"],
   }).catch(() => {});
+
+  const outboxStmt = enqueueOutboxStatement({
+    eventType: "EXPENSE_CONFIRMED",
+    entityType: "GASTO",
+    entityId: gastoId,
+    actionType: "CONFIRM",
+    idempotencyKey: `COMM_EXPENSE_${gastoId}_CONFIRM`,
+    payload: {
+      gasto_id: gastoId,
+      tipo: cat,
+      categoria: cat,
+      detalle: concepto,
+      monto_salida_cents: Math.round(monto * 100),
+      origen_fondos: origenFondos,
+      metodo_pago: metodo,
+      usuario: usuario || "sistema",
+      fecha_hora_utc: nowUtc,
+    },
+    createdAt: nowUtc,
+  });
+  await client.execute(outboxStmt).catch(() => {});
 
   const creado = await obtenerGastoPorId(client, gastoId);
   return {
@@ -1579,6 +1737,21 @@ export async function editarGasto(client, gastoId, datos, usuario) {
 
 export async function anularGasto(client, gastoId, usuario, motivo) {
   const nowUtc = new Date().toISOString();
+  const outboxStmt = enqueueOutboxStatement({
+    eventType: "EXPENSE_VOIDED",
+    entityType: "GASTO",
+    entityId: gastoId,
+    actionType: "VOID",
+    idempotencyKey: `COMM_EXPENSE_${gastoId}_VOID`,
+    payload: {
+      gasto_id: gastoId,
+      motivo,
+      usuario: usuario || "sistema",
+      reference_action: "CONFIRM",
+      reference_idempotency_key: `COMM_EXPENSE_${gastoId}_CONFIRM`,
+    },
+    createdAt: nowUtc,
+  });
   await client.batch([
     {
       sql: "UPDATE gastos_retiros SET anulado = 1 WHERE id = ?;",
@@ -1588,7 +1761,8 @@ export async function anularGasto(client, gastoId, usuario, motivo) {
       sql: `INSERT INTO gastos_auditoria (gasto_id, accion, valores_nuevos, fecha_utc, actor)
             VALUES (?, 'ANULAR', ?, ?, ?);`,
       args: [gastoId, JSON.stringify({ motivo }), nowUtc, usuario || "sistema"],
-    }
+    },
+    outboxStmt,
   ], "write");
   return { id: gastoId, anulado: true, motivo };
 }

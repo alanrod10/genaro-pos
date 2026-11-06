@@ -71,8 +71,8 @@ class PidLockManager:
                 logger.warning("Eliminando archivo de bloqueo huérfano: %s", self.pid_file)
                 try:
                     self.pid_file.unlink(missing_ok=True)
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logger.warning("No se pudo eliminar archivo de bloqueo huérfano %s: %s", self.pid_file, ex)
 
         try:
             self.pid_file.parent.mkdir(parents=True, exist_ok=True)
@@ -91,8 +91,8 @@ class PidLockManager:
                 if current_content == str(os.getpid()):
                     self.pid_file.unlink(missing_ok=True)
                     self._acquired = False
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.warning("No se pudo liberar archivo de bloqueo %s: %s", self.pid_file, ex)
 
 
 def open_db_connection(db_path: Path) -> sqlite3.Connection:
@@ -102,8 +102,8 @@ def open_db_connection(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON;")
     try:
         conn.execute("PRAGMA journal_mode = WAL;")
-    except Exception:
-        pass
+    except Exception as ex:
+        logger.warning("No se pudo activar modo WAL en %s: %s", db_path, ex)
     return conn
 
 
@@ -293,12 +293,12 @@ def main() -> int:
     finally:
         try:
             comm_conn.close()
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.warning("Error cerrando comm_conn: %s", ex)
         try:
             tes_conn.close()
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.warning("Error cerrando tes_conn: %s", ex)
         lock_mgr.release()
 
 

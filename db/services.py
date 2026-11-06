@@ -1021,6 +1021,37 @@ def guardar_ediciones_cargas_turso(
                         ) from e
                     raise
 
+                import time
+                adj_srv_ts = int(time.time() * 1000)
+                enqueue_commercial_event(
+                    conn=conexion,
+                    event_type="SERVICE_ADJUSTED",
+                    entity_type="SERVICIO",
+                    entity_id=identificador,
+                    action_type="ADJUST",
+                    idempotency_key=f"COMM_SERVICE_{identificador}_ADJUST_{adj_srv_ts}",
+                    payload={
+                        "servicio_id": identificador,
+                        "servicio": registro["servicio"],
+                        "old_monto_carga_cents": to_amount_cents(prev_dict.get("monto_carga")),
+                        "old_monto_adicional_cents": to_amount_cents(prev_dict.get("monto_adicional")),
+                        "old_total_cobrado_cents": to_amount_cents(prev_dict.get("total_cobrado")),
+                        "old_pago_efectivo_cents": to_amount_cents(prev_dict.get("pago_efectivo")),
+                        "old_pago_transferencia_cents": to_amount_cents(prev_dict.get("pago_transferencia")),
+                        "monto_carga_cents": to_amount_cents(registro["monto_carga"]),
+                        "monto_adicional_cents": to_amount_cents(registro["monto_adicional"]),
+                        "total_cobrado_cents": to_amount_cents(registro["total_cobrado"]),
+                        "pago_efectivo_cents": to_amount_cents(registro["pago_efectivo"]),
+                        "pago_transferencia_cents": to_amount_cents(registro["pago_transferencia"]),
+                        "plataforma_origen": registro.get("plataforma_origen"),
+                        "servicio_destino": registro.get("servicio_destino"),
+                        "fecha_hora_utc": registro["fecha_hora_utc"],
+                        "actor": actor,
+                        "reference_action": "CONFIRM",
+                        "reference_idempotency_key": f"COMM_SERVICE_{identificador}_CONFIRM",
+                    },
+                )
+
             for registro in preparados_nuevos:
                 nid = _insertar_carga(conexion, registro)
                 try:

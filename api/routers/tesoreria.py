@@ -362,9 +362,11 @@ def get_resumen(user: AuthenticatedUser = Depends(get_current_user)):
     total_disponible = summary["fondos_propios"]["total_disponible_cents"]
 
     activos_count = sum(1 for f in fondos if f["estado"] == "ACTIVO")
+    ruta_lower = ruta.lower()
+    es_aislado = ("lab" in ruta_lower or ":memory:" in ruta_lower) and "prod" not in ruta_lower and "live" not in ruta_lower
 
     return ResumenTesoreriaResponse(
-        aislamiento_confirmado=True,
+        aislamiento_confirmado=es_aislado,
         db_path=ruta,
         total_saldo_registrado_centavos=total_registrado,
         total_saldo_registrado_formateado=formatMoney(total_registrado),

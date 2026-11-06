@@ -120,11 +120,17 @@ def process_single_commercial_event(
     elif event_type in ("SALE_VOIDED", "SALE_CANCELLED"):
         return _handle_sale_voided(tes_conn, event, payload)
 
+    elif event_type in ("SALE_ADJUSTED", "SALE_UPDATED"):
+        return _handle_sale_adjusted(tes_conn, event, payload)
+
     elif event_type in ("SERVICE_CONFIRMED", "SERVICE_INSERTED"):
         return _handle_service_confirmed(tes_conn, event, payload, comm_conn=comm_conn)
 
     elif event_type in ("SERVICE_VOIDED", "SERVICE_CANCELLED"):
         return _handle_service_voided(tes_conn, event, payload)
+
+    elif event_type in ("SERVICE_ADJUSTED", "SERVICE_UPDATED"):
+        return _handle_service_adjusted(tes_conn, event, payload, comm_conn=comm_conn)
 
     elif event_type in ("EXPENSE_CONFIRMED", "EXPENSE_INSERTED"):
         return _handle_expense_confirmed(tes_conn, event, payload)
@@ -910,6 +916,132 @@ def _handle_expense_adjusted(tes_conn: sqlite3.Connection, event: Dict[str, Any]
     # 2. Registrar nuevo egreso con los datos editados
     new_mov_id = _handle_expense_confirmed(tes_conn, event, payload)
     return f"{rev_id};{new_mov_id}" if rev_id else new_mov_id
+
+
+def _handle_sale_adjusted(tes_conn: sqlite3.Connection, event: Dict[str, Any], payload: Dict[str, Any]) -> str:
+    """Procesa el ajuste de un ticket de venta por edición de ítem."""
+    tkt_id = payload.get("ticket_id") or event.get("entity_id")
+    usuario = payload.get("usuario", "sistema")
+    ref_key = payload.get("reference_idempotency_key", f"COMM_SALE_{tkt_id}_CONFIRM")
+    is_mixed_reduction = payload.get("is_mixed_reduction", False)
+
+    if is_mixed_reduction:
+        logger.info(
+            "Ajuste de venta mixta #%s retenido: reducción de pago mixto sin distribución aprobada.",
+            tkt_id,
+        )
+        return f"PENDING_DEFINITION_MIXED_SALE_REDUCTION_{tkt_id}"
+
+    reversals_generated = []
+    # Revertir pierna efectivo
+    mov_orig_efvo = _buscar_movimiento_por_idempotency_key(tes_conn, f"{ref_key}_CASH")
+    if not mov_orig_efvo:
+        mov_orig_efvo = _buscar_movimiento_por_idempotency_key(tes_conn, f"idemp_{tkt_id}_CASH")
+    if mov_orig_efvo:
+        rev_efvo = reverseMovement(
+            conn=tes_conn,
+            movement_id=mov_orig_efvo["movement_id"],
+            user_id=usuario,
+            reason=f"Ajuste venta ticket #{tkt_id} (reversión pierna efectivo)",
+            evidence_reference=f"ADJUST_TICKET_{tkt_id}",
+            idempotency_key=f"{event['idempotency_key']}_REV_CASH",
+        )
+        reversals_generated.append(rev_efvo.get("counter_movement_id") or rev_efvo.get("reversal_id"))
+
+    # Revertir pierna digital
+    mov_orig_transf = _buscar_movimiento_por_idempotency_key(tes_conn, f"{ref_key}_DIGITAL")
+    if not mov_orig_transf:
+        mov_orig_transf = _buscar_movimiento_por_idempotency_key(tes_conn, f"idemp_{tkt_id}_DIGITAL")
+    if mov_orig_transf:
+        rev_transf = reverseMovement(
+            conn=tes_conn,
+            movement_id=mov_orig_transf["movement_id"],
+            user_id=usuario,
+            reason=f"Ajuste venta ticket #{tkt_id} (reversión pierna digital)",
+            evidence_reference=f"ADJUST_TICKET_{tkt_id}",
+            idempotency_key=f"{event['idempotency_key']}_REV_DIGITAL",
+        )
+        reversals_generated.append(rev_transf.get("counter_movement_id") or rev_transf.get("reversal_id"))
+
+    # Si el nuevo total es > 0, registrar los nuevos movimientos
+    new_total = payload.get("new_total_venta_cents", 0)
+    new_movements = []
+    if new_total > 0:
+        new_efvo = payload.get("monto_efectivo_cents", 0)
+        new_transf = payload.get("monto_transferencia_cents", 0)
+        fecha_utc = payload.get("fecha_hora_utc")
+
+        if new_efvo > 0:
+            res_c = registerEntry(
+                conn=tes_conn,
+                fund_code="1110",
+                amount_cents=new_efvo,
+                counterpart="VENTA_COMERCIAL_AJUSTADA",
+                reason=f"Cobro ajustado en efectivo ticket #{tkt_id}",
+                created_by=usuario,
+                terminal_id="TERM-POS-01",
+                idempotency_key=f"{event['idempotency_key']}_CASH",
+                evidence_reference=f"TICKET_{tkt_id}",
+                occurred_at=fecha_utc,
+            )
+            new_movements.append(res_c["movement_id"])
+
+        if new_transf > 0:
+            res_d = registerEntry(
+                conn=tes_conn,
+                fund_code="1210",
+                amount_cents=new_transf,
+                counterpart="VENTA_DIGITAL_AJUSTADA",
+                reason=f"Cobro digital ajustado ticket #{tkt_id}",
+                created_by=usuario,
+                terminal_id="TERM-POS-01",
+                idempotency_key=f"{event['idempotency_key']}_DIGITAL",
+                evidence_reference=f"TICKET_{tkt_id}",
+                occurred_at=fecha_utc,
+            )
+            new_movements.append(res_d["movement_id"])
+
+    all_ids = reversals_generated + new_movements
+    return ";".join(all_ids) if all_ids else "ZERO_ADJUSTMENT"
+
+
+def _handle_service_adjusted(
+    tes_conn: sqlite3.Connection,
+    event: Dict[str, Any],
+    payload: Dict[str, Any],
+    comm_conn: Optional[sqlite3.Connection] = None,
+) -> str:
+    """Procesa el ajuste de una carga de servicio por edición."""
+    servicio_id = payload.get("servicio_id") or event.get("entity_id")
+    actor = payload.get("actor", "sistema")
+
+    # 1. Revertir movimientos anteriores si existen
+    reversals_generated = []
+    cur = tes_conn.cursor()
+    cur.execute(
+        """
+        SELECT movement_id, amount_cents FROM tesoreria_movimientos
+        WHERE evidence_reference LIKE ? AND movement_type = 'ENTRY'
+        ORDER BY id ASC;
+        """,
+        (f"%{servicio_id}%",),
+    )
+    rows = cur.fetchall()
+    for idx, (m_id, amt) in enumerate(rows):
+        rev = reverseMovement(
+            conn=tes_conn,
+            movement_id=m_id,
+            user_id=actor,
+            reason=f"Ajuste por edición de servicio #{servicio_id}",
+            evidence_reference=f"ADJUST_SRV_{servicio_id}",
+            idempotency_key=f"{event['idempotency_key']}_REV_{idx}",
+        )
+        reversals_generated.append(rev.get("counter_movement_id") or rev.get("reversal_id"))
+
+    # 2. Registrar nuevos movimientos con datos actualizados
+    new_res = _handle_service_confirmed(tes_conn, event, payload, comm_conn=comm_conn)
+    all_res = reversals_generated + [new_res]
+    return ";".join(all_res)
 
 
 # ============================================================================

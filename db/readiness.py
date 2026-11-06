@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
-MIGRACIONES_REQUERIDAS: List[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+MIGRACIONES_REQUERIDAS: List[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 
 TABLAS_REQUERIDAS: List[str] = [
     "productos",
@@ -27,6 +27,10 @@ TABLAS_REQUERIDAS: List[str] = [
     "pedido_items",
     "pedidos_auditoria",
     "auth_scram_challenges",
+    "commercial_events_outbox",
+    "commercial_adicionales_arqueo_turno",
+    "tesoreria_prepay_cargo_diario",
+    "tesoreria_prepay_coordinacion",
 ]
 
 # Estructuras físicas requeridas por cada versión de migración
@@ -86,6 +90,23 @@ ESTRUCTURAS_POR_MIGRACION: Dict[int, Dict[str, Any]] = {
                 },
             ],
         },
+    },
+    12: {
+        "tablas": ["commercial_events_outbox", "commercial_adicionales_arqueo_turno"],
+        "columnas": {},
+        "indices": {},
+    },
+    13: {
+        "tablas": [],
+        "columnas": {
+            "cargas_servicios": ["plataforma_origen", "servicio_destino"],
+        },
+        "indices": {},
+    },
+    14: {
+        "tablas": ["tesoreria_prepay_cargo_diario", "tesoreria_prepay_coordinacion"],
+        "columnas": {},
+        "indices": {},
     },
 }
 
@@ -428,6 +449,23 @@ def comprobar_preparacion_esquema(conn: Optional[Any] = None) -> Dict[str, Any]:
                 "La tabla 'auth_scram_challenges' existe físicamente pero la versión 11 no está registrada en _schema_migrations."
             )
 
+        if "commercial_events_outbox" in tablas_existentes and 12 not in versiones_set:
+            inconsistencias.append(
+                "La tabla 'commercial_events_outbox' existe físicamente pero la versión 12 no está registrada en _schema_migrations."
+            )
+
+        if "cargas_servicios" in tablas_existentes:
+            cols_cs = _obtener_cols("cargas_servicios")
+            if "plataforma_origen" in cols_cs and 13 not in versiones_set:
+                inconsistencias.append(
+                    "La columna 'plataforma_origen' existe en 'cargas_servicios' pero la versión 13 no está registrada en _schema_migrations."
+                )
+
+        if "tesoreria_prepay_coordinacion" in tablas_existentes and 14 not in versiones_set:
+            inconsistencias.append(
+                "La tabla 'tesoreria_prepay_coordinacion' existe físicamente pero la versión 14 no está registrada en _schema_migrations."
+            )
+
         # Clasificación del estado global
         if inconsistencias:
             status = "ESQUEMA_INCONSISTENTE"
@@ -453,7 +491,7 @@ def comprobar_preparacion_esquema(conn: Optional[Any] = None) -> Dict[str, Any]:
             listo = True
             mensaje = (
                 "El esquema de base de datos está 100% preparado y verificado "
-                "con las migraciones 001–011 (incluyendo 001–010)."
+                "con las migraciones 001–014 (incluyendo 001–010 y 011–014)."
             )
 
         return {
