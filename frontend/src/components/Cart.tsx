@@ -136,46 +136,48 @@ export const Cart: React.FC<CartProps> = ({
                       </span>
                     )}
                   </div>
-                  <div className="cart-item-unit-price">
-                    {isWeight ? (
-                      <>
-                        <span>${item.precio.toLocaleString("es-AR")}/kg</span>
-                        <span className="weight-qty-display">
-                          {" "}
-                          • Peso: <strong>{formatearPesoDisplay(item.cantidad)}</strong>
+                  <div className="cart-item-pricing-meta">
+                    <div className="cart-item-unit-price">
+                      {isWeight ? (
+                        <>
+                          <span>${item.precio.toLocaleString("es-AR")}/kg</span>
+                          <span className="weight-qty-display">
+                            {" "}
+                            • Peso: <strong>{formatearPesoDisplay(item.cantidad)}</strong>
+                          </span>
+                        </>
+                      ) : (
+                        <span>
+                          ${item.precio.toLocaleString("es-AR")} c/u{item.unidad && !["unidad", "unidades", "u", "un"].includes(item.unidad.toLowerCase().trim()) ? ` (${item.unidad})` : ""}
                         </span>
-                      </>
-                    ) : (
-                      <span>
-                        ${item.precio.toLocaleString("es-AR")} c/u{item.unidad && !["unidad", "unidades", "u", "un"].includes(item.unidad.toLowerCase().trim()) ? ` (${item.unidad})` : ""}
-                      </span>
-                    )}
-                  </div>
+                      )}
+                    </div>
 
-                  {/* Acciones de línea: Ajustar peso o Ajustar precio de esta venta */}
-                  <div className="cart-item-extra-actions">
-                    {isWeight && onEditWeightItem && (
-                      <button
-                        type="button"
-                        className="btn-line-action btn-adjust-weight"
-                        onClick={() => onEditWeightItem(item)}
-                        title="Modificar peso o importe de este producto"
-                        data-testid={`btn-edit-weight-${item.producto_id}`}
-                      >
-                        ⚖️ Ajustar peso / importe
-                      </button>
-                    )}
-                    {onUpdateLinePrice && (
-                      <button
-                        type="button"
-                        className="btn-line-action btn-adjust-sale-price"
-                        onClick={() => handleOpenAdjustPrice(item)}
-                        title="Ajustar precio solo para este ticket"
-                        data-testid={`btn-adjust-price-${item.producto_id}`}
-                      >
-                        ✏️ Ajustar precio de esta venta
-                      </button>
-                    )}
+                    {/* Acciones de línea: Ajustar peso o Ajustar precio de esta venta */}
+                    <div className="cart-item-extra-actions">
+                      {isWeight && onEditWeightItem && (
+                        <button
+                          type="button"
+                          className="btn-line-action btn-adjust-weight"
+                          onClick={() => onEditWeightItem(item)}
+                          title="Modificar peso o importe de este producto"
+                          data-testid={`btn-edit-weight-${item.producto_id}`}
+                        >
+                          ⚖️ Ajustar peso / importe
+                        </button>
+                      )}
+                      {onUpdateLinePrice && (
+                        <button
+                          type="button"
+                          className="btn-line-action btn-adjust-sale-price"
+                          onClick={() => handleOpenAdjustPrice(item)}
+                          title="Ajustar precio solo para este ticket"
+                          data-testid={`btn-adjust-price-${item.producto_id}`}
+                        >
+                          ✏️ Ajustar precio de esta venta
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
 

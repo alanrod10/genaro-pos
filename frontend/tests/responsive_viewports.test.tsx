@@ -152,6 +152,7 @@ describe("GenaroPOS — Pruebas de Adaptabilidad Responsive Multi-Viewport", () 
           expect(screen.getByTestId("visor-seccion-fondos-fisicos")).toBeVisible();
           expect(screen.getByTestId("visor-seccion-cuentas-digitales")).toBeVisible();
           expect(screen.getByTestId("visor-seccion-obligaciones")).toBeVisible();
+          expect(screen.queryByText(/Actualizando\.\.\./i)).not.toBeInTheDocument();
         });
         unmountVisor();
       });
