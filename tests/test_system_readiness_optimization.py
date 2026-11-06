@@ -351,3 +351,34 @@ def test_10_consolidacion_de_consultas_maximo_4_en_base_preparada():
     # 4. pragma_index_list / pragma_index_info agrupada
     assert len(spy.statements) <= 4, f"Se esperaban <= 4 consultas, pero se ejecutaron {len(spy.statements)}:\n" + "\n".join(spy.statements)
     conn.close()
+
+
+# ==============================================================================
+# 11. Detección de claves foráneas faltantes (E.1)
+# ==============================================================================
+def test_11_deteccion_de_foreign_keys_faltantes():
+    conn = _crear_base_baseline()
+    ejecutar_migraciones(conn, directorio=MIGRATIONS_DIR)
+
+    # Recrear gastos_auditoria sin la restricción FOREIGN KEY
+    conn.execute("DROP TABLE gastos_auditoria;")
+    conn.execute(
+        """
+        CREATE TABLE gastos_auditoria (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            gasto_id INTEGER NOT NULL,
+            accion TEXT NOT NULL,
+            valores_anteriores TEXT,
+            valores_nuevos TEXT,
+            fecha_utc TEXT NOT NULL DEFAULT (datetime('now')),
+            actor TEXT NOT NULL DEFAULT 'sistema'
+        );
+        """
+    )
+
+    res = comprobar_preparacion_esquema(conn)
+    assert res["status"] == "ESQUEMA_INCONSISTENTE"
+    assert res["listo"] is False
+    assert "gastos_auditoria.gasto_id -> gastos_retiros" in res["foreign_keys_faltantes"]
+    assert any("gastos_auditoria.gasto_id -> gastos_retiros" in inc for inc in res["inconsistencias"])
+    conn.close()

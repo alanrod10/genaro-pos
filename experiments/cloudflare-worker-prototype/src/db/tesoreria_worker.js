@@ -2383,41 +2383,51 @@ export async function reprocesarOutboxWorker(client, eventId, usuario) {
 export async function obtenerBridgeStatusWorker(client) {
   try {
     const res = await client.execute(
-      `SELECT status, COUNT(*) as cnt, COALESCE(SUM(retry_count), 0) as retries
-       FROM commercial_events_outbox
-       GROUP BY status;`
+      `SELECT
+         COUNT(*) as total,
+         COALESCE(SUM(CASE WHEN status = 'PENDING' AND (tesoreria_movement_id IS NULL OR (tesoreria_movement_id NOT LIKE 'PENDING_DEFINITION%' AND tesoreria_movement_id NOT LIKE 'UNSPECIFIED_PLATFORM%')) THEN 1 ELSE 0 END), 0) as pending,
+         COALESCE(SUM(CASE WHEN status = 'PROCESSING' THEN 1 ELSE 0 END), 0) as processing,
+         COALESCE(SUM(CASE WHEN status = 'PUBLISHED' AND (tesoreria_movement_id IS NULL OR (tesoreria_movement_id NOT LIKE 'PENDING_DEFINITION%' AND tesoreria_movement_id NOT LIKE 'UNSPECIFIED_PLATFORM%')) THEN 1 ELSE 0 END), 0) as published,
+         COALESCE(SUM(CASE WHEN (tesoreria_movement_id LIKE 'PENDING_DEFINITION%' OR tesoreria_movement_id LIKE 'UNSPECIFIED_PLATFORM%') THEN 1 ELSE 0 END), 0) as held_pending_definition,
+         COALESCE(SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END), 0) as failed,
+         COALESCE(SUM(CASE WHEN status = 'DEAD_LETTER' THEN 1 ELSE 0 END), 0) as dead_letter,
+         COALESCE(SUM(retry_count), 0) as retry_count_total
+       FROM commercial_events_outbox;`
     );
-    const counts = { PENDING: 0, PROCESSING: 0, PUBLISHED: 0, FAILED: 0, DEAD_LETTER: 0 };
-    let retryTotal = 0;
-    for (const r of res.rows) {
-      counts[String(r.status)] = Number(r.cnt);
-      retryTotal += Number(r.retries || 0);
+    const r = res.rows[0];
+    if (!r) {
+      return { total: 0, pending: 0, processing: 0, published: 0, held_pending_definition: 0, failed: 0, dead_letter: 0, retry_count_total: 0 };
     }
-    const total = Object.values(counts).reduce((a, b) => a + b, 0);
     return {
-      total,
-      pending: counts.PENDING || 0,
-      processing: counts.PROCESSING || 0,
-      published: counts.PUBLISHED || 0,
-      failed: counts.FAILED || 0,
-      dead_letter: counts.DEAD_LETTER || 0,
-      retry_count_total: retryTotal,
+      total: Number(r.total || 0),
+      pending: Number(r.pending || 0),
+      processing: Number(r.processing || 0),
+      published: Number(r.published || 0),
+      held_pending_definition: Number(r.held_pending_definition || 0),
+      failed: Number(r.failed || 0),
+      dead_letter: Number(r.dead_letter || 0),
+      retry_count_total: Number(r.retry_count_total || 0),
     };
   } catch {
-    return { total: 0, pending: 0, processing: 0, published: 0, failed: 0, dead_letter: 0, retry_count_total: 0 };
+    return { total: 0, pending: 0, processing: 0, published: 0, held_pending_definition: 0, failed: 0, dead_letter: 0, retry_count_total: 0 };
   }
 }
 
 export async function obtenerSyncStatusBridgeWorker(client) {
   const st = await obtenerBridgeStatusWorker(client);
-  const pendientes = st.pending + st.processing + st.failed;
-  const reqAtencion = st.failed > 0 || st.dead_letter > 0;
+  const pendientes = st.pending + st.processing;
+  const retenidas = st.held_pending_definition || 0;
+  const fallidas = st.failed + st.dead_letter;
+  const reqAtencion = fallidas > 0 || retenidas > 0;
   return {
     sincronizadas: st.published,
     pendientes,
+    held_pending_definition: retenidas,
     requiere_atencion: reqAtencion,
-    mensaje_cajero: reqAtencion
-      ? "Existen eventos con observación pendientes de revisión administrativa."
+    mensaje_cajero: fallidas > 0
+      ? `Atención requerida: ${fallidas} operación(es) con error de sincronización. Avise a Administración.`
+      : retenidas > 0
+      ? `Atención: ${retenidas} operación(es) retenida(s) pendiente(s) de definición de plataforma.`
       : pendientes > 0
       ? `${pendientes} operación(es) en cola de sincronización.`
       : "Operaciones sincronizadas al día.",
@@ -2433,8 +2443,15 @@ export async function listarCommercialEventsWorker(
     let sql = "SELECT * FROM commercial_events_outbox WHERE 1=1";
     const args = [];
     if (status) {
-      sql += " AND status = ?";
-      args.push(String(status).trim().toUpperCase());
+      const sf = String(status).trim().toUpperCase();
+      if (sf === "PENDING_DEFINITION" || sf === "HELD" || sf === "HELD_PENDING_DEFINITION") {
+        sql += " AND (tesoreria_movement_id LIKE 'PENDING_DEFINITION%' OR tesoreria_movement_id LIKE 'UNSPECIFIED_PLATFORM%')";
+      } else if (sf === "PUBLISHED") {
+        sql += " AND status = 'PUBLISHED' AND (tesoreria_movement_id IS NULL OR (tesoreria_movement_id NOT LIKE 'PENDING_DEFINITION%' AND tesoreria_movement_id NOT LIKE 'UNSPECIFIED_PLATFORM%'))";
+      } else {
+        sql += " AND status = ?";
+        args.push(sf);
+      }
     }
     if (event_type) {
       sql += " AND event_type LIKE ?";

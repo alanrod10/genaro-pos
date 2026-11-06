@@ -1421,9 +1421,10 @@ def get_commercial_bridge_status(comm_conn: sqlite3.Connection) -> Dict[str, Any
         """
         SELECT
             COUNT(*) as total,
-            COALESCE(SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END), 0) as pending,
+            COALESCE(SUM(CASE WHEN status = 'PENDING' AND (tesoreria_movement_id IS NULL OR (tesoreria_movement_id NOT LIKE 'PENDING_DEFINITION%' AND tesoreria_movement_id NOT LIKE 'UNSPECIFIED_PLATFORM%')) THEN 1 ELSE 0 END), 0) as pending,
             COALESCE(SUM(CASE WHEN status = 'PROCESSING' THEN 1 ELSE 0 END), 0) as processing,
-            COALESCE(SUM(CASE WHEN status = 'PUBLISHED' THEN 1 ELSE 0 END), 0) as published,
+            COALESCE(SUM(CASE WHEN status = 'PUBLISHED' AND (tesoreria_movement_id IS NULL OR (tesoreria_movement_id NOT LIKE 'PENDING_DEFINITION%' AND tesoreria_movement_id NOT LIKE 'UNSPECIFIED_PLATFORM%')) THEN 1 ELSE 0 END), 0) as published,
+            COALESCE(SUM(CASE WHEN (tesoreria_movement_id LIKE 'PENDING_DEFINITION%' OR tesoreria_movement_id LIKE 'UNSPECIFIED_PLATFORM%') THEN 1 ELSE 0 END), 0) as held_pending_definition,
             COALESCE(SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END), 0) as failed,
             COALESCE(SUM(CASE WHEN status = 'DEAD_LETTER' THEN 1 ELSE 0 END), 0) as dead_letter,
             COALESCE(SUM(retry_count), 0) as retry_count_total
@@ -1435,7 +1436,7 @@ def get_commercial_bridge_status(comm_conn: sqlite3.Connection) -> Dict[str, Any
     if not row:
         return {
             "total": 0, "pending": 0, "processing": 0, "published": 0,
-            "failed": 0, "dead_letter": 0, "retry_count_total": 0,
+            "held_pending_definition": 0, "failed": 0, "dead_letter": 0, "retry_count_total": 0,
         }
     return dict(row)
 
@@ -1445,11 +1446,14 @@ def get_simplified_sync_status(comm_conn: sqlite3.Connection) -> Dict[str, Any]:
     stats = get_commercial_bridge_status(comm_conn)
     sincronizadas = stats["published"]
     pendientes = stats["pending"] + stats["processing"]
+    retenidas = stats.get("held_pending_definition", 0)
     problemas = stats["failed"] + stats["dead_letter"]
-    requiere_atencion = problemas > 0
+    requiere_atencion = (problemas > 0) or (retenidas > 0)
 
-    if requiere_atencion:
+    if problemas > 0:
         mensaje = f"Atención requerida: {problemas} operación(es) con error de sincronización. Avise a Administración."
+    elif retenidas > 0:
+        mensaje = f"Atención: {retenidas} operación(es) retenida(s) pendiente(s) de definición de plataforma."
     elif pendientes > 0:
         mensaje = f"Sincronizando: {pendientes} operación(es) pendiente(s) de confirmación."
     else:
@@ -1458,6 +1462,7 @@ def get_simplified_sync_status(comm_conn: sqlite3.Connection) -> Dict[str, Any]:
     return {
         "sincronizadas": sincronizadas,
         "pendientes": pendientes,
+        "held_pending_definition": retenidas,
         "requiere_atencion": requiere_atencion,
         "mensaje_cajero": mensaje,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1493,11 +1498,14 @@ def list_commercial_events_detailed(
     params: List[Any] = []
 
     if status_filter:
-        if status_filter.upper() == "PENDING_DEFINITION":
+        sf = status_filter.upper()
+        if sf in ("PENDING_DEFINITION", "HELD", "HELD_PENDING_DEFINITION"):
             query += " AND (tesoreria_movement_id LIKE 'PENDING_DEFINITION%' OR tesoreria_movement_id LIKE 'UNSPECIFIED_PLATFORM%')"
+        elif sf == "PUBLISHED":
+            query += " AND status = 'PUBLISHED' AND (tesoreria_movement_id IS NULL OR (tesoreria_movement_id NOT LIKE 'PENDING_DEFINITION%' AND tesoreria_movement_id NOT LIKE 'UNSPECIFIED_PLATFORM%'))"
         else:
             query += " AND status = ?"
-            params.append(status_filter.upper())
+            params.append(sf)
 
     if event_type_filter:
         query += " AND event_type LIKE ?"

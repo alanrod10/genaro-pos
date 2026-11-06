@@ -39,6 +39,7 @@ router = APIRouter()
 class SimplifiedSyncStatusResponse(BaseModel):
     sincronizadas: int
     pendientes: int
+    held_pending_definition: int = 0
     requiere_atencion: bool
     mensaje_cajero: str
     timestamp: str
@@ -49,6 +50,7 @@ class CommercialBridgeStatusResponse(BaseModel):
     pending: int
     processing: int
     published: int
+    held_pending_definition: int = 0
     failed: int
     dead_letter: int
     retry_count_total: int

@@ -1060,16 +1060,143 @@ export async function registrarCargaIdempotente(client, { servicio, usuario, ide
   }
 
   let cargaId;
+  let tesoreriaMovementId = null;
+
   try {
     if (servicio._simulate_interrupt_after_reservation) {
       throw new Error("INTERRUPTED_AFTER_RESERVATION: Fallo simulado antes de confirmar carga comercial.");
     }
-    const res = await client.execute({
-      sql: `INSERT INTO cargas_servicios (fecha_hora_utc, servicio, monto_carga, monto_adicional, total_cobrado, pago_efectivo, pago_transferencia, anulado, idempotency_key, plataforma_origen, servicio_destino)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?);`,
-      args: [nowUtc, tipo, montoCarga, montoAdicional, totalCobrado, pagoEfvo, pagoTransf, key, plataformaOrigen, servicioDestino],
-    });
-    cargaId = Number(res.lastInsertRowid) || 1;
+
+    if (tesoreriaActiva && plataformaOrigen === "PREPAY") {
+      // PREPAY: lote atómico de commit comercial + auditoría
+      const batchStmts = [
+        {
+          sql: `INSERT INTO cargas_servicios (fecha_hora_utc, servicio, monto_carga, monto_adicional, total_cobrado, pago_efectivo, pago_transferencia, anulado, idempotency_key, plataforma_origen, servicio_destino)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?);`,
+          args: [nowUtc, tipo, montoCarga, montoAdicional, totalCobrado, pagoEfvo, pagoTransf, coordKey, plataformaOrigen, servicioDestino],
+        },
+        {
+          sql: `INSERT INTO cargas_servicios_auditoria (carga_id, accion, valores_nuevos, fecha_utc, actor)
+                VALUES ((SELECT id FROM cargas_servicios WHERE idempotency_key = ?), 'CREAR', ?, ?, ?);`,
+          args: [coordKey, JSON.stringify(servicio), nowUtc, usuario || "sistema"],
+        },
+      ];
+      await client.batch(batchStmts, "write");
+
+      const rs = await client.execute({
+        sql: "SELECT id FROM cargas_servicios WHERE idempotency_key = ?;",
+        args: [coordKey],
+      });
+      cargaId = Number(rs.rows[0]?.id) || 1;
+
+      await confirmarPreReservaComercialWorker(client, {
+        idempotencyKey: coordKey,
+        cargaId,
+        servicio: tipo,
+        plataformaOrigen,
+        servicioDestino: servicioDestino || tipo,
+        montoCarga,
+        montoAdicional,
+        totalCobrado,
+        pagoEfvo,
+        pagoTransf,
+        fechaOp: fechaOpJujuy,
+        usuario: usuario || "sistema",
+      });
+
+      if (!servicio._simulate_interrupt_after_commercial_commit) {
+        const applied = await aplicarLiquidacionPrepayOutboxWorker(client, {
+          idempotencyKey: coordKey,
+          usuario: usuario || "sistema",
+          simulateOutboxError: Boolean(servicio._simulate_outbox_error),
+        });
+        tesoreriaMovementId = applied?.primary_movement_id || null;
+      }
+    } else {
+      // Flujo comercial base / No-PREPAY: lote atómico de inserción de carga, auditoría y outbox
+      const outboxEventId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `evt_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const batchStmts = [
+        {
+          sql: `INSERT INTO cargas_servicios (fecha_hora_utc, servicio, monto_carga, monto_adicional, total_cobrado, pago_efectivo, pago_transferencia, anulado, idempotency_key, plataforma_origen, servicio_destino)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?);`,
+          args: [nowUtc, tipo, montoCarga, montoAdicional, totalCobrado, pagoEfvo, pagoTransf, coordKey, plataformaOrigen, servicioDestino],
+        },
+        {
+          sql: `INSERT INTO cargas_servicios_auditoria (carga_id, accion, valores_nuevos, fecha_utc, actor)
+                VALUES ((SELECT id FROM cargas_servicios WHERE idempotency_key = ?), 'CREAR', ?, ?, ?);`,
+          args: [coordKey, JSON.stringify(servicio), nowUtc, usuario || "sistema"],
+        },
+        {
+          sql: `INSERT OR IGNORE INTO commercial_events_outbox (
+                  event_id, event_type, entity_type, entity_id, action_type,
+                  idempotency_key, payload_canonical_hash, payload, status,
+                  tesoreria_movement_id, created_at, updated_at, published_at
+                ) VALUES (
+                  ?, 'SERVICE_CREATED', 'SERVICE_LOAD',
+                  (SELECT CAST(id AS TEXT) FROM cargas_servicios WHERE idempotency_key = ?),
+                  'CREATE',
+                  ?,
+                  ?,
+                  json_set(?, '$.id', (SELECT id FROM cargas_servicios WHERE idempotency_key = ?)),
+                  'PUBLISHED',
+                  NULL,
+                  ?,
+                  ?,
+                  ?
+                );`,
+          args: [
+            outboxEventId,
+            coordKey,
+            coordKey,
+            `HASH_SRV_${coordKey}`,
+            JSON.stringify({
+              servicio: tipo,
+              plataforma_origen: plataformaOrigen,
+              servicio_destino: servicioDestino,
+              monto_carga: montoCarga,
+              monto_adicional: montoAdicional,
+              total_cobrado: totalCobrado,
+            }),
+            coordKey,
+            nowUtc,
+            nowUtc,
+            nowUtc,
+          ],
+        },
+      ];
+
+      await client.batch(batchStmts, "write");
+
+      const rs = await client.execute({
+        sql: "SELECT id FROM cargas_servicios WHERE idempotency_key = ?;",
+        args: [coordKey],
+      });
+      cargaId = Number(rs.rows[0]?.id) || 1;
+
+      if (tesoreriaActiva && plataformaOrigen) {
+        tesoreriaMovementId = await ejecutarCircuitoServicioTesoreriaWorker(
+          client,
+          {
+            cargaId,
+            plataformaOrigen,
+            servicioDestino: servicioDestino || tipo,
+            montoCarga,
+            montoAdicional,
+            pagoEfvo,
+            pagoTransf,
+            fechaOp: fechaOpJujuy,
+          },
+          usuario || "sistema",
+          coordKey
+        );
+        if (tesoreriaMovementId) {
+          await client.execute({
+            sql: "UPDATE commercial_events_outbox SET tesoreria_movement_id = ? WHERE idempotency_key = ?;",
+            args: [tesoreriaMovementId, coordKey],
+          });
+        }
+      }
+    }
   } catch (err) {
     if (tesoreriaActiva && plataformaOrigen === "PREPAY" && !servicio._keep_orphan_reservation) {
       await cancelarPreReservaPrepayWorker(client, {
@@ -1079,87 +1206,6 @@ export async function registrarCargaIdempotente(client, { servicio, usuario, ide
       }).catch(() => {});
     }
     throw err;
-  }
-
-  let tesoreriaMovementId = null;
-  if (tesoreriaActiva && plataformaOrigen === "PREPAY") {
-    await confirmarPreReservaComercialWorker(client, {
-      idempotencyKey: coordKey,
-      cargaId,
-      servicio: tipo,
-      plataformaOrigen,
-      servicioDestino: servicioDestino || tipo,
-      montoCarga,
-      montoAdicional,
-      totalCobrado,
-      pagoEfvo,
-      pagoTransf,
-      fechaOp: fechaOpJujuy,
-      usuario: usuario || "sistema",
-    });
-    if (!servicio._simulate_interrupt_after_commercial_commit) {
-      const applied = await aplicarLiquidacionPrepayOutboxWorker(client, {
-        idempotencyKey: coordKey,
-        usuario: usuario || "sistema",
-        simulateOutboxError: Boolean(servicio._simulate_outbox_error),
-      });
-      tesoreriaMovementId = applied?.primary_movement_id || null;
-    }
-  } else if (tesoreriaActiva && plataformaOrigen) {
-    tesoreriaMovementId = await ejecutarCircuitoServicioTesoreriaWorker(
-      client,
-      {
-        cargaId,
-        plataformaOrigen,
-        servicioDestino: servicioDestino || tipo,
-        montoCarga,
-        montoAdicional,
-        pagoEfvo,
-        pagoTransf,
-        fechaOp: fechaOpJujuy,
-      },
-      usuario || "sistema",
-      coordKey
-    );
-  }
-
-  await client
-    .execute({
-      sql: `INSERT INTO cargas_servicios_auditoria (carga_id, accion, valores_nuevos, fecha_utc, actor)
-          VALUES (?, 'CREAR', ?, ?, ?);`,
-      args: [cargaId, JSON.stringify(servicio), nowUtc, usuario || "sistema"],
-    })
-    .catch(() => {});
-
-  if (!(tesoreriaActiva && plataformaOrigen === "PREPAY")) {
-    await client
-      .execute({
-        sql: `INSERT OR IGNORE INTO commercial_events_outbox (
-                event_id, event_type, entity_type, entity_id, action_type,
-                idempotency_key, payload_canonical_hash, payload, status,
-                tesoreria_movement_id, created_at, updated_at, published_at
-              ) VALUES (?, 'SERVICE_CREATED', 'SERVICE_LOAD', ?, 'CREATE', ?, ?, ?, 'PUBLISHED', ?, ?, ?, ?);`,
-        args: [
-          crypto.randomUUID(),
-          String(cargaId),
-          coordKey,
-          `HASH_SRV_${cargaId}`,
-          JSON.stringify({
-            id: cargaId,
-            servicio: tipo,
-            plataforma_origen: plataformaOrigen,
-            servicio_destino: servicioDestino,
-            monto_carga: montoCarga,
-            monto_adicional: montoAdicional,
-            total_cobrado: totalCobrado,
-          }),
-          tesoreriaMovementId,
-          nowUtc,
-          nowUtc,
-          nowUtc,
-        ],
-      })
-      .catch(() => {});
   }
 
   return mapearFilaServicio(
@@ -1528,56 +1574,71 @@ export async function registrarGastoIdempotente(client, { gasto, usuario, idempo
     }
   }
 
-  const res = await client.execute({
-    sql: `INSERT INTO gastos_retiros (fecha_hora_utc, tipo, detalle, monto_salida, origen_fondos, metodo_pago, anulado, idempotency_key)
-          VALUES (?, ?, ?, ?, ?, ?, 0, ?);`,
-    args: [nowUtc, cat, concepto, monto, origenFondos, metodo, key],
-  });
-  const gastoId = Number(res.lastInsertRowid) || 1;
+  const effectiveKey = key || `EXP_${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `g_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`}`;
+  const eventId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `evt_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
-  await client.execute({
-    sql: `INSERT INTO gastos_auditoria (gasto_id, accion, valores_nuevos, fecha_utc, actor)
-          VALUES (?, 'CREAR', ?, ?, ?);`,
-    args: [gastoId, JSON.stringify({ tipo: cat, detalle: concepto, monto_salida: monto, origen_fondos: origenFondos, metodo_pago: metodo }), nowUtc, usuario || "sistema"],
-  }).catch(() => {});
-
-  const outboxStmt = enqueueOutboxStatement({
-    eventType: "EXPENSE_CONFIRMED",
-    entityType: "GASTO",
-    entityId: gastoId,
-    actionType: "CONFIRM",
-    idempotencyKey: `COMM_EXPENSE_${gastoId}_CONFIRM`,
-    payload: {
-      gasto_id: gastoId,
-      tipo: cat,
-      categoria: cat,
-      detalle: concepto,
-      monto_salida_cents: Math.round(monto * 100),
-      origen_fondos: origenFondos,
-      metodo_pago: metodo,
-      usuario: usuario || "sistema",
-      fecha_hora_utc: nowUtc,
+  const batchStatements = [
+    {
+      sql: `INSERT INTO gastos_retiros (fecha_hora_utc, tipo, detalle, monto_salida, origen_fondos, metodo_pago, anulado, idempotency_key)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?);`,
+      args: [nowUtc, cat, concepto, monto, origenFondos, metodo, effectiveKey],
     },
-    createdAt: nowUtc,
-  });
-  await client.execute(outboxStmt).catch(() => {});
+    {
+      sql: `INSERT INTO gastos_auditoria (gasto_id, accion, valores_nuevos, fecha_utc, actor)
+            VALUES ((SELECT id FROM gastos_retiros WHERE idempotency_key = ?), 'CREAR', ?, ?, ?);`,
+      args: [
+        effectiveKey,
+        JSON.stringify({ tipo: cat, detalle: concepto, monto_salida: monto, origen_fondos: origenFondos, metodo_pago: metodo }),
+        nowUtc,
+        usuario || "sistema",
+      ],
+    },
+    {
+      sql: `INSERT OR IGNORE INTO commercial_events_outbox (
+              event_id, event_type, entity_type, entity_id, action_type,
+              idempotency_key, payload_canonical_hash, payload, status,
+              retry_count, max_retries, created_at, updated_at
+            ) VALUES (
+              ?, 'EXPENSE_CONFIRMED', 'GASTO',
+              (SELECT CAST(id AS TEXT) FROM gastos_retiros WHERE idempotency_key = ?),
+              'CONFIRM',
+              ?,
+              'cf_hash',
+              json_set(?, '$.gasto_id', (SELECT id FROM gastos_retiros WHERE idempotency_key = ?)),
+              'PENDING', 0, 5, ?, ?
+            );`,
+      args: [
+        eventId,
+        effectiveKey,
+        `COMM_EXPENSE_${effectiveKey}_CONFIRM`,
+        JSON.stringify({
+          tipo: cat,
+          categoria: cat,
+          detalle: concepto,
+          monto_salida_cents: Math.round(monto * 100),
+          origen_fondos: origenFondos,
+          metodo_pago: metodo,
+          usuario: usuario || "sistema",
+          fecha_hora_utc: nowUtc,
+          commercial_idempotency_key: effectiveKey,
+        }),
+        effectiveKey,
+        nowUtc,
+        nowUtc,
+      ],
+    },
+  ];
 
-  const creado = await obtenerGastoPorId(client, gastoId);
+  await client.batch(batchStatements, "write");
+
+  const selectRes = await client.execute({
+    sql: "SELECT * FROM gastos_retiros WHERE idempotency_key = ?;",
+    args: [effectiveKey],
+  });
+  const row = selectRes.rows[0];
+
   return {
-    ...(creado || {
-      id: gastoId,
-      fecha_hora_utc: nowUtc,
-      tipo: cat,
-      categoria: cat,
-      detalle: concepto,
-      concepto,
-      monto_salida: monto,
-      monto,
-      origen_fondos: origenFondos,
-      metodo_pago: metodo,
-      anulado: false,
-      idempotency_key: key,
-    }),
+    ...mapearFilaGasto(row),
     status: "registrado",
   };
 }
