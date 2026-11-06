@@ -53,11 +53,72 @@ import {
   obtenerSaldosInicialesWorker,
   modificarSaldoInicialWorker,
   obtenerHistorialAperturasWorker,
-  obtenerFondosTesoreriaWorker,
-  obtenerResumenTesoreriaWorker,
-  obtenerCCDavidWorker,
-  obtenerPreventistasResumenWorker,
 } from "../db/adapter.js";
+import {
+  obtenerEstadoLaboratorioWorker,
+  obtenerResumenGeneralWorker,
+  obtenerFondosCatalogoWorker,
+  obtenerFondoDetalleWorker,
+  obtenerAuditoriaFondoWorker,
+  actualizarEstadoFondoWorker,
+  obtenerBalanceFondoWorker,
+  obtenerDisponibilidadFondoWorker,
+  obtenerDisponibilidadResumenWorker,
+  obtenerTrasladosTransitoFondoWorker,
+  obtenerJornadaActualWorker,
+  abrirJornadaWorker,
+  cerrarJornadaWorker,
+  abrirSiguienteJornadaWorker,
+  listarMovimientosWorker,
+  registrarMovimientoWorker,
+  listarTrasladosWorker,
+  iniciarTrasladoWorker,
+  confirmarTrasladoWorker,
+  cancelarTrasladoWorker,
+  listarReservasWorker,
+  obtenerHistorialReservaWorker,
+  crearReservaWorker,
+  aplicarReservaWorker,
+  liberarReservaWorker,
+  ejecutarEgresoReservadoWorker,
+  listarArqueosWorker,
+  obtenerArqueoWorker,
+  crearArqueoWorker,
+  actualizarObservacionArqueoWorker,
+  autorizarDiferenciaArqueoWorker,
+  abrirExpedienteArqueoWorker,
+  listarExpedientesWorker,
+  resolverExpedienteWorker,
+  iniciarCierreWorker,
+  validarCierreWorker,
+  ejecutarVaciado1110Worker,
+  ejecutarVaciado1160Worker,
+  confirmarCierreWorker,
+  listarCierresTesoreriaWorker,
+  obtenerCierreTesoreriaWorker,
+  listarReversionesWorker,
+  revertirMovimientoWorker,
+  consultarAuditoriaCadenaWorker,
+  verificarAuditoriaCadenaWorker,
+  obtenerEstadoOutboxWorker,
+  procesarOutboxWorker,
+  reprocesarOutboxWorker,
+  obtenerSyncStatusBridgeWorker,
+  obtenerBridgeStatusWorker,
+  listarCommercialEventsWorker,
+  reprocesarCommercialEventWorker,
+  triggerDrainCommercialBridgeWorker,
+  obtenerEstadoCCDavidWorker,
+  registrarAcreditacionDavidWorker,
+  registrarPagoDavidWorker,
+  registrarReconocimientoHistoricoDavidWorker,
+  listarAnticiposPreventistasWorker,
+  crearAnticipoPreventistaWorker,
+  obtenerDetalleAnticipoPreventistaWorker,
+  reponerAnticipoPreventistaWorker,
+  obtenerReposicionesPreventistaWorker,
+  obtenerResumenPreventistasWorker,
+} from "../db/tesoreria_worker.js";
 
 // --- Validación Fail-Closed de JWT_SECRET y Orígenes CORS ---
 
@@ -733,7 +794,12 @@ export async function handleRequest(request, env, dbClient, scramServer) {
       if (authErr) return authErr;
       const desde = url.searchParams.get("desde");
       const hasta = url.searchParams.get("hasta");
-      const metricas = await calcularMetricasDashboard(dbClient, { desde, hasta });
+      const periodoParam = (url.searchParams.get("periodo") || "").trim().toLowerCase();
+      const periodosValidos = ["hoy", "ultimos_7_dias", "ultimos_30_dias", "personalizado"];
+      if (periodoParam && !periodosValidos.includes(periodoParam)) {
+        return errorResponse(`El parámetro 'periodo' debe ser uno de: ${periodosValidos.join(", ")}`, 422);
+      }
+      const metricas = await calcularMetricasDashboard(dbClient, { desde, hasta, periodo: periodoParam || null });
       return jsonResponse(metricas);
     }
 
@@ -814,16 +880,78 @@ export async function handleRequest(request, env, dbClient, scramServer) {
     }
 
     // ==========================================
-    // --- TESORERÍA Y APERTURAS ---
+    // --- TESORERÍA Y APERTURAS (UNIFICADO EN TURSO) ---
     // ==========================================
 
-    // GET /api/tesoreria/apertura/saldos-iniciales
+    if (method === "GET" && path === "/api/tesoreria/estado") {
+      const data = await obtenerEstadoLaboratorioWorker(dbClient, currentUser);
+      return jsonResponse(data);
+    }
+
+    if (method === "GET" && path === "/api/tesoreria/resumen") {
+      const data = await obtenerResumenGeneralWorker(dbClient);
+      return jsonResponse(data);
+    }
+
+    if (method === "GET" && path === "/api/tesoreria/disponibilidad/resumen") {
+      const data = await obtenerDisponibilidadResumenWorker(dbClient);
+      return jsonResponse(data);
+    }
+
+    if (method === "GET" && path === "/api/tesoreria/fondos") {
+      const data = await obtenerFondosCatalogoWorker(dbClient);
+      return jsonResponse(data);
+    }
+
+    const matchFondoAuditoria = path.match(/^\/api\/tesoreria\/fondos\/([^/]+)\/auditoria$/);
+    if (method === "GET" && matchFondoAuditoria) {
+      const codigo = decodeURIComponent(matchFondoAuditoria[1]);
+      const data = await obtenerAuditoriaFondoWorker(dbClient, codigo);
+      return jsonResponse(data);
+    }
+
+    const matchFondoEstado = path.match(/^\/api\/tesoreria\/fondos\/([^/]+)\/estado$/);
+    if (method === "PATCH" && matchFondoEstado) {
+      const codigo = decodeURIComponent(matchFondoEstado[1]);
+      const body = await request.json();
+      const data = await actualizarEstadoFondoWorker(dbClient, codigo, body, currentUser);
+      return jsonResponse(data);
+    }
+
+    const matchFondoBalance = path.match(/^\/api\/tesoreria\/fondos\/([^/]+)\/balance$/);
+    if (method === "GET" && matchFondoBalance) {
+      const codigo = decodeURIComponent(matchFondoBalance[1]);
+      const data = await obtenerBalanceFondoWorker(dbClient, codigo);
+      return jsonResponse(data);
+    }
+
+    const matchFondoDisp = path.match(/^\/api\/tesoreria\/fondos\/([^/]+)\/disponibilidad$/);
+    if (method === "GET" && matchFondoDisp) {
+      const codigo = decodeURIComponent(matchFondoDisp[1]);
+      const data = await obtenerDisponibilidadFondoWorker(dbClient, codigo);
+      return jsonResponse(data);
+    }
+
+    const matchFondoTransito = path.match(/^\/api\/tesoreria\/fondos\/([^/]+)\/traslados-transito$/);
+    if (method === "GET" && matchFondoTransito) {
+      const codigo = decodeURIComponent(matchFondoTransito[1]);
+      const data = await obtenerTrasladosTransitoFondoWorker(dbClient, codigo);
+      return jsonResponse(data);
+    }
+
+    const matchFondoDetalle = path.match(/^\/api\/tesoreria\/fondos\/([^/]+)$/);
+    if (method === "GET" && matchFondoDetalle) {
+      const codigo = decodeURIComponent(matchFondoDetalle[1]);
+      const data = await obtenerFondoDetalleWorker(dbClient, codigo);
+      return jsonResponse(data);
+    }
+
+    // --- APERTURA / SALDOS INICIALES ---
     if (method === "GET" && path === "/api/tesoreria/apertura/saldos-iniciales") {
       const saldos = await obtenerSaldosInicialesWorker(dbClient);
       return jsonResponse(saldos);
     }
 
-    // POST /api/tesoreria/apertura/saldos-iniciales (Alan y Yilda - admin/socio)
     if (method === "POST" && path === "/api/tesoreria/apertura/saldos-iniciales") {
       const authErr = requireRole(["admin", "socio", "administrador"], "configurar saldos iniciales de apertura");
       if (authErr) return authErr;
@@ -843,33 +971,442 @@ export async function handleRequest(request, env, dbClient, scramServer) {
       return jsonResponse(res);
     }
 
-    // GET /api/tesoreria/apertura/historial
     if (method === "GET" && path === "/api/tesoreria/apertura/historial") {
       const historial = await obtenerHistorialAperturasWorker(dbClient);
       return jsonResponse(historial);
     }
 
-    // GET /api/tesoreria/fondos
-    if (method === "GET" && path === "/api/tesoreria/fondos") {
-      const fondos = await obtenerFondosTesoreriaWorker(dbClient);
-      return jsonResponse(fondos);
+    // --- JORNADAS ---
+    if (method === "GET" && path === "/api/tesoreria/jornada/actual") {
+      const data = await obtenerJornadaActualWorker(dbClient);
+      return jsonResponse(data);
     }
 
-    // GET /api/tesoreria/resumen
-    if (method === "GET" && path === "/api/tesoreria/resumen") {
-      const resumen = await obtenerResumenTesoreriaWorker(dbClient);
-      return jsonResponse(resumen);
+    if (method === "POST" && path === "/api/tesoreria/jornada/abrir") {
+      let body = {};
+      try { body = await request.json(); } catch {}
+      const data = await abrirJornadaWorker(dbClient, body, currentUser);
+      return jsonResponse(data);
     }
 
-    // GET /api/tesoreria/cuenta-corriente/david
+    if (method === "POST" && path === "/api/tesoreria/jornada/cerrar") {
+      const body = await request.json();
+      const data = await cerrarJornadaWorker(dbClient, body, currentUser);
+      return jsonResponse(data);
+    }
+
+    if (method === "POST" && path === "/api/tesoreria/jornada/siguiente") {
+      const authErr = requireRole(["admin", "socio", "administrador"], "abrir siguiente jornada de tesorería");
+      if (authErr) return authErr;
+      let body = {};
+      try { body = await request.json(); } catch {}
+      const data = await abrirSiguienteJornadaWorker(dbClient, body, currentUser);
+      return jsonResponse(data);
+    }
+
+    // --- MOVIMIENTOS ---
+    if (method === "GET" && path === "/api/tesoreria/movimientos") {
+      const codigo_fondo = url.searchParams.get("codigo_fondo");
+      const jornada_id = url.searchParams.get("jornada_id");
+      const movement_type = url.searchParams.get("movement_type");
+      const search = url.searchParams.get("search");
+      const limite = url.searchParams.get("limite") ? parseInt(url.searchParams.get("limite"), 10) : 50;
+      const data = await listarMovimientosWorker(dbClient, { codigo_fondo, jornada_id, movement_type, search, limite });
+      return jsonResponse(data);
+    }
+
+    if (method === "POST" && path === "/api/tesoreria/movimientos/entrada") {
+      const body = await request.json();
+      const idemKey = request.headers.get("Idempotency-Key");
+      const data = await registrarMovimientoWorker(dbClient, "ENTRY", body, currentUser, idemKey);
+      return jsonResponse(data);
+    }
+
+    if (method === "POST" && path === "/api/tesoreria/movimientos/salida") {
+      const body = await request.json();
+      const idemKey = request.headers.get("Idempotency-Key");
+      const data = await registrarMovimientoWorker(dbClient, "EXIT", body, currentUser, idemKey);
+      return jsonResponse(data);
+    }
+
+    // --- TRASLADOS ---
+    if (method === "GET" && path === "/api/tesoreria/traslados") {
+      const limite = url.searchParams.get("limite") ? parseInt(url.searchParams.get("limite"), 10) : 50;
+      const status = url.searchParams.get("status");
+      const origin_fund_code = url.searchParams.get("origin_fund_code");
+      const destination_fund_code = url.searchParams.get("destination_fund_code");
+      const search = url.searchParams.get("search");
+      const data = await listarTrasladosWorker(dbClient, { limite, status, origin_fund_code, destination_fund_code, search });
+      return jsonResponse(data);
+    }
+
+    if (method === "POST" && path === "/api/tesoreria/traslados") {
+      const body = await request.json();
+      const idemKey = request.headers.get("Idempotency-Key");
+      const data = await iniciarTrasladoWorker(dbClient, body, currentUser, idemKey);
+      return jsonResponse(data);
+    }
+
+    const matchTrasladoConf = path.match(/^\/api\/tesoreria\/traslados\/([^/]+)\/confirmar$/);
+    if (method === "POST" && matchTrasladoConf) {
+      const transferId = decodeURIComponent(matchTrasladoConf[1]);
+      const idemKey = request.headers.get("Idempotency-Key");
+      const data = await confirmarTrasladoWorker(dbClient, transferId, currentUser, idemKey);
+      return jsonResponse(data);
+    }
+
+    const matchTrasladoCanc = path.match(/^\/api\/tesoreria\/traslados\/([^/]+)\/cancelar$/);
+    if (method === "POST" && matchTrasladoCanc) {
+      const transferId = decodeURIComponent(matchTrasladoCanc[1]);
+      let body = {};
+      try { body = await request.json(); } catch {}
+      const idemKey = request.headers.get("Idempotency-Key");
+      const data = await cancelarTrasladoWorker(dbClient, transferId, body, currentUser, idemKey);
+      return jsonResponse(data);
+    }
+
+    // --- RESERVAS ---
+    if (method === "GET" && path === "/api/tesoreria/reservas") {
+      const codigo_fondo = url.searchParams.get("codigo_fondo");
+      const solo_activas = url.searchParams.get("solo_activas") === "true" || url.searchParams.get("solo_activas") === "1";
+      const limite = url.searchParams.get("limite") ? parseInt(url.searchParams.get("limite"), 10) : 50;
+      const data = await listarReservasWorker(dbClient, { codigo_fondo, solo_activas, limite });
+      return jsonResponse(data);
+    }
+
+    if (method === "POST" && path === "/api/tesoreria/reservas") {
+      const body = await request.json();
+      const idemKey = request.headers.get("Idempotency-Key");
+      const data = await crearReservaWorker(dbClient, body, currentUser, idemKey);
+      return jsonResponse(data);
+    }
+
+    const matchReservaAplicar = path.match(/^\/api\/tesoreria\/reservas\/([^/]+)\/aplicar$/);
+    if (method === "POST" && matchReservaAplicar) {
+      const resId = decodeURIComponent(matchReservaAplicar[1]);
+      const body = await request.json();
+      const idemKey = request.headers.get("Idempotency-Key");
+      const data = await aplicarReservaWorker(dbClient, resId, body, currentUser, idemKey);
+      return jsonResponse(data);
+    }
+
+    const matchReservaLiberar = path.match(/^\/api\/tesoreria\/reservas\/([^/]+)\/liberar$/);
+    if (method === "POST" && matchReservaLiberar) {
+      const resId = decodeURIComponent(matchReservaLiberar[1]);
+      const body = await request.json();
+      const idemKey = request.headers.get("Idempotency-Key");
+      const data = await liberarReservaWorker(dbClient, resId, body, currentUser, idemKey);
+      return jsonResponse(data);
+    }
+
+    const matchReservaEgreso = path.match(/^\/api\/tesoreria\/reservas\/([^/]+)\/egreso-reservado$/);
+    if (method === "POST" && matchReservaEgreso) {
+      const resId = decodeURIComponent(matchReservaEgreso[1]);
+      const body = await request.json();
+      const idemKey = request.headers.get("Idempotency-Key");
+      const data = await ejecutarEgresoReservadoWorker(dbClient, resId, body, currentUser, idemKey);
+      return jsonResponse(data);
+    }
+
+    const matchReservaDetalle = path.match(/^\/api\/tesoreria\/reservas\/([^/]+)$/);
+    if (method === "GET" && matchReservaDetalle) {
+      const resId = decodeURIComponent(matchReservaDetalle[1]);
+      const data = await obtenerHistorialReservaWorker(dbClient, resId);
+      return jsonResponse(data);
+    }
+
+    // --- ARQUEOS Y EXPEDIENTES ---
+    if (method === "GET" && path === "/api/tesoreria/arqueos") {
+      const codigo_fondo = url.searchParams.get("codigo_fondo");
+      const jornada_id = url.searchParams.get("jornada_id");
+      const limite = url.searchParams.get("limite") ? parseInt(url.searchParams.get("limite"), 10) : 50;
+      const data = await listarArqueosWorker(dbClient, { codigo_fondo, jornada_id, limite });
+      return jsonResponse(data);
+    }
+
+    if (method === "POST" && path === "/api/tesoreria/arqueos") {
+      const authErr = requireRole(["admin", "socio", "administrador"], "realizar arqueos de tesorería");
+      if (authErr) return authErr;
+      const body = await request.json();
+      const data = await crearArqueoWorker(dbClient, body, currentUser);
+      return jsonResponse(data);
+    }
+
+    const matchArqueoObs = path.match(/^\/api\/tesoreria\/arqueos\/([^/]+)\/observaciones$/);
+    if (method === "PATCH" && matchArqueoObs) {
+      const authErr = requireRole(["admin", "socio", "administrador"], "modificar observaciones de arqueos");
+      if (authErr) return authErr;
+      const recId = decodeURIComponent(matchArqueoObs[1]);
+      const body = await request.json();
+      const data = await actualizarObservacionArqueoWorker(dbClient, recId, body, currentUser);
+      return jsonResponse(data);
+    }
+
+    const matchArqueoAut = path.match(/^\/api\/tesoreria\/arqueos\/([^/]+)\/autorizar$/);
+    if (method === "POST" && matchArqueoAut) {
+      const authErr = requireRole(["admin", "socio", "administrador"], "autorizar diferencias de arqueo");
+      if (authErr) return authErr;
+      const recId = decodeURIComponent(matchArqueoAut[1]);
+      let body = {};
+      try { body = await request.json(); } catch {}
+      const data = await autorizarDiferenciaArqueoWorker(dbClient, recId, body, currentUser);
+      return jsonResponse(data);
+    }
+
+    const matchArqueoExp = path.match(/^\/api\/tesoreria\/arqueos\/([^/]+)\/expediente$/);
+    if (method === "POST" && matchArqueoExp) {
+      const recId = decodeURIComponent(matchArqueoExp[1]);
+      const body = await request.json();
+      const data = await abrirExpedienteArqueoWorker(dbClient, recId, body, currentUser);
+      return jsonResponse(data);
+    }
+
+    const matchArqueoDet = path.match(/^\/api\/tesoreria\/arqueos\/([^/]+)$/);
+    if (method === "GET" && matchArqueoDet) {
+      const recId = decodeURIComponent(matchArqueoDet[1]);
+      const data = await obtenerArqueoWorker(dbClient, recId);
+      if (!data) return errorResponse("Arqueo no encontrado.", 404);
+      return jsonResponse(data);
+    }
+
+    if (method === "GET" && path === "/api/tesoreria/expedientes") {
+      const codigo_fondo = url.searchParams.get("codigo_fondo");
+      const jornada_id = url.searchParams.get("jornada_id");
+      const estado = url.searchParams.get("estado");
+      const limite = url.searchParams.get("limite") ? parseInt(url.searchParams.get("limite"), 10) : 50;
+      const data = await listarExpedientesWorker(dbClient, { codigo_fondo, jornada_id, estado, limite });
+      return jsonResponse(data);
+    }
+
+    const matchExpRes = path.match(/^\/api\/tesoreria\/expedientes\/([^/]+)\/resolver$/);
+    if (method === "POST" && matchExpRes) {
+      const caseId = decodeURIComponent(matchExpRes[1]);
+      const body = await request.json();
+      const data = await resolverExpedienteWorker(dbClient, caseId, body, currentUser);
+      return jsonResponse(data);
+    }
+
+    // --- CIERRES ---
+    if (method === "POST" && path === "/api/tesoreria/cierres/iniciar") {
+      const authErr = requireRole(["admin", "socio", "administrador"], "iniciar cierres de tesorería");
+      if (authErr) return authErr;
+      const body = await request.json();
+      const data = await iniciarCierreWorker(dbClient, body, currentUser);
+      return jsonResponse(data);
+    }
+
+    const matchCierreVal = path.match(/^\/api\/tesoreria\/cierres\/validar\/(\d+)$/);
+    if (method === "GET" && matchCierreVal) {
+      const journalId = parseInt(matchCierreVal[1], 10);
+      const allow_pending_transfers = url.searchParams.get("allow_pending_transfers") === "true";
+      const allow_nonzero_1110 = url.searchParams.get("allow_nonzero_1110") === "true";
+      const data = await validarCierreWorker(dbClient, journalId, { allow_pending_transfers, allow_nonzero_1110 });
+      return jsonResponse(data);
+    }
+
+    if (method === "POST" && path === "/api/tesoreria/cierres/vaciado-1110") {
+      const authErr = requireRole(["admin", "socio", "administrador"], "ejecutar vaciado 1110 de cierre");
+      if (authErr) return authErr;
+      const body = await request.json();
+      const data = await ejecutarVaciado1110Worker(dbClient, body, currentUser);
+      return jsonResponse(data);
+    }
+
+    if (method === "POST" && path === "/api/tesoreria/cierres/vaciado-1160") {
+      const authErr = requireRole(["admin", "socio", "administrador"], "ejecutar vaciado 1160 de cierre");
+      if (authErr) return authErr;
+      const body = await request.json();
+      const data = await ejecutarVaciado1160Worker(dbClient, body, currentUser);
+      return jsonResponse(data);
+    }
+
+    if (method === "POST" && path === "/api/tesoreria/cierres/confirmar") {
+      const authErr = requireRole(["admin", "socio", "administrador"], "confirmar cierre de jornada");
+      if (authErr) return authErr;
+      const body = await request.json();
+      const data = await confirmarCierreWorker(dbClient, body, currentUser);
+      return jsonResponse(data);
+    }
+
+    if (method === "GET" && path === "/api/tesoreria/cierres") {
+      const limite = url.searchParams.get("limite") ? parseInt(url.searchParams.get("limite"), 10) : 50;
+      const data = await listarCierresTesoreriaWorker(dbClient, { limite });
+      return jsonResponse(data);
+    }
+
+    const matchCierreDet = path.match(/^\/api\/tesoreria\/cierres\/(\d+)$/);
+    if (method === "GET" && matchCierreDet) {
+      const journalId = parseInt(matchCierreDet[1], 10);
+      const data = await obtenerCierreTesoreriaWorker(dbClient, journalId);
+      if (!data) return errorResponse("Cierre no encontrado para la jornada indicada.", 404);
+      return jsonResponse(data);
+    }
+
+    // --- REVERSIONES ---
+    if (method === "GET" && path === "/api/tesoreria/reversiones") {
+      const tipo = url.searchParams.get("tipo");
+      const limite = url.searchParams.get("limite") ? parseInt(url.searchParams.get("limite"), 10) : 50;
+      const data = await listarReversionesWorker(dbClient, { tipo, limite });
+      return jsonResponse(data);
+    }
+
+    if (method === "POST" && path === "/api/tesoreria/reversiones/movimiento") {
+      const body = await request.json();
+      const idemKey = request.headers.get("Idempotency-Key");
+      const data = await revertirMovimientoWorker(dbClient, body, currentUser, idemKey);
+      return jsonResponse(data);
+    }
+
+    // --- AUDITORÍA Y OUTBOX ---
+    if (method === "GET" && path === "/api/tesoreria/auditoria/cadena") {
+      const tipo_entidad = url.searchParams.get("tipo_entidad");
+      const entidad_id = url.searchParams.get("entidad_id");
+      const tipo_evento = url.searchParams.get("tipo_evento");
+      const limite = url.searchParams.get("limite") ? parseInt(url.searchParams.get("limite"), 10) : 100;
+      const data = await consultarAuditoriaCadenaWorker(dbClient, { tipo_entidad, entidad_id, tipo_evento, limite });
+      return jsonResponse(data);
+    }
+
+    if (method === "GET" && path === "/api/tesoreria/auditoria/verificar") {
+      const data = await verificarAuditoriaCadenaWorker(dbClient);
+      return jsonResponse(data);
+    }
+
+    if (method === "GET" && path === "/api/tesoreria/outbox/estado") {
+      const data = await obtenerEstadoOutboxWorker(dbClient);
+      return jsonResponse(data);
+    }
+
+    if (method === "POST" && path === "/api/tesoreria/outbox/procesar") {
+      let body = {};
+      try { body = await request.json(); } catch {}
+      const data = await procesarOutboxWorker(dbClient, body);
+      return jsonResponse(data);
+    }
+
+    const matchOutboxRep = path.match(/^\/api\/tesoreria\/outbox\/([^/]+)\/reprocesar$/);
+    if (method === "POST" && matchOutboxRep) {
+      const evId = decodeURIComponent(matchOutboxRep[1]);
+      const data = await reprocesarOutboxWorker(dbClient, evId, currentUser);
+      return jsonResponse(data);
+    }
+
+    // --- COMMERCIAL BRIDGE ---
+    if (method === "GET" && path === "/api/tesoreria/commercial-bridge/sync-status") {
+      const data = await obtenerSyncStatusBridgeWorker(dbClient);
+      return jsonResponse(data);
+    }
+
+    if (method === "GET" && path === "/api/tesoreria/commercial-bridge/status") {
+      const data = await obtenerBridgeStatusWorker(dbClient);
+      return jsonResponse(data);
+    }
+
+    if (method === "GET" && path === "/api/tesoreria/commercial-bridge/events") {
+      const status = url.searchParams.get("status");
+      const event_type = url.searchParams.get("event_type");
+      const search = url.searchParams.get("search");
+      const limit = url.searchParams.get("limit") ? parseInt(url.searchParams.get("limit"), 10) : 50;
+      const offset = url.searchParams.get("offset") ? parseInt(url.searchParams.get("offset"), 10) : 0;
+      const data = await listarCommercialEventsWorker(dbClient, { status, event_type, search, limit, offset });
+      return jsonResponse(data);
+    }
+
+    const matchBridgeRep = path.match(/^\/api\/tesoreria\/commercial-bridge\/reprocess\/([^/]+)$/);
+    if (method === "POST" && matchBridgeRep) {
+      const authErr = requireRole(["admin", "socio", "administrador"], "reprocesar eventos comerciales");
+      if (authErr) return authErr;
+      const evId = decodeURIComponent(matchBridgeRep[1]);
+      const data = await reprocesarCommercialEventWorker(dbClient, evId, currentUser);
+      return jsonResponse(data);
+    }
+
+    if (
+      method === "POST" &&
+      (path === "/api/tesoreria/commercial-bridge/trigger-drain" ||
+        path === "/api/tesoreria/commercial-bridge/drain")
+    ) {
+      const authErr = requireRole(["admin", "socio", "administrador"], "drenar outbox comercial");
+      if (authErr) return authErr;
+      const data = await triggerDrainCommercialBridgeWorker(dbClient);
+      return jsonResponse(data);
+    }
+
+    // --- CUENTA CORRIENTE DAVID ---
     if (method === "GET" && path === "/api/tesoreria/cuenta-corriente/david") {
-      const david = await obtenerCCDavidWorker(dbClient);
+      const fecha_corte = url.searchParams.get("fecha_corte");
+      const david = await obtenerEstadoCCDavidWorker(dbClient, { fecha_corte });
       return jsonResponse(david);
     }
 
-    // GET /api/tesoreria/preventistas/resumen
+    if (method === "POST" && path === "/api/tesoreria/cuenta-corriente/david/acreditacion") {
+      const body = await request.json();
+      const idemKey = request.headers.get("Idempotency-Key");
+      const data = await registrarAcreditacionDavidWorker(dbClient, body, currentUser, idemKey);
+      return jsonResponse(data);
+    }
+
+    if (method === "POST" && path === "/api/tesoreria/cuenta-corriente/david/pago") {
+      const body = await request.json();
+      const idemKey = request.headers.get("Idempotency-Key");
+      const data = await registrarPagoDavidWorker(dbClient, body, currentUser, idemKey);
+      return jsonResponse(data);
+    }
+
+    if (method === "POST" && path === "/api/tesoreria/cuenta-corriente/david/reconocimiento-historico") {
+      const body = await request.json();
+      const idemKey = request.headers.get("Idempotency-Key");
+      const data = await registrarReconocimientoHistoricoDavidWorker(dbClient, body, currentUser, idemKey);
+      return jsonResponse(data);
+    }
+
+    // --- PREVENTISTAS (ANTICIPOS Y REPOSICIONES) ---
+    if (method === "GET" && path === "/api/tesoreria/preventistas/anticipos") {
+      const estado = url.searchParams.get("estado");
+      const proveedor = url.searchParams.get("proveedor");
+      const data = await listarAnticiposPreventistasWorker(dbClient, { estado, proveedor });
+      return jsonResponse(data);
+    }
+
+    if (method === "POST" && path === "/api/tesoreria/preventistas/anticipos") {
+      const body = await request.json();
+      const idemKey = request.headers.get("Idempotency-Key");
+      const data = await crearAnticipoPreventistaWorker(dbClient, body, currentUser, idemKey);
+      return jsonResponse(data);
+    }
+
+    const matchAntRepoPost = path.match(/^\/api\/tesoreria\/preventistas\/anticipos\/([^/]+)\/reposicion$/);
+    if (method === "POST" && matchAntRepoPost) {
+      const antId = decodeURIComponent(matchAntRepoPost[1]);
+      let body = {};
+      try { body = await request.json(); } catch {}
+      const idemKey = request.headers.get("Idempotency-Key");
+      const data = await reponerAnticipoPreventistaWorker(dbClient, antId, body, currentUser, idemKey);
+      return jsonResponse(data);
+    }
+
+    const matchAntReposGet = path.match(/^\/api\/tesoreria\/preventistas\/anticipos\/([^/]+)\/reposiciones$/);
+    if (method === "GET" && matchAntReposGet) {
+      const antId = decodeURIComponent(matchAntReposGet[1]);
+      const data = await obtenerReposicionesPreventistaWorker(dbClient, antId);
+      return jsonResponse(data);
+    }
+
+    const matchAntDet = path.match(/^\/api\/tesoreria\/preventistas\/anticipos\/([^/]+)$/);
+    if (method === "GET" && matchAntDet) {
+      const antId = decodeURIComponent(matchAntDet[1]);
+      const data = await obtenerDetalleAnticipoPreventistaWorker(dbClient, antId);
+      if (!data) return errorResponse(`Anticipo #${antId} no encontrado.`, 404);
+      return jsonResponse(data);
+    }
+
+    if (method === "GET" && path === "/api/tesoreria/preventistas/reposiciones") {
+      const data = await obtenerReposicionesPreventistaWorker(dbClient, null);
+      return jsonResponse(data);
+    }
+
     if (method === "GET" && path === "/api/tesoreria/preventistas/resumen") {
-      const prev = await obtenerPreventistasResumenWorker(dbClient);
+      const prev = await obtenerResumenPreventistasWorker(dbClient);
       return jsonResponse(prev);
     }
 
@@ -877,6 +1414,7 @@ export async function handleRequest(request, env, dbClient, scramServer) {
   } catch (err) {
     const msg = err?.message || "Error interno";
     const isConflict = msg.includes("CONFLICT") || msg.includes("UNIQUE constraint");
+    const isUnprocessable = msg.includes("UNPROCESSABLE");
     const isInvalidInput = msg.includes("INVALID_INPUT") || msg.includes("CHECK constraint");
     const isNotFound = msg.includes("NOT_FOUND");
     const isAuth =
@@ -895,6 +1433,9 @@ export async function handleRequest(request, env, dbClient, scramServer) {
     }
     if (isNotFound) {
       return errorResponse(msg, 404);
+    }
+    if (isUnprocessable) {
+      return errorResponse(msg, 422);
     }
     if (isInvalidInput) {
       return errorResponse(msg, 400);

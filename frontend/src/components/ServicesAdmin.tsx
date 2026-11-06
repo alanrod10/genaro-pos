@@ -517,7 +517,7 @@ export const ServicesAdmin: React.FC<ServicesAdminProps> = ({
       const payload: CargaServicioInput = {
         servicio: dest,
         plataforma_origen: editPlataformaOrigen || null,
-        servicio_destino: dest,
+        servicio_destino: editPlataformaOrigen ? dest : null,
         monto_carga: Math.round(editMontoCarga),
         monto_adicional: Math.round(editMontoAdic),
         total_cobrado: totalCobrarEdit,
@@ -540,9 +540,13 @@ export const ServicesAdmin: React.FC<ServicesAdminProps> = ({
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error inesperado al editar.";
-      setEditError(msg);
+      if (isMountedRef.current && typeof window !== "undefined") {
+        setEditError(msg);
+      }
     } finally {
-      setIsSavingEdit(false);
+      if (isMountedRef.current && typeof window !== "undefined") {
+        setIsSavingEdit(false);
+      }
     }
   };
 

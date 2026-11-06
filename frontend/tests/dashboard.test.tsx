@@ -547,4 +547,18 @@ describe("GenaroPOS — Módulo de Dashboard Financiero y Visor (Frontend / Inde
     expect(m.conciliacion_cajon.gastos_efvo).toBe(1500);
     expect(m.conciliacion_cajon.efectivo_esperado_cajon).toBe(7400); // 4600 + 4300 - 1500
   });
+
+  it("11. Estructura el Visor Financiero en 5 secciones conceptuales separando actividad del período y saldos de Tesorería", async () => {
+    const handleToast = vi.fn();
+    render(<DashboardAdmin onAddToast={handleToast} isDemo={true} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("dashboard-kpi-strip")).toBeInTheDocument();
+      expect(screen.getByTestId("visor-seccion-comercial")).toBeInTheDocument();
+      expect(screen.getByTestId("visor-seccion-servicios")).toBeInTheDocument();
+      expect(screen.getByTestId("visor-seccion-fondos-fisicos")).toBeInTheDocument();
+      expect(screen.getByTestId("visor-seccion-cuentas-digitales")).toBeInTheDocument();
+      expect(screen.getByTestId("visor-seccion-obligaciones")).toBeInTheDocument();
+    });
+  });
 });

@@ -147,6 +147,8 @@ def modificar_saldo_inicial(
     """Modifica de manera auditada y append-only el saldo inicial de un fondo u obligación."""
     assertValidMoney(saldo_nuevo_cents)
     codigo_norm = str(codigo).strip().upper()
+    if codigo_norm.startswith("OBL_"):
+        codigo_norm = codigo_norm[4:]
     motivo_clean = str(motivo or "").strip()
     if len(motivo_clean) < 3:
         raise ErrorAperturaTesoreria("El motivo de la modificación de saldo inicial es obligatorio y debe tener al menos 3 caracteres.")

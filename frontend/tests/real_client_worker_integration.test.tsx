@@ -388,6 +388,18 @@ describe("Integración Local Real Frontend (RealApiClient) ↔ Backend (Worker +
     expect(dashRes.data?.caja_e.capital_total).toBe(2000);
     expect(dashRes.data?.gastos.gastos_total).toBe(500);
 
+    // Verificar filtro estricto de período "hoy" vs "ultimos_30_dias"
+    const dashHoy = await client.obtenerMetricasDashboard(undefined, undefined, "hoy");
+    expect(dashHoy.status).toBe(200);
+    expect(dashHoy.data?.caja_a.total_ventas).toBe(0); // Ventas fueron con fecha 27/10/2026
+    expect(dashHoy.data?.caja_e.capital_total).toBe(2000); // Carga Claro fue hoy
+    expect(dashHoy.data?.gastos.gastos_total).toBe(500); // Gasto fue hoy
+
+    const dash30d = await client.obtenerMetricasDashboard(undefined, undefined, "ultimos_30_dias");
+    expect(dash30d.status).toBe(200);
+    expect(dash30d.data?.caja_a.total_ventas).toBe(6700);
+    expect(dash30d.data?.caja_e.capital_total).toBe(2000);
+
     // (12) Sesión inválida o expirada -> 401
     const invalidClient = new RealApiClient("http://127.0.0.1:8787");
     invalidClient.setAuthToken("token.invalido.manipulado");
@@ -718,9 +730,9 @@ describe("Integración Local Real Frontend (RealApiClient) ↔ Backend (Worker +
     expect(meYilda.data?.display_name).toBe("Yilda");
 
     // 2. Alan registra una venta MIXTA ($3.000 = $1.000 efvo + $2.000 transf), un servicio, un gasto y actualiza un precio
-    const dNow = new Date();
+    const dNow = new Date(Date.now() - 3 * 3600 * 1000);
     const pad2 = (n: number) => String(n).padStart(2, "0");
-    const hoyJujuyStr = `${pad2(dNow.getDate())}/${pad2(dNow.getMonth() + 1)}/${dNow.getFullYear()}`;
+    const hoyJujuyStr = `${pad2(dNow.getUTCDate())}/${pad2(dNow.getUTCMonth() + 1)}/${dNow.getUTCFullYear()}`;
 
     const ventaAlanRes = await clientAlan.registrarVenta({
       ticket: {

@@ -79,10 +79,26 @@ export interface ConciliacionCajon {
   efectivo_esperado_cajon: number;
 }
 
+export interface DesgloseServicioItem {
+  plataforma_origen: string;
+  servicio_destino: string;
+  categoria: string;
+  cantidad_operaciones: number;
+  capital_total: number;
+  adicional_total: number;
+  total_cobrado: number;
+  cobrado_efectivo: number;
+  cobrado_transferencia: number;
+  medio_pago?: string;
+  fondo_receptor?: string;
+  cuenta_utilizada?: string;
+}
+
 export interface MetricasDashboard {
   periodo_tipo: PeriodoTipo;
   desde: string;
   hasta: string;
+  desglose_servicios?: DesgloseServicioItem[];
 
   // 1. Caja A - Drugstore (Ventas)
   caja_a: MetricasCajaA;

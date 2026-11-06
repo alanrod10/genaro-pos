@@ -1,9 +1,14 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { Header } from "../src/components/Header";
 import { ProductCatalog } from "../src/components/ProductCatalog";
 import { WeightSaleModal } from "../src/components/WeightSaleModal";
+import { ProductAdmin } from "../src/components/ProductAdmin";
+import { PreventistasAdmin } from "../src/components/PreventistasAdmin";
+import { DashboardAdmin } from "../src/components/DashboardAdmin";
 import { Producto } from "../src/types/catalog";
+import { resetDBInstance } from "../src/services/db";
+import { activarModoDemo } from "../src/services/api";
 
 const MOCK_PROD: Producto = {
   id_producto: 504,
@@ -20,9 +25,14 @@ const MOCK_PROD: Producto = {
   fecha_act: "2026-10-30",
 };
 
-const VIEWPORTS = [320, 360, 375, 390, 414, 430, 768, 1024, 1440];
+const VIEWPORTS = [320, 360, 375, 390, 414, 430, 768, 1024, 1366, 1440, 1920];
 
 describe("GenaroPOS — Pruebas de Adaptabilidad Responsive Multi-Viewport", () => {
+  beforeEach(() => {
+    resetDBInstance();
+    activarModoDemo();
+  });
+
   VIEWPORTS.forEach((width) => {
     describe(`Viewport ${width}px`, () => {
       it(`Renderiza navegación completa con 8 módulos accesibles y sin cortes a ${width}px`, () => {
@@ -100,6 +110,50 @@ describe("GenaroPOS — Pruebas de Adaptabilidad Responsive Multi-Viewport", () 
         expect(screen.getByTestId("btn-confirm-weight-sale")).toBeInTheDocument();
 
         unmount();
+      });
+
+      it(`Renderiza edición de precio en Productos, barra de Preventistas y 5 secciones del Visor a ${width}px`, async () => {
+        window.innerWidth = width;
+        window.dispatchEvent(new Event("resize"));
+
+        const { unmount: unmountProd } = render(
+          <ProductAdmin
+            productos={[MOCK_PROD]}
+            isDemo={true}
+            onRefresh={vi.fn()}
+            onAddToast={vi.fn()}
+          />
+        );
+
+        fireEvent.click(screen.getByTestId(`btn-edit-${MOCK_PROD.id_producto}`));
+        expect(screen.getByTestId("product-modal")).toBeInTheDocument();
+        const saveBtn = screen.getByTestId("btn-save-product");
+        const cancelBtn = screen.getByTestId("btn-cancel-product");
+        expect(saveBtn).toBeVisible();
+        expect(saveBtn).toHaveTextContent("Actualizar Producto");
+        expect(cancelBtn).toBeVisible();
+        unmountProd();
+
+        const { unmount: unmountPrev } = render(
+          <PreventistasAdmin onAddToast={vi.fn()} isDemo={true} />
+        );
+        await waitFor(() => {
+          expect(screen.getByTestId("btn-guardar-precios")).toBeVisible();
+        });
+        unmountPrev();
+
+        const { unmount: unmountVisor } = render(
+          <DashboardAdmin onAddToast={vi.fn()} isDemo={true} />
+        );
+        await waitFor(() => {
+          expect(screen.getByTestId("dashboard-kpi-strip")).toBeVisible();
+          expect(screen.getByTestId("visor-seccion-comercial")).toBeVisible();
+          expect(screen.getByTestId("visor-seccion-servicios")).toBeVisible();
+          expect(screen.getByTestId("visor-seccion-fondos-fisicos")).toBeVisible();
+          expect(screen.getByTestId("visor-seccion-cuentas-digitales")).toBeVisible();
+          expect(screen.getByTestId("visor-seccion-obligaciones")).toBeVisible();
+        });
+        unmountVisor();
       });
     });
   });

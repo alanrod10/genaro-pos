@@ -302,14 +302,17 @@ def calcular_metricas_dashboard_turso(
         e_count = 0
 
         sube_mp_capital = 0
+        desglose_servicios_map: Dict[str, Dict[str, Any]] = {}
 
         if _tabla_existe(conexion, "cargas_servicios"):
             has_anulado_cargas = _columna_existe(conexion, "cargas_servicios", "anulado")
+            has_plat_origen = _columna_existe(conexion, "cargas_servicios", "plataforma_origen")
             anulado_cargas_clause = "WHERE anulado = 0" if has_anulado_cargas else "WHERE 1=1"
+            plat_select = "plataforma_origen" if has_plat_origen else "NULL"
 
             query_cargas = f"""
                 SELECT fecha_hora_utc, servicio, monto_carga, monto_adicional,
-                       total_cobrado, pago_efectivo, pago_transferencia
+                       total_cobrado, pago_efectivo, pago_transferencia, {plat_select}
                 FROM cargas_servicios
                 {anulado_cargas_clause}
                 AND substr(fecha_hora_utc, 1, 10) >= ?
@@ -322,7 +325,8 @@ def calcular_metricas_dashboard_turso(
                 if f_iso < desde or f_iso > hasta:
                     continue
 
-                categoria_srv = clasificar_servicio(c_row[1])
+                plat_raw = c_row[7] if len(c_row) > 7 else None
+                categoria_srv = clasificar_servicio(c_row[1], plat_raw)
                 monto_carga = int(c_row[2] or 0)
                 monto_adic = int(c_row[3] or 0)
                 tot_cobrado = int(c_row[4] or 0)
@@ -354,6 +358,74 @@ def calcular_metricas_dashboard_turso(
                 c_efvo += adic_efvo
                 c_transf += adic_transf
                 c_count += 1
+
+                srv_nombre = str(c_row[1] or "Servicio").strip()
+                plat_origen = (
+                    str(plat_raw).strip()
+                    if plat_raw and str(plat_raw).strip()
+                    else "Histórico (sin origen especificado)"
+                )
+                key_desg = f"{plat_origen}::{srv_nombre}"
+                if key_desg not in desglose_servicios_map:
+                    desglose_servicios_map[key_desg] = {
+                        "plataforma_origen": plat_origen,
+                        "servicio_destino": srv_nombre,
+                        "categoria": categoria_srv,
+                        "cantidad_operaciones": 0,
+                        "capital_total": 0,
+                        "adicional_total": 0,
+                        "total_cobrado": 0,
+                        "cobrado_efectivo": 0,
+                        "cobrado_transferencia": 0,
+                        "medio_pago": "EFECTIVO",
+                        "fondo_receptor": "",
+                        "cuenta_utilizada": (
+                            "1230 — Claro Comercios Digital"
+                            if plat_origen == "CLARO COMERCIOS" or categoria_srv == "CLARO"
+                            else "1210 — Mercado Pago Propio"
+                            if plat_origen == "MERCADO PAGO" or categoria_srv == "SUBE_MP"
+                            else "1220 — PREPAY Digital"
+                        ),
+                    }
+                desglose_servicios_map[key_desg]["cantidad_operaciones"] += 1
+                desglose_servicios_map[key_desg]["capital_total"] += monto_carga
+                desglose_servicios_map[key_desg]["adicional_total"] += monto_adic
+                desglose_servicios_map[key_desg]["total_cobrado"] += tot_cobrado
+                desglose_servicios_map[key_desg]["cobrado_efectivo"] += p_efvo
+                desglose_servicios_map[key_desg]["cobrado_transferencia"] += p_transf
+                tot_efvo_d = desglose_servicios_map[key_desg]["cobrado_efectivo"]
+                tot_trf_d = desglose_servicios_map[key_desg]["cobrado_transferencia"]
+                desglose_servicios_map[key_desg]["medio_pago"] = (
+                    "MIXTO"
+                    if tot_efvo_d > 0 and tot_trf_d > 0
+                    else "TRANSFERENCIA"
+                    if tot_trf_d > 0
+                    else "EFECTIVO"
+                )
+                if plat_origen == "CLARO COMERCIOS" or categoria_srv == "CLARO":
+                    desglose_servicios_map[key_desg]["fondo_receptor"] = (
+                        "1150 (Claro físico) + 1140 (Adicionales) / 1210 (Mercado Pago)"
+                        if tot_efvo_d > 0 and tot_trf_d > 0
+                        else "1210 (Mercado Pago Propio)"
+                        if tot_trf_d > 0
+                        else "1150 (Claro físico) + 1140 (Adicionales)"
+                    )
+                elif plat_origen == "MERCADO PAGO" or categoria_srv == "SUBE_MP":
+                    desglose_servicios_map[key_desg]["fondo_receptor"] = (
+                        "1110 (Drugstore diario) + 1140 (Adicionales) / 1210 (Mercado Pago)"
+                        if tot_efvo_d > 0 and tot_trf_d > 0
+                        else "1210 (Mercado Pago Propio)"
+                        if tot_trf_d > 0
+                        else "1110 (Drugstore diario) + 1140 (Adicionales)"
+                    )
+                else:
+                    desglose_servicios_map[key_desg]["fondo_receptor"] = (
+                        "1160 (PREPAY diario) + 1140 (Adicionales) / 1210 (MP) + Comp. 1120 → 1130"
+                        if tot_efvo_d > 0 and tot_trf_d > 0
+                        else "1210 (Mercado Pago) + Compensación 1120 → 1130"
+                        if tot_trf_d > 0
+                        else "1160 (PREPAY diario) + 1140 (Adicionales)"
+                    )
 
                 if f_iso in serie_map:
                     serie_map[f_iso]["servicios_total"] += tot_cobrado
@@ -465,6 +537,7 @@ def calcular_metricas_dashboard_turso(
         "periodo_tipo": periodo_tipo,
         "desde": desde,
         "hasta": hasta,
+        "desglose_servicios": list(desglose_servicios_map.values()),
         "caja_a": {
             "total_ventas": total_ventas,
             "ventas_efvo": ventas_efvo,

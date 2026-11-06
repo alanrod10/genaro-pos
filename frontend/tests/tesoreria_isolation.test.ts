@@ -6,16 +6,16 @@ describe("ISO-006: Aislamiento del Laboratorio en Frontend", () => {
     // Verificar que el servicio de tesorería obtiene su resumen sin registrar nada en sales_queue ni commercial stores
     const resumen = await TesoreriaService.obtenerResumen();
     expect(resumen.aislamiento_confirmado).toBe(true);
-    expect(resumen.total_fondos).toBe(9);
+    expect(resumen.total_fondos).toBe(10);
     expect(resumen.total_saldo_registrado_centavos).toBe(0);
   });
 
-  it("El catálogo de laboratorio contiene exactamente los 9 fondos requeridos con saldo 0", async () => {
+  it("El catálogo de laboratorio contiene exactamente los 10 fondos requeridos con saldo 0", async () => {
     const fondos = await TesoreriaService.obtenerFondos();
-    expect(fondos.length).toBe(9);
+    expect(fondos.length).toBe(10);
 
     const codigos = fondos.map((f) => f.codigo);
-    const esperados = ["1110", "1120", "1130", "1140", "1150", "1210", "1220", "1230", "1310"];
+    const esperados = ["1110", "1120", "1130", "1140", "1150", "1160", "1210", "1220", "1230", "1310"];
     expect(codigos).toEqual(esperados);
 
     for (const f of fondos) {
@@ -29,7 +29,7 @@ describe("ISO-006: Aislamiento del Laboratorio en Frontend", () => {
     const jornada = await TesoreriaService.abrirJornada("alan", "Apertura test aislamiento");
     expect(jornada.estado).toBe("ABIERTA");
     expect(jornada.total_apertura_centavos).toBe(0);
-    expect(jornada.detalles?.length).toBe(9);
+    expect(jornada.detalles?.length).toBe(10);
 
     // Cerrar jornada
     const cerrada = await TesoreriaService.cerrarJornada(

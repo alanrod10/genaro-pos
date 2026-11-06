@@ -64,9 +64,9 @@ export function formatearCategoriaVisual(categoria: string): string {
   return categoria;
 }
 
-/** Mapea visualmente la unidad en el precio base ($X / unidad, $X / kg, $X / 100 g) respetando la base real del catálogo */
+/** Mapea visualmente la unidad en el precio base ($X, $X / kg, $X / 100 g) respetando la base real del catálogo sin sufijo redundante / unidad */
 export function formatearUnidadVisual(unidad?: string | null, nombre?: string | null): string {
-  if (!unidad || !unidad.trim()) return "Unidad pendiente de configuración";
+  if (!unidad || !unidad.trim()) return "";
   const u = unidad.trim().toUpperCase();
   const n = (nombre || "").toLowerCase();
   if (n.includes("x100gr") || n.includes("x 100gr") || u === "100G" || u === "100 G" || u === "100GR") {
@@ -75,22 +75,22 @@ export function formatearUnidadVisual(unidad?: string | null, nombre?: string | 
   if (u === "KG" || u === "KILO" || u === "KILOGRAMO" || u === "GRAMOS" || u === "GR") {
     return "/ kg";
   }
-  if (u === "UNIDAD" || u === "UN" || u === "U") return "/ unidad";
+  if (u === "UNIDAD" || u === "UN" || u === "U") return "";
   if (u === "HOJA") return "/ hoja";
   if (u === "PAQUETE") return "/ paquete";
   return `/ ${unidad.trim()}`;
 }
 
-/** Mapea visualmente la etiqueta de unidad según corresponda */
+/** Mapea visualmente la etiqueta de unidad según corresponda (omitiendo la redundante "Unidad") */
 export function formatearEtiquetaUnidad(unidad?: string | null, nombre?: string | null): string {
-  if (!unidad || !unidad.trim()) return "Sin config.";
+  if (!unidad || !unidad.trim()) return "";
   const u = unidad.trim().toUpperCase();
   const n = (nombre || "").toLowerCase();
   if (n.includes("x100gr") || n.includes("x 100gr") || u === "100G" || u === "100 G" || u === "100GR") {
     return "100 g";
   }
   if (u === "KG" || u === "KILO" || u === "GRAMOS" || u === "GR") return "Al peso (kg)";
-  if (u === "UNIDAD" || u === "UN") return "Unidad";
+  if (u === "UNIDAD" || u === "UN" || u === "U") return "";
   return unidad.trim();
 }
 
@@ -121,6 +121,7 @@ export const ProductCatalog: React.FC<ProductCatalogProps> = ({
     if (resetSearchTrigger !== undefined && resetSearchTrigger > 0) {
       setBusqueda("");
       scannerBufferRef.current = "";
+      searchInputRef.current?.focus();
     }
   }, [resetSearchTrigger]);
 
@@ -443,12 +444,15 @@ export const ProductCatalog: React.FC<ProductCatalogProps> = ({
                   onSelectProduct(prod);
                   setBusqueda("");
                   scannerBufferRef.current = "";
+                  searchInputRef.current?.focus();
                 }}
                 data-testid={`prod-card-${prod.id_producto}`}
               >
                 <div className="product-card-header">
                   <span className="product-category-tag">{formatearCategoriaVisual(prod.categoria)}</span>
-                  <span className="product-unit-tag">{formatearEtiquetaUnidad(prod.unidad, prod.nombre)}</span>
+                  {formatearEtiquetaUnidad(prod.unidad, prod.nombre) ? (
+                    <span className="product-unit-tag">{formatearEtiquetaUnidad(prod.unidad, prod.nombre)}</span>
+                  ) : null}
                 </div>
                 <div className="product-name">
                   {coincideNombre ? (
@@ -464,7 +468,9 @@ export const ProductCatalog: React.FC<ProductCatalogProps> = ({
                   <div className="product-price">
                     <span className="currency">$</span>
                     <span className="amount">{precioActual.toLocaleString("es-AR")}</span>
-                    <span className="price-unit-base">{formatearUnidadVisual(prod.unidad, prod.nombre)}</span>
+                    {formatearUnidadVisual(prod.unidad, prod.nombre) ? (
+                      <span className="price-unit-base"> {formatearUnidadVisual(prod.unidad, prod.nombre)}</span>
+                    ) : null}
                   </div>
                   <span className="btn-add-badge" aria-hidden="true">+</span>
                 </div>

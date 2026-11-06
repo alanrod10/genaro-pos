@@ -98,6 +98,7 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
   // Guardar formulario
   const handleSave = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (isSaving) return;
     setFormError(null);
 
     const nomLimpio = formNombre.trim();
@@ -135,6 +136,7 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
         const res = await api.editarProducto(editingProduct.id_producto, payload);
         if (res.status === 200 && res.data) {
           onAddToast(`Producto "${res.data.nombre}" actualizado correctamente.`, "success");
+          setIsSaving(false);
           setIsModalOpen(false);
           await onRefresh();
         } else {
@@ -145,6 +147,7 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
         const res = await api.crearProducto(payload);
         if (res.status === 201 && res.data) {
           onAddToast(`Producto "${res.data.nombre}" añadido al catálogo.`, "success");
+          setIsSaving(false);
           setIsModalOpen(false);
           await onRefresh();
         } else {
@@ -153,9 +156,9 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error inesperado al guardar.";
-      setFormError(msg);
+      if (typeof window !== "undefined") setFormError(msg);
     } finally {
-      setIsSaving(false);
+      if (typeof window !== "undefined") setIsSaving(false);
     }
   };
 

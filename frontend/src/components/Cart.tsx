@@ -147,7 +147,7 @@ export const Cart: React.FC<CartProps> = ({
                       </>
                     ) : (
                       <span>
-                        ${item.precio.toLocaleString("es-AR")} c/u ({item.unidad})
+                        ${item.precio.toLocaleString("es-AR")} c/u{item.unidad && !["unidad", "unidades", "u", "un"].includes(item.unidad.toLowerCase().trim()) ? ` (${item.unidad})` : ""}
                       </span>
                     )}
                   </div>

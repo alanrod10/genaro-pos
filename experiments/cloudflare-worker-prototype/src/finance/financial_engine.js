@@ -24,15 +24,19 @@ export function calcularCargoServicio(montoCapital, tipoServicio = "PREPAY") {
   return Math.ceil(montoCapital / 2000) * 100;
 }
 
-export function clasificarServicio(tipoServicio) {
+export function clasificarServicio(tipoServicio, plataformaOrigen = null) {
   const t = (tipoServicio || "").trim().toUpperCase();
-  if (t.includes("CLARO")) {
+  const plat = (plataformaOrigen || "").trim().toUpperCase();
+  if (t.includes("CLARO") || plat === "CLARO COMERCIOS") {
     return { categoria: "CLARO", cajaCapital: "CAJA_E" };
   }
-  if (t.includes("SUBE")) {
+  if (
+    t.includes("SUBE") &&
+    (t.includes("MP") || t.includes("MERCADO") || plat === "MERCADO PAGO")
+  ) {
     return { categoria: "SUBE_MP", cajaCapital: "MERCADO_PAGO" };
   }
-  // Por defecto recargas PREPAY (Personal, Movistar, Tuenti, etc.)
+  // Por defecto recargas PREPAY (SUBE Prepay, Personal, Movistar, PREPAY, etc.)
   return { categoria: "PREPAY", cajaCapital: "CAJA_B" };
 }
 

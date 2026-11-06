@@ -731,8 +731,17 @@ export const PreventistasAdmin: React.FC<PreventistasAdminProps> = ({
                 </table>
               </div>
 
-              {/* Botón Guardar Cambios */}
-              <div className="guardar-precios-bar">
+              {/* Barra fija (sticky) de confirmación de precios */}
+              <div
+                className={`guardar-precios-bar ${
+                  productosProveedor.some((p) => p.editado) ? "has-changes" : ""
+                }`}
+              >
+                <span className="guardar-precios-status">
+                  {productosProveedor.filter((p) => p.editado).length > 0
+                    ? `✏️ ${productosProveedor.filter((p) => p.editado).length} producto(s) con precios modificados pendientes de confirmar`
+                    : "Editá el costo o precio de venta en la tabla y pulsá el botón para confirmar"}
+                </span>
                 <button
                   type="button"
                   className="btn-guardar-precios-lote"

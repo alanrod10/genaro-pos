@@ -113,6 +113,7 @@ describe("TesoreriaLab — Pestaña de Saldos Iniciales / Apertura", () => {
         motivo: "Fondo de cambio para inicio operativo",
         referencia_autorizacion: undefined,
       });
+      expect(screen.queryByTestId("modal-configurar-apertura")).not.toBeInTheDocument();
     });
   });
 });

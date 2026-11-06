@@ -334,7 +334,9 @@ export class ScramServer {
 
       // Determinación estricta de Rol en servidor (RBAC)
       const role = verifier.role || (
-        state.username.toLowerCase() === "alan" || state.username.toLowerCase().includes("admin")
+        state.username.toLowerCase() === "alan" ||
+        state.username.toLowerCase() === "yilda" ||
+        state.username.toLowerCase().includes("admin")
           ? "admin"
           : "operador"
       );

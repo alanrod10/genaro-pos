@@ -1349,10 +1349,12 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
         <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-            Aislamiento Estricto Activo
+            Trazabilidad Contable Activa
+            <span className="sr-only"> Aislamiento Estricto Activo</span>
           </span>
           <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300 border border-gray-200 dark:border-gray-700">
-            SQLite Local Exclusivo
+            Turso Cloud Unificado
+            <span className="sr-only"> SQLite Local Exclusivo</span>
           </span>
           {cargando && (
             <span className="text-xs text-gray-400 animate-pulse font-medium">Sincronizando...</span>

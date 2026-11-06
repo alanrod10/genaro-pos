@@ -5,6 +5,14 @@
  */
 
 import { clasificarServicio } from "../finance/financial_engine.js";
+import {
+  tesoreriaEstaActivaWorker,
+  solicitarPreReservaPrepayWorker,
+  confirmarPreReservaComercialWorker,
+  cancelarPreReservaPrepayWorker,
+  aplicarLiquidacionPrepayOutboxWorker,
+  ejecutarCircuitoServicioTesoreriaWorker,
+} from "./tesoreria_worker.js";
 
 export function normalizarFechaIsoJujuy(fechaStr = null) {
   if (fechaStr && typeof fechaStr === "string") {
@@ -885,9 +893,44 @@ export async function registrarCargaIdempotente(client, { servicio, usuario, ide
     throw new Error("INVALID_INPUT: La suma de pago en efectivo y transferencia debe igualar el total cobrado.");
   }
 
-  const tipo = String(servicio.servicio || servicio.tipo_servicio || "").trim();
-  if (!tipo) {
+  const tipoRaw = String(servicio.servicio || servicio.tipo_servicio || servicio.servicio_destino || "").trim();
+  if (!tipoRaw) {
     throw new Error("INVALID_INPUT: El nombre del servicio es obligatorio.");
+  }
+
+  const MAPA_SERVICIOS_VALIDOS = {
+    "PREPAY": ["SUBE", "Personal", "Movistar", "Claro"],
+    "CLARO COMERCIOS": ["Claro"],
+    "MERCADO PAGO": ["PREPAY", "SUBE", "Personal", "Movistar", "Claro"],
+  };
+  const SERVICIOS_PROHIBIDOS = new Set(["DIRECTV", "TUENTI", "OTRO", "RECARGA VIRTUAL"]);
+
+  if (SERVICIOS_PROHIBIDOS.has(tipoRaw.toUpperCase())) {
+    throw new Error(`UNPROCESSABLE: El servicio '${tipoRaw}' no se encuentra habilitado en la matriz oficial.`);
+  }
+
+  let plataformaOrigen = servicio.plataforma_origen !== undefined && servicio.plataforma_origen !== null && String(servicio.plataforma_origen).trim() !== ""
+    ? String(servicio.plataforma_origen).trim().toUpperCase()
+    : null;
+  let servicioDestino = servicio.servicio_destino !== undefined && servicio.servicio_destino !== null && String(servicio.servicio_destino).trim() !== ""
+    ? String(servicio.servicio_destino).trim()
+    : null;
+  let tipo = tipoRaw;
+
+  if (plataformaOrigen !== null || servicioDestino !== null) {
+    if (!plataformaOrigen || !servicioDestino) {
+      throw new Error("UNPROCESSABLE: Debe especificar tanto plataforma_origen como servicio_destino.");
+    }
+    if (!MAPA_SERVICIOS_VALIDOS[plataformaOrigen]) {
+      throw new Error(`UNPROCESSABLE: Plataforma de origen '${plataformaOrigen}' inválida. Opciones válidas: PREPAY, CLARO COMERCIOS, MERCADO PAGO.`);
+    }
+    const permitidos = MAPA_SERVICIOS_VALIDOS[plataformaOrigen];
+    const matchDest = permitidos.find(d => d.toUpperCase() === servicioDestino.toUpperCase());
+    if (!matchDest) {
+      throw new Error(`UNPROCESSABLE: Combinación inválida: el servicio '${servicioDestino}' no está habilitado para la plataforma '${plataformaOrigen}'.`);
+    }
+    servicioDestino = matchDest;
+    tipo = matchDest;
   }
 
   if (key) {
@@ -908,15 +951,86 @@ export async function registrarCargaIdempotente(client, { servicio, usuario, ide
     }
   }
 
-  const plataformaOrigen = servicio.plataforma_origen ? String(servicio.plataforma_origen).trim().toUpperCase() : null;
-  const servicioDestino = servicio.servicio_destino ? String(servicio.servicio_destino).trim().toUpperCase() : null;
+  const fechaOpJujuy = normalizarFechaIsoJujuy(servicio.fecha_hora_utc || nowUtc);
+  const tesoreriaActiva = await tesoreriaEstaActivaWorker(client, servicio);
+  const coordKey = key || `SRV_${crypto.randomUUID()}`;
 
-  const res = await client.execute({
-    sql: `INSERT INTO cargas_servicios (fecha_hora_utc, servicio, monto_carga, monto_adicional, total_cobrado, pago_efectivo, pago_transferencia, anulado, idempotency_key, plataforma_origen, servicio_destino)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?);`,
-    args: [nowUtc, tipo, montoCarga, montoAdicional, totalCobrado, pagoEfvo, pagoTransf, key, plataformaOrigen, servicioDestino],
-  });
-  const cargaId = Number(res.lastInsertRowid) || 1;
+  if (tesoreriaActiva && plataformaOrigen === "PREPAY") {
+    await solicitarPreReservaPrepayWorker(client, {
+      servicioDestino: servicioDestino || tipo,
+      montoCarga,
+      montoAdicional,
+      pagoEfvo,
+      pagoTransf,
+      fechaOp: fechaOpJujuy,
+      idempotencyKey: coordKey,
+      usuario: usuario || "sistema",
+    });
+  }
+
+  let cargaId;
+  try {
+    if (servicio._simulate_interrupt_after_reservation) {
+      throw new Error("INTERRUPTED_AFTER_RESERVATION: Fallo simulado antes de confirmar carga comercial.");
+    }
+    const res = await client.execute({
+      sql: `INSERT INTO cargas_servicios (fecha_hora_utc, servicio, monto_carga, monto_adicional, total_cobrado, pago_efectivo, pago_transferencia, anulado, idempotency_key, plataforma_origen, servicio_destino)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?);`,
+      args: [nowUtc, tipo, montoCarga, montoAdicional, totalCobrado, pagoEfvo, pagoTransf, key, plataformaOrigen, servicioDestino],
+    });
+    cargaId = Number(res.lastInsertRowid) || 1;
+  } catch (err) {
+    if (tesoreriaActiva && plataformaOrigen === "PREPAY" && !servicio._keep_orphan_reservation) {
+      await cancelarPreReservaPrepayWorker(client, {
+        idempotencyKey: coordKey,
+        motivo: `Fallo en commit comercial: ${err.message}`,
+        usuario: usuario || "sistema",
+      }).catch(() => {});
+    }
+    throw err;
+  }
+
+  let tesoreriaMovementId = null;
+  if (tesoreriaActiva && plataformaOrigen === "PREPAY") {
+    await confirmarPreReservaComercialWorker(client, {
+      idempotencyKey: coordKey,
+      cargaId,
+      servicio: tipo,
+      plataformaOrigen,
+      servicioDestino: servicioDestino || tipo,
+      montoCarga,
+      montoAdicional,
+      totalCobrado,
+      pagoEfvo,
+      pagoTransf,
+      fechaOp: fechaOpJujuy,
+      usuario: usuario || "sistema",
+    });
+    if (!servicio._simulate_interrupt_after_commercial_commit) {
+      const applied = await aplicarLiquidacionPrepayOutboxWorker(client, {
+        idempotencyKey: coordKey,
+        usuario: usuario || "sistema",
+        simulateOutboxError: Boolean(servicio._simulate_outbox_error),
+      });
+      tesoreriaMovementId = applied?.primary_movement_id || null;
+    }
+  } else if (tesoreriaActiva && plataformaOrigen) {
+    tesoreriaMovementId = await ejecutarCircuitoServicioTesoreriaWorker(
+      client,
+      {
+        cargaId,
+        plataformaOrigen,
+        servicioDestino: servicioDestino || tipo,
+        montoCarga,
+        montoAdicional,
+        pagoEfvo,
+        pagoTransf,
+        fechaOp: fechaOpJujuy,
+      },
+      usuario || "sistema",
+      coordKey
+    );
+  }
 
   await client
     .execute({
@@ -925,6 +1039,37 @@ export async function registrarCargaIdempotente(client, { servicio, usuario, ide
       args: [cargaId, JSON.stringify(servicio), nowUtc, usuario || "sistema"],
     })
     .catch(() => {});
+
+  if (!(tesoreriaActiva && plataformaOrigen === "PREPAY")) {
+    await client
+      .execute({
+        sql: `INSERT OR IGNORE INTO commercial_events_outbox (
+                event_id, event_type, entity_type, entity_id, action_type,
+                idempotency_key, payload_canonical_hash, payload, status,
+                tesoreria_movement_id, created_at, updated_at, published_at
+              ) VALUES (?, 'SERVICE_CREATED', 'SERVICE_LOAD', ?, 'CREATE', ?, ?, ?, 'PUBLISHED', ?, ?, ?, ?);`,
+        args: [
+          crypto.randomUUID(),
+          String(cargaId),
+          coordKey,
+          `HASH_SRV_${cargaId}`,
+          JSON.stringify({
+            id: cargaId,
+            servicio: tipo,
+            plataforma_origen: plataformaOrigen,
+            servicio_destino: servicioDestino,
+            monto_carga: montoCarga,
+            monto_adicional: montoAdicional,
+            total_cobrado: totalCobrado,
+          }),
+          tesoreriaMovementId,
+          nowUtc,
+          nowUtc,
+          nowUtc,
+        ],
+      })
+      .catch(() => {});
+  }
 
   return mapearFilaServicio(
     {
@@ -982,7 +1127,7 @@ export async function obtenerResumenServicios(client, { fecha = null } = {}) {
   const { desdeUtc, hastaUtc } = obtenerRangoUtcDiaJujuy(fecha);
   const rs = await client.execute({
     sql: `
-      SELECT servicio, monto_carga, monto_adicional, total_cobrado, pago_efectivo, pago_transferencia, anulado
+      SELECT servicio, monto_carga, monto_adicional, total_cobrado, pago_efectivo, pago_transferencia, anulado, plataforma_origen, servicio_destino
       FROM cargas_servicios
       WHERE fecha_hora_utc >= ? AND fecha_hora_utc <= ?;
     `,
@@ -1018,7 +1163,7 @@ export async function obtenerResumenServicios(client, { fecha = null } = {}) {
     totalEfectivo += efv;
     totalTransferencia += trf;
 
-    const { categoria } = clasificarServicio(r.servicio);
+    const { categoria } = clasificarServicio(r.servicio, r.plataforma_origen);
     if (categoria === "CLARO") {
       capitalClaro += cap;
     } else if (categoria === "SUBE_MP") {
@@ -1115,19 +1260,47 @@ export async function editarCargaServicio(client, cargaId, datos, usuario) {
     throw new Error("INVALID_INPUT: pago_efvo + pago_transf debe igualar total_cobrado.");
   }
 
-  const nuevaPlat = datos.plataforma_origen !== undefined
+  const MAPA_SERVICIOS_VALIDOS = {
+    "PREPAY": ["SUBE", "Personal", "Movistar", "Claro"],
+    "CLARO COMERCIOS": ["Claro"],
+    "MERCADO PAGO": ["PREPAY", "SUBE", "Personal", "Movistar", "Claro"],
+  };
+  const SERVICIOS_PROHIBIDOS = new Set(["DIRECTV", "TUENTI", "OTRO", "RECARGA VIRTUAL"]);
+
+  if (datos.servicio !== undefined && SERVICIOS_PROHIBIDOS.has(nuevoServicio.toUpperCase())) {
+    throw new Error(`INVALID_INPUT: El servicio '${nuevoServicio}' no se encuentra habilitado en la matriz oficial.`);
+  }
+
+  let nuevaPlat = datos.plataforma_origen !== undefined
     ? (datos.plataforma_origen ? String(datos.plataforma_origen).trim().toUpperCase() : null)
     : (actual.plataforma_origen || null);
-  const nuevoDest = datos.servicio_destino !== undefined
-    ? (datos.servicio_destino ? String(datos.servicio_destino).trim().toUpperCase() : null)
+  let nuevoDest = datos.servicio_destino !== undefined
+    ? (datos.servicio_destino ? String(datos.servicio_destino).trim() : null)
     : (actual.servicio_destino || null);
+  let servicioFinal = nuevoServicio;
+
+  if (nuevaPlat !== null || nuevoDest !== null) {
+    if (!nuevaPlat || !nuevoDest) {
+      throw new Error("INVALID_INPUT: Combinación incompleta: debe especificar tanto la plataforma de origen como el servicio de destino.");
+    }
+    if (!MAPA_SERVICIOS_VALIDOS[nuevaPlat]) {
+      throw new Error(`INVALID_INPUT: Plataforma de origen '${nuevaPlat}' inválida.`);
+    }
+    const permitidos = MAPA_SERVICIOS_VALIDOS[nuevaPlat];
+    const matchDest = permitidos.find(d => d.toUpperCase() === nuevoDest.toUpperCase());
+    if (!matchDest) {
+      throw new Error(`INVALID_INPUT: Combinación inválida: el servicio '${nuevoDest}' no está disponible para la plataforma '${nuevaPlat}'.`);
+    }
+    nuevoDest = matchDest;
+    servicioFinal = matchDest;
+  }
 
   await client.batch([
     {
       sql: `UPDATE cargas_servicios
             SET servicio = ?, monto_carga = ?, monto_adicional = ?, total_cobrado = ?, pago_efectivo = ?, pago_transferencia = ?, plataforma_origen = ?, servicio_destino = ?
             WHERE id = ?;`,
-      args: [nuevoServicio, nuevoMontoCarga, nuevoAdicional, nuevoTotal, nuevoEfvo, nuevoTransf, nuevaPlat, nuevoDest, cargaId],
+      args: [servicioFinal, nuevoMontoCarga, nuevoAdicional, nuevoTotal, nuevoEfvo, nuevoTransf, nuevaPlat, nuevoDest, cargaId],
     },
     {
       sql: `INSERT INTO cargas_servicios_auditoria (carga_id, accion, valores_anteriores, valores_nuevos, fecha_utc, actor)
@@ -1433,8 +1606,7 @@ export async function calcularArqueoDiario(client, fechaStr = null) {
       args: [desdeUtc, hastaUtc],
     }),
     client.execute({
-      sql: `SELECT
-              servicio, monto_carga, monto_adicional, total_cobrado, pago_efectivo, pago_transferencia
+      sql: `SELECT *
             FROM cargas_servicios
             WHERE anulado = 0 AND fecha_hora_utc >= ? AND fecha_hora_utc <= ?;`,
       args: [desdeUtc, hastaUtc],
@@ -1475,7 +1647,7 @@ export async function calcularArqueoDiario(client, fechaStr = null) {
     servTransf += trf;
     adicionalesGanancia += adic;
 
-    const { categoria } = clasificarServicio(r.servicio);
+    const { categoria } = clasificarServicio(r.servicio, r.plataforma_origen);
     if (categoria === "CLARO") {
       capitalClaro += cap;
     } else if (categoria === "SUBE_MP") {
@@ -1939,7 +2111,39 @@ export async function cambiarEstadoPedido(client, pedidoId, nuevoEstado, observa
 }
 
 // --- Módulo Dashboard Financiero ---
-export async function calcularMetricasDashboard(client, { desde = null, hasta = null } = {}) {
+export async function calcularMetricasDashboard(client, { desde = null, hasta = null, periodo = null } = {}) {
+  const hoyJujuy = normalizarFechaIsoJujuy(null);
+  const periodoNorm = (periodo || "").trim().toLowerCase();
+  const periodoTipo = periodoNorm || (desde || hasta ? "personalizado" : "hoy");
+
+  let desdeFinal = desde ? normalizarFechaIsoJujuy(desde) : null;
+  let hastaFinal = hasta ? normalizarFechaIsoJujuy(hasta) : null;
+
+  if (!desdeFinal && !hastaFinal && periodoNorm) {
+    const [y, m, d] = hoyJujuy.split("-").map(Number);
+    const pad = (n) => String(n).padStart(2, "0");
+    if (periodoNorm === "ultimos_7_dias") {
+      const dt = new Date(Date.UTC(y, m - 1, d - 6));
+      desdeFinal = `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
+      hastaFinal = hoyJujuy;
+    } else if (periodoNorm === "ultimos_30_dias") {
+      const dt = new Date(Date.UTC(y, m - 1, d - 29));
+      desdeFinal = `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
+      hastaFinal = hoyJujuy;
+    } else {
+      desdeFinal = hoyJujuy;
+      hastaFinal = hoyJujuy;
+    }
+  } else if (desdeFinal || hastaFinal) {
+    if (!desdeFinal) desdeFinal = hastaFinal;
+    if (!hastaFinal) hastaFinal = desdeFinal;
+    if (desdeFinal > hastaFinal) {
+      const tmp = desdeFinal;
+      desdeFinal = hastaFinal;
+      hastaFinal = tmp;
+    }
+  }
+
   let filtroTickets = "";
   let filtroFechaSimple = "";
   let filtroCierres = "";
@@ -1947,33 +2151,74 @@ export async function calcularMetricasDashboard(client, { desde = null, hasta = 
   const argsSimple = [];
   const argsCierres = [];
 
-  if (desde) {
-    const { desdeUtc } = obtenerRangoUtcDiaJujuy(desde);
+  if (desdeFinal) {
+    const { desdeUtc } = obtenerRangoUtcDiaJujuy(desdeFinal);
     filtroTickets += " AND t.fecha_hora_utc >= ?";
     filtroFechaSimple += " AND fecha_hora_utc >= ?";
     filtroCierres += " AND fecha >= ?";
     argsTickets.push(desdeUtc);
     argsSimple.push(desdeUtc);
-    argsCierres.push(desde);
+    argsCierres.push(desdeFinal);
   }
-  if (hasta) {
-    const { hastaUtc } = obtenerRangoUtcDiaJujuy(hasta);
+  if (hastaFinal) {
+    const { hastaUtc } = obtenerRangoUtcDiaJujuy(hastaFinal);
     filtroTickets += " AND t.fecha_hora_utc <= ?";
     filtroFechaSimple += " AND fecha_hora_utc <= ?";
     filtroCierres += " AND fecha <= ?";
     argsTickets.push(hastaUtc);
     argsSimple.push(hastaUtc);
-    argsCierres.push(hasta);
+    argsCierres.push(hastaFinal);
   }
 
+  // Generar lista de días para serie temporal (máximo 31 días)
+  const diasSerie = [];
+  try {
+    const [sy, sm, sd] = desdeFinal.split("-").map(Number);
+    const [ey, em, ed] = hastaFinal.split("-").map(Number);
+    let curr = new Date(Date.UTC(sy, sm - 1, sd));
+    const end = new Date(Date.UTC(ey, em - 1, ed));
+    const pad = (n) => String(n).padStart(2, "0");
+    let count = 0;
+    while (curr <= end && count <= 31) {
+      diasSerie.push(`${curr.getUTCFullYear()}-${pad(curr.getUTCMonth() + 1)}-${pad(curr.getUTCDate())}`);
+      curr = new Date(curr.getTime() + 86400000);
+      count += 1;
+    }
+  } catch {
+    diasSerie.push(hoyJujuy);
+  }
+  if (diasSerie.length === 0) {
+    diasSerie.push(hoyJujuy);
+  }
+
+  const serieMap = {};
+  for (const dIso of diasSerie) {
+    serieMap[dIso] = {
+      ventas_total: 0,
+      servicios_total: 0,
+      gastos_total: 0,
+      adicionales_ganancia: 0,
+      ventas_transf: 0,
+      recargas_transf: 0,
+      sube_mp_capital: 0,
+      gastos_transf: 0,
+    };
+  }
+
+  const utcToJujuyDateIso = (utcStr) => {
+    if (!utcStr) return hoyJujuy;
+    const s = String(utcStr).trim();
+    const parsed = new Date(s.includes("T") ? s : s.replace(" ", "T") + (s.endsWith("Z") ? "" : "Z"));
+    if (Number.isNaN(parsed.getTime())) return s.slice(0, 10);
+    const dt = new Date(parsed.getTime() - 3 * 60 * 60 * 1000);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`;
+  };
+
   // Caja A: Ventas de productos con costo congelado en ticket_items (fallback a productos.costo solo si NULL)
-  const [rsTicketsHeader, rsTicketItems, rsServicios, rsGastos, rsCierres] = await Promise.all([
+  const [rsTicketsRows, rsTicketItems, rsServicios, rsGastosRows, rsCierres] = await Promise.all([
     client.execute({
-      sql: `SELECT
-              COUNT(*) as cantidad_tickets,
-              COALESCE(SUM(t.total_venta), 0) as total_ventas,
-              COALESCE(SUM(t.monto_efectivo), 0) as ventas_efectivo,
-              COALESCE(SUM(t.monto_transferencia), 0) as ventas_transferencia
+      sql: `SELECT t.id, t.fecha_hora_utc, t.total_venta, t.monto_efectivo, t.monto_transferencia
             FROM tickets t
             WHERE t.anulado = 0 ${filtroTickets};`,
       args: argsTickets,
@@ -1990,21 +2235,13 @@ export async function calcularMetricasDashboard(client, { desde = null, hasta = 
       args: argsTickets,
     }),
     client.execute({
-      sql: `SELECT servicio, monto_carga, monto_adicional, total_cobrado, pago_efectivo, pago_transferencia
+      sql: `SELECT *
             FROM cargas_servicios
             WHERE anulado = 0 ${filtroFechaSimple};`,
       args: argsSimple,
     }),
     client.execute({
-      sql: `SELECT
-              COUNT(*) as cantidad_movimientos,
-              COALESCE(SUM(monto_salida), 0) as total_salidas,
-              COALESCE(SUM(CASE WHEN metodo_pago = 'EFECTIVO' THEN monto_salida ELSE 0 END), 0) as salidas_efectivo,
-              COALESCE(SUM(CASE WHEN metodo_pago = 'TRANSFERENCIA' THEN monto_salida ELSE 0 END), 0) as salidas_transferencia,
-              COALESCE(SUM(CASE WHEN tipo = 'Gasto Operativo' THEN monto_salida ELSE 0 END), 0) as gastos_operativos,
-              COALESCE(SUM(CASE WHEN tipo = 'Pago a Proveedor' THEN monto_salida ELSE 0 END), 0) as pagos_proveedores,
-              COALESCE(SUM(CASE WHEN tipo = 'Retiro de Caja' THEN monto_salida ELSE 0 END), 0) as retiros_caja,
-              COALESCE(SUM(CASE WHEN tipo = 'Otros' THEN monto_salida ELSE 0 END), 0) as otros_gastos
+      sql: `SELECT fecha_hora_utc, monto_salida, metodo_pago, tipo
             FROM gastos_retiros
             WHERE anulado = 0 ${filtroFechaSimple};`,
       args: argsSimple,
@@ -2015,14 +2252,29 @@ export async function calcularMetricasDashboard(client, { desde = null, hasta = 
     }),
   ]);
 
-  const th = rsTicketsHeader.rows[0] || {};
   const ti = rsTicketItems.rows[0] || {};
-  const gs = rsGastos.rows[0] || {};
 
-  const cantidadTickets = Number(th.cantidad_tickets) || 0;
-  const ventasBrutas = Number(th.total_ventas) || 0;
-  const ventasEfectivo = Number(th.ventas_efectivo) || 0;
-  const ventasTransferencia = Number(th.ventas_transferencia) || 0;
+  let cantidadTickets = 0;
+  let ventasBrutas = 0;
+  let ventasEfectivo = 0;
+  let ventasTransferencia = 0;
+
+  for (const trow of rsTicketsRows.rows) {
+    cantidadTickets += 1;
+    const tot = Number(trow.total_venta) || 0;
+    const efv = Number(trow.monto_efectivo) || 0;
+    const trf = Number(trow.monto_transferencia) || 0;
+    ventasBrutas += tot;
+    ventasEfectivo += efv;
+    ventasTransferencia += trf;
+
+    const fIso = utcToJujuyDateIso(trow.fecha_hora_utc);
+    if (serieMap[fIso]) {
+      serieMap[fIso].ventas_total += tot;
+      serieMap[fIso].ventas_transf += trf;
+    }
+  }
+
   const costoMercaderia = Number(ti.costo_estimado) || 0;
   const gananciaBrutaProductos = ventasBrutas - costoMercaderia;
   const margenBrutoPct = ventasBrutas > 0 ? Number(((gananciaBrutaProductos / ventasBrutas) * 100).toFixed(1)) : 0;
@@ -2049,6 +2301,7 @@ export async function calcularMetricasDashboard(client, { desde = null, hasta = 
   let eCount = 0;
 
   let subeMpCapital = 0;
+  const desgloseServiciosMap = {};
 
   for (const r of rsServicios.rows) {
     cantidadCargas += 1;
@@ -2072,7 +2325,7 @@ export async function calcularMetricasDashboard(client, { desde = null, hasta = 
     cEfvo += adicEfvo;
     cTransf += adicTransf;
 
-    const { categoria } = clasificarServicio(r.servicio);
+    const { categoria } = clasificarServicio(r.servicio, r.plataforma_origen);
     if (categoria === "CLARO") {
       eTotal += cap;
       eEfvo += capEfvo;
@@ -2086,16 +2339,113 @@ export async function calcularMetricasDashboard(client, { desde = null, hasta = 
       bTransf += capTransf;
       bCount += 1;
     }
+
+    const srvNombre = String(r.servicio_destino || r.servicio || "Servicio").trim();
+    const tieneOrigenExplicito = Boolean(r.plataforma_origen && String(r.plataforma_origen).trim());
+    const platOrigen = tieneOrigenExplicito
+      ? String(r.plataforma_origen).trim()
+      : "Histórico (sin origen especificado)";
+    const keyDesglose = `${platOrigen}::${srvNombre}`;
+    if (!desgloseServiciosMap[keyDesglose]) {
+      desgloseServiciosMap[keyDesglose] = {
+        plataforma_origen: platOrigen,
+        servicio_destino: srvNombre,
+        categoria,
+        cantidad_operaciones: 0,
+        capital_total: 0,
+        adicional_total: 0,
+        total_cobrado: 0,
+        cobrado_efectivo: 0,
+        cobrado_transferencia: 0,
+        medio_pago: "EFECTIVO",
+        fondo_receptor: "",
+        cuenta_utilizada:
+          platOrigen === "CLARO COMERCIOS" || categoria === "CLARO"
+            ? "1230 — Claro Comercios Digital"
+            : platOrigen === "MERCADO PAGO" || categoria === "SUBE_MP"
+            ? "1210 — Mercado Pago Propio"
+            : "1220 — PREPAY Digital",
+      };
+    }
+    desgloseServiciosMap[keyDesglose].cantidad_operaciones += 1;
+    desgloseServiciosMap[keyDesglose].capital_total += cap;
+    desgloseServiciosMap[keyDesglose].adicional_total += adic;
+    desgloseServiciosMap[keyDesglose].total_cobrado += cob;
+    desgloseServiciosMap[keyDesglose].cobrado_efectivo += efv;
+    desgloseServiciosMap[keyDesglose].cobrado_transferencia += trf;
+    const totEfvo = desgloseServiciosMap[keyDesglose].cobrado_efectivo;
+    const totTrf = desgloseServiciosMap[keyDesglose].cobrado_transferencia;
+    desgloseServiciosMap[keyDesglose].medio_pago =
+      totEfvo > 0 && totTrf > 0 ? "MIXTO" : totTrf > 0 ? "TRANSFERENCIA" : "EFECTIVO";
+    if (platOrigen === "CLARO COMERCIOS" || categoria === "CLARO") {
+      desgloseServiciosMap[keyDesglose].fondo_receptor =
+        totEfvo > 0 && totTrf > 0
+          ? "1150 (Claro físico) + 1140 (Adicionales) / 1210 (Mercado Pago)"
+          : totTrf > 0
+          ? "1210 (Mercado Pago Propio)"
+          : "1150 (Claro físico) + 1140 (Adicionales)";
+    } else if (platOrigen === "MERCADO PAGO" || categoria === "SUBE_MP") {
+      desgloseServiciosMap[keyDesglose].fondo_receptor =
+        totEfvo > 0 && totTrf > 0
+          ? "1110 (Drugstore diario) + 1140 (Adicionales) / 1210 (Mercado Pago)"
+          : totTrf > 0
+          ? "1210 (Mercado Pago Propio)"
+          : "1110 (Drugstore diario) + 1140 (Adicionales)";
+    } else {
+      desgloseServiciosMap[keyDesglose].fondo_receptor =
+        totEfvo > 0 && totTrf > 0
+          ? "1160 (PREPAY diario) + 1140 (Adicionales) / 1210 (MP) + Comp. 1120 → 1130"
+          : totTrf > 0
+          ? "1210 (Mercado Pago) + Compensación 1120 → 1130"
+          : "1160 (PREPAY diario) + 1140 (Adicionales)";
+    }
+
+    const fIso = utcToJujuyDateIso(r.fecha_hora_utc);
+    if (serieMap[fIso]) {
+      serieMap[fIso].servicios_total += cob;
+      serieMap[fIso].adicionales_ganancia += adic;
+      serieMap[fIso].recargas_transf += trf;
+      if (categoria === "SUBE_MP") {
+        serieMap[fIso].sube_mp_capital += cap;
+      }
+    }
   }
 
-  const cantidadGastos = Number(gs.cantidad_movimientos) || 0;
-  const totalSalidas = Number(gs.total_salidas) || 0;
-  const salidasEfectivo = Number(gs.salidas_efectivo) || 0;
-  const salidasTransferencia = Number(gs.salidas_transferencia) || 0;
-  const gastosOperativos = Number(gs.gastos_operativos) || 0;
-  const pagosProveedores = Number(gs.pagos_proveedores) || 0;
-  const retirosCaja = Number(gs.retiros_caja) || 0;
-  const otrosGastos = Number(gs.otros_gastos) || 0;
+  let cantidadGastos = 0;
+  let totalSalidas = 0;
+  let salidasEfectivo = 0;
+  let salidasTransferencia = 0;
+  let gastosOperativos = 0;
+  let pagosProveedores = 0;
+  let retirosCaja = 0;
+  let otrosGastos = 0;
+
+  for (const grow of rsGastosRows.rows) {
+    cantidadGastos += 1;
+    const monto = Number(grow.monto_salida) || 0;
+    const metodo = String(grow.metodo_pago || "EFECTIVO").toUpperCase();
+    const tipo = String(grow.tipo || "Otros");
+
+    totalSalidas += monto;
+    if (metodo === "TRANSFERENCIA") {
+      salidasTransferencia += monto;
+    } else {
+      salidasEfectivo += monto;
+    }
+
+    if (tipo === "Gasto Operativo") gastosOperativos += monto;
+    else if (tipo === "Pago a Proveedor") pagosProveedores += monto;
+    else if (tipo === "Retiro de Caja") retirosCaja += monto;
+    else otrosGastos += monto;
+
+    const fIso = utcToJujuyDateIso(grow.fecha_hora_utc);
+    if (serieMap[fIso]) {
+      serieMap[fIso].gastos_total += monto;
+      if (metodo === "TRANSFERENCIA") {
+        serieMap[fIso].gastos_transf += monto;
+      }
+    }
+  }
 
   const gananciaBrutaTotal = gananciaBrutaProductos + gananciaComisiones;
   const resultadoOperativoNeto = gananciaBrutaTotal - gastosOperativos;
@@ -2134,15 +2484,33 @@ export async function calcularMetricasDashboard(client, { desde = null, hasta = 
     diferenciaAcumuladaCierres += c.diferencia;
   }
 
-  const hoyJujuy = normalizarFechaIsoJujuy(null);
+  const serieTemporal = diasSerie.map((dIso) => {
+    const s = serieMap[dIso] || {};
+    const bNeto =
+      (s.ventas_transf || 0) +
+      (s.recargas_transf || 0) -
+      (s.sube_mp_capital || 0) -
+      (s.gastos_transf || 0);
+    const etiqueta = `${dIso.slice(8, 10)}/${dIso.slice(5, 7)}`;
+    return {
+      fecha: dIso,
+      etiqueta,
+      ventas_total: s.ventas_total || 0,
+      servicios_total: s.servicios_total || 0,
+      gastos_total: s.gastos_total || 0,
+      adicionales_ganancia: s.adicionales_ganancia || 0,
+      banco_neto: bNeto,
+    };
+  });
 
   return {
-    periodo_tipo: "personalizado",
-    desde: desde || hoyJujuy,
-    hasta: hasta || hoyJujuy,
+    periodo_tipo: periodoTipo,
+    desde: desdeFinal || hoyJujuy,
+    hasta: hastaFinal || hoyJujuy,
     esquema_completo: true,
     tablas_faltantes: [],
     advertencia_esquema: null,
+    desglose_servicios: Object.values(desgloseServiciosMap),
     caja_a: {
       nombre: "Caja A — Ventas de Productos",
       total_ventas: ventasBrutas,
@@ -2184,7 +2552,7 @@ export async function calcularMetricasDashboard(client, { desde = null, hasta = 
       cobrado_transferencia: serviciosTransferencia,
     },
     caja_c: {
-      nombre: "Caja C — Resultado Operativo del Negocio",
+      nombre: "Caja C — Adicionales Cobrados en Servicios",
       ganancia_adicional_total: gananciaComisiones,
       adicional_efvo: cEfvo,
       adicional_transf: cTransf,
@@ -2200,7 +2568,7 @@ export async function calcularMetricasDashboard(client, { desde = null, hasta = 
       otros_egresos_informativo: otrosGastos,
     },
     caja_d: {
-      nombre: "Caja D — Efectivo Físico en Cajón / Banco",
+      nombre: "Caja D — Flujo Digital / Transferencias del Período",
       ventas_transf: ventasTransferencia,
       recargas_transf: serviciosTransferencia,
       sube_mp_capital: subeMpCapital,
@@ -2214,7 +2582,7 @@ export async function calcularMetricasDashboard(client, { desde = null, hasta = 
       efectivo_neto_esperado: efectivoNetoEsperado,
     },
     caja_e: {
-      nombre: "Caja E — Claro (Solo Capital) / Banco",
+      nombre: "Caja E — Claro (Solo Capital)",
       capital_total: eTotal,
       capital_efvo: eEfvo,
       capital_transf: eTransf,
@@ -2254,7 +2622,7 @@ export async function calcularMetricasDashboard(client, { desde = null, hasta = 
       suma_efectivo_contado_en_cierres: sumaContadoCierres,
       diferencia_acumulada_cierres: diferenciaAcumuladaCierres,
     },
-    serie_temporal: [],
+    serie_temporal: serieTemporal,
     cierres: cierresList,
   };
 }
@@ -2554,6 +2922,248 @@ export async function inicializarEsquemaCompleto(client) {
       saldo_inicial_configurado_por TEXT DEFAULT NULL,
       estado_configuracion TEXT NOT NULL DEFAULT 'INICIAL_CERO'
     );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_fondos_auditoria (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fondo_id INTEGER NOT NULL,
+      codigo TEXT NOT NULL,
+      accion TEXT NOT NULL,
+      usuario TEXT NOT NULL,
+      valores_previos TEXT,
+      valores_nuevos TEXT NOT NULL,
+      motivo TEXT,
+      timestamp_utc TEXT NOT NULL DEFAULT (datetime('now'))
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_jornadas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      numero_jornada INTEGER NOT NULL UNIQUE,
+      estado TEXT NOT NULL DEFAULT 'ABIERTA',
+      fecha_apertura_utc TEXT NOT NULL,
+      abierta_por TEXT NOT NULL,
+      fecha_cierre_utc TEXT,
+      cerrada_por TEXT,
+      observaciones_apertura TEXT,
+      observaciones_cierre TEXT,
+      version INTEGER NOT NULL DEFAULT 1
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_jornada_detalles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      jornada_id INTEGER NOT NULL,
+      fondo_id INTEGER NOT NULL,
+      codigo_fondo TEXT NOT NULL,
+      saldo_apertura_centavos INTEGER NOT NULL,
+      saldo_cierre_esperado_centavos INTEGER,
+      saldo_cierre_arqueado_centavos INTEGER,
+      diferencia_centavos INTEGER,
+      UNIQUE (jornada_id, fondo_id)
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_idempotencia (
+      idempotency_key TEXT PRIMARY KEY,
+      operation_type TEXT NOT NULL,
+      resource_id TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      response_json TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'SUCCESS',
+      created_at TEXT NOT NULL
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_auditoria (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      details_json TEXT NOT NULL,
+      timestamp_utc TEXT NOT NULL
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_movimientos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      movement_id TEXT NOT NULL UNIQUE,
+      idempotency_key TEXT UNIQUE,
+      journal_id INTEGER NOT NULL,
+      fund_id INTEGER NOT NULL,
+      movement_type TEXT NOT NULL,
+      amount_cents INTEGER NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'ARS',
+      counterpart TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      evidence_reference TEXT,
+      created_by TEXT NOT NULL,
+      terminal_id TEXT NOT NULL DEFAULT 'TERM-01',
+      status TEXT NOT NULL DEFAULT 'POSTED',
+      occurred_at TEXT NOT NULL,
+      recorded_at TEXT NOT NULL,
+      is_reversal INTEGER NOT NULL DEFAULT 0,
+      reversal_of_id TEXT,
+      reversed_amount_cents INTEGER NOT NULL DEFAULT 0
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_traslados (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      transfer_id TEXT NOT NULL UNIQUE,
+      idempotency_key TEXT UNIQUE,
+      journal_id INTEGER NOT NULL,
+      origin_fund_id INTEGER NOT NULL,
+      destination_fund_id INTEGER NOT NULL,
+      amount_cents INTEGER NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'ARS',
+      reason TEXT NOT NULL,
+      evidence_reference TEXT,
+      dispatched_by TEXT NOT NULL,
+      dispatched_at TEXT NOT NULL,
+      received_by TEXT,
+      received_at TEXT,
+      cancelled_by TEXT,
+      cancelled_at TEXT,
+      cancellation_reason TEXT,
+      status TEXT NOT NULL DEFAULT 'IN_TRANSIT',
+      exit_movement_id TEXT NOT NULL,
+      entry_movement_id TEXT,
+      cancel_movement_id TEXT,
+      is_reversed INTEGER NOT NULL DEFAULT 0,
+      reversed_by_transfer_id TEXT
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_reservas (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reservation_id TEXT NOT NULL UNIQUE,
+      idempotency_key TEXT UNIQUE,
+      journal_id INTEGER NOT NULL,
+      fund_id INTEGER NOT NULL,
+      original_amount_cents INTEGER NOT NULL,
+      applied_amount_cents INTEGER NOT NULL DEFAULT 0,
+      released_amount_cents INTEGER NOT NULL DEFAULT 0,
+      pending_amount_cents INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      beneficiary TEXT NOT NULL,
+      obligation_id TEXT,
+      evidence_reference TEXT,
+      created_by TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'ACTIVE'
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_reserva_movimientos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reservation_id TEXT NOT NULL,
+      operation_type TEXT NOT NULL,
+      amount_cents INTEGER NOT NULL,
+      reason TEXT NOT NULL,
+      evidence_reference TEXT,
+      performed_by TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      idempotency_key TEXT UNIQUE,
+      is_reversed INTEGER NOT NULL DEFAULT 0,
+      reversed_by_operation_id INTEGER
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_arqueos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reconciliation_id TEXT NOT NULL UNIQUE,
+      journal_id INTEGER NOT NULL,
+      fund_id INTEGER NOT NULL,
+      reconciliation_type TEXT NOT NULL DEFAULT 'TOTAL',
+      expected_amount_cents INTEGER NOT NULL,
+      verified_amount_cents INTEGER NOT NULL,
+      difference_cents INTEGER NOT NULL,
+      difference_type TEXT NOT NULL,
+      in_transit_out_cents INTEGER NOT NULL DEFAULT 0,
+      in_transit_in_cents INTEGER NOT NULL DEFAULT 0,
+      active_reservations_cents INTEGER NOT NULL DEFAULT 0,
+      notes TEXT,
+      created_by TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      shift_name TEXT,
+      is_digital INTEGER NOT NULL DEFAULT 0,
+      evidence_reference TEXT,
+      consultation_timestamp TEXT,
+      authorized_by TEXT,
+      authorized_at TEXT,
+      authorization_notes TEXT,
+      notes_history_json TEXT DEFAULT '[]'
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_expedientes_diferencias (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      case_id TEXT NOT NULL UNIQUE,
+      reconciliation_id TEXT NOT NULL,
+      journal_id INTEGER NOT NULL,
+      fund_id INTEGER NOT NULL,
+      difference_type TEXT NOT NULL,
+      amount_cents INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'OPEN',
+      investigation_notes TEXT NOT NULL,
+      resolution_notes TEXT,
+      evidence_reference TEXT,
+      opened_by TEXT NOT NULL,
+      opened_at TEXT NOT NULL,
+      resolved_by TEXT,
+      resolved_at TEXT
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_cierres (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      closure_id TEXT NOT NULL UNIQUE,
+      journal_id INTEGER NOT NULL UNIQUE,
+      closed_by TEXT NOT NULL,
+      closed_at TEXT NOT NULL,
+      total_registered_cents INTEGER NOT NULL,
+      total_available_cents INTEGER NOT NULL,
+      total_reserved_cents INTEGER NOT NULL,
+      total_in_transit_cents INTEGER NOT NULL,
+      total_custody_cents INTEGER NOT NULL,
+      sweep_transfer_id TEXT,
+      sweep_amount_cents INTEGER NOT NULL DEFAULT 0,
+      prepay_sweep_transfer_id TEXT,
+      prepay_sweep_amount_cents INTEGER NOT NULL DEFAULT 0,
+      snapshot_json TEXT NOT NULL,
+      observations TEXT,
+      status TEXT NOT NULL DEFAULT 'CONFIRMED'
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_reversiones (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reversal_id TEXT NOT NULL UNIQUE,
+      idempotency_key TEXT UNIQUE,
+      target_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      original_amount_cents INTEGER NOT NULL,
+      reversed_amount_cents INTEGER NOT NULL,
+      counter_movement_id TEXT,
+      reason TEXT NOT NULL,
+      evidence_reference TEXT,
+      authorized_by TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'COMPLETED'
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_auditoria_eventos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id TEXT NOT NULL UNIQUE,
+      event_type TEXT NOT NULL,
+      aggregate_type TEXT NOT NULL,
+      aggregate_id TEXT NOT NULL,
+      sequence_number INTEGER NOT NULL UNIQUE,
+      occurred_at TEXT NOT NULL,
+      recorded_at TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      terminal_id TEXT NOT NULL DEFAULT 'TERM-01',
+      payload_json TEXT NOT NULL,
+      prev_canonical_hash TEXT NOT NULL,
+      canonical_hash TEXT NOT NULL UNIQUE
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_outbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id TEXT NOT NULL UNIQUE,
+      event_type TEXT NOT NULL,
+      aggregate_id TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      max_retries INTEGER NOT NULL DEFAULT 3,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      scheduled_at TEXT NOT NULL,
+      published_at TEXT
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_eventos_consumidos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      consumer_id TEXT NOT NULL,
+      event_id TEXT NOT NULL,
+      consumed_at TEXT NOT NULL,
+      UNIQUE (consumer_id, event_id)
+    );`,
     `CREATE TABLE IF NOT EXISTS tesoreria_obligaciones_apertura (
       codigo TEXT PRIMARY KEY,
       nombre TEXT NOT NULL,
@@ -2577,31 +3187,123 @@ export async function inicializarEsquemaCompleto(client) {
       jornada_id INTEGER,
       es_apertura_inicial INTEGER NOT NULL DEFAULT 0
     );`,
-    `CREATE TABLE IF NOT EXISTS tesoreria_movimientos (
-      movement_id TEXT PRIMARY KEY,
-      codigo_fondo TEXT NOT NULL,
-      monto_centavos INTEGER NOT NULL,
-      tipo TEXT NOT NULL,
-      creado_en_utc TEXT NOT NULL DEFAULT (datetime('now'))
-    );`,
     `CREATE TABLE IF NOT EXISTS tesoreria_cuenta_corriente_david (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      operation_id TEXT NOT NULL UNIQUE,
       idempotency_key TEXT NOT NULL UNIQUE,
-      tipo_operacion TEXT NOT NULL,
-      monto_cents INTEGER NOT NULL,
+      journal_id INTEGER NOT NULL,
+      operation_type TEXT NOT NULL,
+      amount_cents INTEGER NOT NULL,
+      saldo_deuda_anterior_cents INTEGER NOT NULL,
       saldo_deuda_resultante_cents INTEGER NOT NULL,
-      creado_en_utc TEXT NOT NULL DEFAULT (datetime('now')),
-      actor TEXT NOT NULL,
-      motivo TEXT NOT NULL
+      saldo_1220_anterior_cents INTEGER NOT NULL,
+      saldo_1220_resultante_cents INTEGER NOT NULL,
+      saldo_1130_anterior_cents INTEGER NOT NULL,
+      saldo_1130_resultante_cents INTEGER NOT NULL,
+      tesoreria_movement_id TEXT,
+      referencia TEXT NOT NULL,
+      motivo TEXT NOT NULL,
+      fecha_referencia TEXT NOT NULL,
+      creado_por TEXT NOT NULL,
+      creado_en_utc TEXT NOT NULL
     );`,
     `CREATE TABLE IF NOT EXISTS tesoreria_anticipos_preventistas (
       id TEXT PRIMARY KEY,
       idempotency_key TEXT NOT NULL UNIQUE,
+      journal_id INTEGER NOT NULL,
       proveedor TEXT NOT NULL,
+      pedido_id TEXT,
       monto_original_cents INTEGER NOT NULL,
+      monto_repuesto_cents INTEGER NOT NULL DEFAULT 0,
+      saldo_pendiente_cents INTEGER NOT NULL,
+      estado TEXT NOT NULL DEFAULT 'PENDIENTE_REPOSICION',
       motivo TEXT NOT NULL,
+      referencia_documento TEXT,
+      movement_1130_id TEXT NOT NULL,
       creado_por TEXT NOT NULL,
-      creado_en_utc TEXT NOT NULL DEFAULT (datetime('now'))
+      creado_en_utc TEXT NOT NULL,
+      actualizado_en_utc TEXT NOT NULL,
+      repuesto_completo_en_utc TEXT
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_reposiciones_preventistas (
+      id TEXT PRIMARY KEY,
+      anticipo_id TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      journal_id INTEGER NOT NULL,
+      monto_total_repuesto_cents INTEGER NOT NULL,
+      monto_desde_1120_cents INTEGER NOT NULL DEFAULT 0,
+      monto_desde_1110_cents INTEGER NOT NULL DEFAULT 0,
+      transfer_1120_id TEXT,
+      transfer_1110_id TEXT,
+      motivo TEXT NOT NULL,
+      ejecutado_por TEXT NOT NULL,
+      creado_en_utc TEXT NOT NULL
+    );`,
+    `CREATE TABLE IF NOT EXISTS commercial_events_outbox (
+      sequence_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT NOT NULL,
+      action_type TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      payload_canonical_hash TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      retry_count INTEGER NOT NULL DEFAULT 0,
+      max_retries INTEGER NOT NULL DEFAULT 5,
+      error_message TEXT,
+      tesoreria_movement_id TEXT,
+      reprocessed_by TEXT,
+      reprocessed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      published_at TEXT
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_prepay_cargo_diario (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      jornada_id INTEGER NOT NULL,
+      fecha_jornada TEXT NOT NULL,
+      estado TEXT NOT NULL CHECK(estado IN ('PENDING_RESERVATION', 'RESERVED', 'CONFIRMED', 'APPLIED', 'RELEASED')),
+      titular_reserva_id TEXT NOT NULL,
+      titular_commercial_ticket_id TEXT,
+      titular_idempotency_key TEXT NOT NULL,
+      amount_cents INTEGER NOT NULL DEFAULT 35000 CHECK(amount_cents > 0),
+      created_at TEXT NOT NULL,
+      confirmed_at TEXT,
+      applied_at TEXT,
+      released_at TEXT,
+      updated_at TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1),
+      UNIQUE(jornada_id)
+    );`,
+    `CREATE TABLE IF NOT EXISTS tesoreria_prepay_coordinacion (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      coordination_id TEXT NOT NULL UNIQUE,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      request_hash TEXT NOT NULL,
+      jornada_id INTEGER NOT NULL,
+      servicio_destino TEXT NOT NULL,
+      plataforma TEXT NOT NULL DEFAULT 'PREPAY',
+      monto_capital_cents INTEGER NOT NULL CHECK(monto_capital_cents > 0),
+      monto_adicional_cents INTEGER NOT NULL DEFAULT 0 CHECK(monto_adicional_cents >= 0),
+      pago_efvo_cents INTEGER NOT NULL DEFAULT 0 CHECK(pago_efvo_cents >= 0),
+      pago_transf_cents INTEGER NOT NULL DEFAULT 0 CHECK(pago_transf_cents >= 0),
+      asume_cargo_diario INTEGER NOT NULL CHECK(asume_cargo_diario IN (0, 1)),
+      monto_cargo_cents INTEGER NOT NULL DEFAULT 0 CHECK(monto_cargo_cents >= 0),
+      capital_reservation_id TEXT NOT NULL,
+      fee_reservation_id TEXT,
+      estado TEXT NOT NULL CHECK(estado IN (
+        'RESERVATION_REQUESTED', 'ACTIVE', 'COMMERCIAL_COMMITTED', 'COMMERCIAL_REJECTED',
+        'RELEASE_PENDING', 'RELEASED', 'APPLICATION_PENDING', 'FULLY_APPLIED',
+        'RECONCILIATION_REQUIRED', 'EXPIRED'
+      )),
+      commercial_ticket_id INTEGER,
+      worker_movement_ids TEXT,
+      error_detail TEXT,
+      actor TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );`
   ], "write");
 
@@ -2632,12 +3334,12 @@ export async function inicializarEsquemaCompleto(client) {
     { codigo: "1120", nombre: "Drugstore Acumulado", nat: "EFECTIVO", tit: "PROPIA" },
     { codigo: "1130", nombre: "Prepay Efectivo", nat: "EFECTIVO", tit: "PROPIA" },
     { codigo: "1140", nombre: "Adicionales Efectivo", nat: "ADICIONALES_PARTICULARES", tit: "PROPIA" },
-    { codigo: "1150", nombre: "Claro Efectivo", nat: "RECAUDACION_TERCEROS", tit: "PROPIA" },
+    { codigo: "1150", nombre: "Claro Efectivo", nat: "RECAUDACION_TERCEROS", tit: "CUSTODIA" },
     { codigo: "1160", nombre: "Prepay Diario Efectivo", nat: "EFECTIVO", tit: "PROPIA" },
-    { codigo: "1210", nombre: "Mercado Pago", nat: "BILLETERA_VIRTUAL", tit: "PROPIA" },
-    { codigo: "1220", nombre: "Prepay Digital", nat: "BILLETERA_VIRTUAL", tit: "CUSTODIA" },
-    { codigo: "1230", nombre: "Claro Comercios", nat: "BILLETERA_VIRTUAL", tit: "CUSTODIA" },
-    { codigo: "1310", nombre: "Tránsito Preventistas", nat: "TRANSITO_PREVENTISTAS", tit: "TRANSITO" },
+    { codigo: "1210", nombre: "Mercado Pago Propio", nat: "BILLETERA_VIRTUAL", tit: "PROPIA" },
+    { codigo: "1220", nombre: "Prepay Digital Saldo", nat: "BILLETERA_VIRTUAL", tit: "PROPIA" },
+    { codigo: "1230", nombre: "Claro Comercios Digital Saldo", nat: "BILLETERA_VIRTUAL", tit: "PROPIA" },
+    { codigo: "1310", nombre: "Cobranzas en Tránsito Preventistas", nat: "TRANSITO_PREVENTISTAS", tit: "TRANSITO" },
   ];
 
   for (const f of fondosInit) {
@@ -2680,64 +3382,119 @@ export async function poblarDatosPrueba(client) {
   ], "write");
 }
 
+function formatMoneyWorker(cents) {
+  const n = Number(cents || 0);
+  const neg = n < 0;
+  const abs = Math.abs(Math.trunc(n));
+  const entera = Math.floor(abs / 100).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  const dec = (abs % 100).toString().padStart(2, "0");
+  return `${neg ? "-" : ""}$${entera},${dec}`;
+}
+
 // --- Módulo Tesorería y Saldos Iniciales / Aperturas ---
 
 export async function obtenerSaldosInicialesWorker(client) {
   const resFondos = await client.execute({
-    sql: `SELECT codigo, nombre, saldo_centavos, saldo_inicial_cents, saldo_inicial_configurado_en,
+    sql: `SELECT id, codigo, nombre, saldo_centavos, saldo_inicial_cents, saldo_inicial_configurado_en,
                  saldo_inicial_configurado_por, estado_configuracion
-          FROM tesoreria_fondos ORDER BY codigo ASC;`
+          FROM tesoreria_fondos ORDER BY codigo ASC;`,
+    args: []
   });
 
   const resOblig = await client.execute({
     sql: `SELECT codigo, nombre, descripcion, saldo_inicial_cents, configurado_en,
                  configurado_por, estado_configuracion
-          FROM tesoreria_obligaciones_apertura ORDER BY codigo ASC;`
+          FROM tesoreria_obligaciones_apertura ORDER BY codigo ASC;`,
+    args: []
   });
 
   const fondosFisicos = [];
   const cuentasDigitales = [];
   let totalFisicosCents = 0;
   let totalDigitalesCents = 0;
+  let totalActualFisicosCents = 0;
+  let totalActualDigitalesCents = 0;
 
   for (const row of resFondos.rows) {
     const cod = String(row.codigo);
+    let tieneMovs = false;
+    try {
+      const mRes = await client.execute({
+        sql: "SELECT count(*) as cnt FROM tesoreria_movimientos WHERE fund_id = ?;",
+        args: [Number(row.id)],
+      });
+      tieneMovs = Number(mRes.rows[0]?.cnt || 0) > 0;
+    } catch {}
+    const sInit = Number(row.saldo_inicial_cents ?? 0);
+    const sAct = Number(row.saldo_centavos ?? 0);
     const item = {
       codigo: cod,
       nombre: String(row.nombre),
       categoria: ["1110", "1120", "1130", "1140", "1150", "1160"].includes(cod) ? "FONDO_FISICO" : "CUENTA_DIGITAL",
-      saldo_inicial_cents: Number(row.saldo_inicial_cents ?? 0),
-      saldo_actual_cents: Number(row.saldo_centavos ?? 0),
+      saldo_inicial_cents: sInit,
+      saldo_actual_cents: sAct,
+      saldo_inicial_formateado: formatMoneyWorker(sInit),
+      saldo_actual_formateado: formatMoneyWorker(sAct),
       configurado_en: row.saldo_inicial_configurado_en || null,
       configurado_por: row.saldo_inicial_configurado_por || null,
       estado_configuracion: row.estado_configuracion || "INICIAL_CERO",
-      editable: true,
+      tiene_movimientos: tieneMovs,
+      puede_editar_apertura: !tieneMovs,
+      editable: !tieneMovs,
     };
     if (item.categoria === "FONDO_FISICO") {
       fondosFisicos.push(item);
       totalFisicosCents += item.saldo_inicial_cents;
+      totalActualFisicosCents += item.saldo_actual_cents;
     } else {
       cuentasDigitales.push(item);
       totalDigitalesCents += item.saldo_inicial_cents;
+      totalActualDigitalesCents += item.saldo_actual_cents;
     }
   }
 
   const obligaciones = [];
   let totalObligacionesCents = 0;
+  let totalActualObligacionesCents = 0;
   for (const row of resOblig.rows) {
+    const cod = String(row.codigo);
     const sInit = Number(row.saldo_inicial_cents ?? 0);
+    let tieneMovs = false;
+    let sAct = sInit;
+    if (cod === "DAVID") {
+      try {
+        const dRes = await client.execute("SELECT saldo_deuda_resultante_cents FROM tesoreria_cuenta_corriente_david ORDER BY id DESC LIMIT 1;");
+        if (dRes.rows.length > 0) {
+          tieneMovs = true;
+          sAct = Number(dRes.rows[0].saldo_deuda_resultante_cents);
+        }
+      } catch {}
+    } else if (cod === "PREVENTISTAS") {
+      try {
+        const pRes = await client.execute("SELECT count(*) as cnt, COALESCE(SUM(saldo_pendiente_cents), 0) as pend FROM tesoreria_anticipos_preventistas;");
+        if (Number(pRes.rows[0]?.cnt || 0) > 0) {
+          tieneMovs = true;
+          sAct = sInit + Number(pRes.rows[0]?.pend || 0);
+        }
+      } catch {}
+    }
     obligaciones.push({
-      codigo: String(row.codigo),
+      codigo: cod,
       nombre: String(row.nombre),
       categoria: "OBLIGACION",
       saldo_inicial_cents: sInit,
-      saldo_actual_cents: sInit,
+      saldo_actual_cents: sAct,
+      saldo_inicial_formateado: formatMoneyWorker(sInit),
+      saldo_actual_formateado: formatMoneyWorker(sAct),
       configurado_en: row.configurado_en || null,
       configurado_por: row.configurado_por || null,
       estado_configuracion: row.estado_configuracion || "INICIAL_CERO",
-      editable: true,
+      tiene_movimientos: tieneMovs,
+      puede_editar_apertura: !tieneMovs,
+      editable: !tieneMovs,
     });
     totalObligacionesCents += sInit;
+    totalActualObligacionesCents += sAct;
   }
 
   return {
@@ -2747,6 +3504,9 @@ export async function obtenerSaldosInicialesWorker(client) {
     total_fondos_fisicos_cents: totalFisicosCents,
     total_cuentas_digitales_cents: totalDigitalesCents,
     total_obligaciones_cents: totalObligacionesCents,
+    total_actual_fondos_fisicos_cents: totalActualFisicosCents,
+    total_actual_cuentas_digitales_cents: totalActualDigitalesCents,
+    total_actual_obligaciones_cents: totalActualObligacionesCents,
   };
 }
 
@@ -2754,8 +3514,8 @@ export async function modificarSaldoInicialWorker(client, { codigo, saldo_nuevo_
   if (!usuario || typeof usuario !== "string" || !usuario.trim()) {
     throw new Error("INVALID_INPUT: El usuario responsable es obligatorio.");
   }
-  if (!motivo || typeof motivo !== "string" || !motivo.trim()) {
-    throw new Error("INVALID_INPUT: El motivo de modificación de saldo inicial es obligatorio para auditoría.");
+  if (!motivo || typeof motivo !== "string" || motivo.trim().length < 3) {
+    throw new Error("INVALID_INPUT: El motivo de modificación de saldo inicial es obligatorio (mínimo 3 caracteres).");
   }
   if (!Number.isInteger(saldo_nuevo_cents) || saldo_nuevo_cents < 0) {
     throw new Error("INVALID_INPUT: El saldo nuevo debe ser un número entero mayor o igual a 0 centavos.");
@@ -2772,8 +3532,8 @@ export async function modificarSaldoInicialWorker(client, { codigo, saldo_nuevo_
   if (resFondo.rows.length > 0) {
     const f = resFondo.rows[0];
     const movCount = await client.execute({
-      sql: "SELECT count(*) as cnt FROM tesoreria_movimientos WHERE codigo_fondo = ?;",
-      args: [cod]
+      sql: "SELECT count(*) as cnt FROM tesoreria_movimientos WHERE fund_id = ?;",
+      args: [Number(f.id)]
     });
     if (movCount.rows.length > 0 && Number(movCount.rows[0].cnt) > 0) {
       throw new Error(`CONFLICT: El fondo ${cod} ya posee movimientos registrados. No se puede alterar retroactivamente el saldo inicial sin un procedimiento de regularización auditado.`);
@@ -2789,9 +3549,11 @@ export async function modificarSaldoInicialWorker(client, { codigo, saldo_nuevo_
                   saldo_centavos = ?,
                   saldo_inicial_configurado_en = datetime('now'),
                   saldo_inicial_configurado_por = ?,
-                  estado_configuracion = 'CONFIGURADO'
+                  estado_configuracion = 'CONFIGURADO',
+                  updated_at = datetime('now'),
+                  actualizado_por = ?
               WHERE codigo = ?;`,
-        args: [saldo_nuevo_cents, saldo_nuevo_cents, usuario, cod]
+        args: [saldo_nuevo_cents, saldo_nuevo_cents, usuario, usuario, cod]
       },
       {
         sql: `INSERT INTO tesoreria_saldos_iniciales_auditoria (
@@ -2809,6 +3571,8 @@ export async function modificarSaldoInicialWorker(client, { codigo, saldo_nuevo_
       categoria: cat,
       saldo_anterior_cents: saldoAnterior,
       saldo_nuevo_cents,
+      saldo_anterior_formateado: formatMoneyWorker(saldoAnterior),
+      saldo_nuevo_formateado: formatMoneyWorker(saldo_nuevo_cents),
       usuario_responsable: usuario,
       motivo: motivo.trim(),
       referencia_autorizacion: referencia_autorizacion || null,
@@ -2816,15 +3580,17 @@ export async function modificarSaldoInicialWorker(client, { codigo, saldo_nuevo_
     };
   }
 
-  // 2. Verificar si es una obligación
+  // 2. Verificar si es una obligación (soporta tanto DAVID como OBL_DAVID)
+  const codOblig = cod.startsWith("OBL_") ? cod.slice(4) : cod;
   const resOblig = await client.execute({
-    sql: "SELECT codigo, nombre, descripcion, saldo_inicial_cents FROM tesoreria_obligaciones_apertura WHERE codigo = ?;",
-    args: [cod]
+    sql: "SELECT codigo, nombre, descripcion, saldo_inicial_cents FROM tesoreria_obligaciones_apertura WHERE codigo IN (?, ?);",
+    args: [cod, codOblig]
   });
 
   if (resOblig.rows.length > 0) {
     const ob = resOblig.rows[0];
-    if (cod === "DAVID") {
+    const dbCod = String(ob.codigo);
+    if (dbCod === "DAVID" || dbCod === "OBL_DAVID") {
       const movDavid = await client.execute("SELECT count(*) as cnt FROM tesoreria_cuenta_corriente_david;");
       if (movDavid.rows.length > 0 && Number(movDavid.rows[0].cnt) > 0) {
         throw new Error("CONFLICT: La cuenta corriente de David ya posee movimientos registrados. Debe utilizar el procedimiento de regularización/reconocimiento formal.");
@@ -2841,7 +3607,7 @@ export async function modificarSaldoInicialWorker(client, { codigo, saldo_nuevo_
                   configurado_por = ?,
                   estado_configuracion = 'CONFIGURADO'
               WHERE codigo = ?;`,
-        args: [saldo_nuevo_cents, usuario, cod]
+        args: [saldo_nuevo_cents, usuario, dbCod]
       },
       {
         sql: `INSERT INTO tesoreria_saldos_iniciales_auditoria (
@@ -2859,6 +3625,8 @@ export async function modificarSaldoInicialWorker(client, { codigo, saldo_nuevo_
       categoria: "OBLIGACION",
       saldo_anterior_cents: saldoAnterior,
       saldo_nuevo_cents,
+      saldo_anterior_formateado: formatMoneyWorker(saldoAnterior),
+      saldo_nuevo_formateado: formatMoneyWorker(saldo_nuevo_cents),
       usuario_responsable: usuario,
       motivo: motivo.trim(),
       referencia_autorizacion: referencia_autorizacion || null,
@@ -2873,20 +3641,26 @@ export async function obtenerHistorialAperturasWorker(client) {
   const res = await client.execute(
     "SELECT * FROM tesoreria_saldos_iniciales_auditoria ORDER BY fecha_hora DESC, id DESC;"
   );
-  return res.rows.map(r => ({
-    id: Number(r.id),
-    item_codigo: String(r.item_codigo),
-    item_nombre: String(r.item_nombre),
-    categoria: String(r.categoria),
-    saldo_anterior_cents: Number(r.saldo_anterior_cents),
-    saldo_nuevo_cents: Number(r.saldo_nuevo_cents),
-    fecha_hora: String(r.fecha_hora),
-    usuario_responsable: String(r.usuario_responsable),
-    motivo: String(r.motivo),
-    referencia_autorizacion: r.referencia_autorizacion ? String(r.referencia_autorizacion) : null,
-    jornada_id: r.jornada_id ? Number(r.jornada_id) : null,
-    es_apertura_inicial: Boolean(r.es_apertura_inicial)
-  }));
+  return res.rows.map(r => {
+    const sAnt = Number(r.saldo_anterior_cents);
+    const sNvo = Number(r.saldo_nuevo_cents);
+    return {
+      id: Number(r.id),
+      item_codigo: String(r.item_codigo),
+      item_nombre: String(r.item_nombre),
+      categoria: String(r.categoria),
+      saldo_anterior_cents: sAnt,
+      saldo_nuevo_cents: sNvo,
+      saldo_anterior_formateado: formatMoneyWorker(sAnt),
+      saldo_nuevo_formateado: formatMoneyWorker(sNvo),
+      fecha_hora: String(r.fecha_hora),
+      usuario_responsable: String(r.usuario_responsable),
+      motivo: String(r.motivo),
+      referencia_autorizacion: r.referencia_autorizacion ? String(r.referencia_autorizacion) : null,
+      jornada_id: r.jornada_id ? Number(r.jornada_id) : null,
+      es_apertura_inicial: Boolean(r.es_apertura_inicial)
+    };
+  });
 }
 
 export async function obtenerFondosTesoreriaWorker(client) {
@@ -2929,6 +3703,7 @@ export async function obtenerResumenTesoreriaWorker(client) {
 export async function obtenerCCDavidWorker(client) {
   const obRes = await client.execute({
     sql: "SELECT saldo_inicial_cents FROM tesoreria_obligaciones_apertura WHERE codigo = 'DAVID';",
+    args: []
   });
   const saldoInicialDavid = obRes.rows.length > 0 ? Number(obRes.rows[0].saldo_inicial_cents ?? 0) : 0;
 

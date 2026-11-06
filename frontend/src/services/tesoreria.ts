@@ -67,7 +67,13 @@ function getApiBaseUrl(): string {
 }
 
 function getAuthHeaders(idempotencyKey?: string): HeadersInit {
-  const token = typeof localStorage !== "undefined" ? localStorage.getItem("genaro_access_token") : null;
+  let token: string | null = null;
+  if (typeof sessionStorage !== "undefined") {
+    token = sessionStorage.getItem("genaro_pos_auth_token");
+  }
+  if (!token && typeof localStorage !== "undefined") {
+    token = localStorage.getItem("genaro_pos_auth_token") || localStorage.getItem("genaro_access_token");
+  }
   return {
     "Content-Type": "application/json",
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -176,6 +182,24 @@ const FONDOS_CANONICOS_FALLBACK: FondoTesoreria[] = [
     saldo_centavos: 0,
     saldo_formateado: "$0,00",
     disponibilidad_inmediata: false,
+    permite_sobregiro: 0,
+    version: 1,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    creado_por: "SISTEMA_LAB",
+    actualizado_por: "SISTEMA_LAB",
+  },
+  {
+    id: 10,
+    codigo: "1160",
+    nombre: "Prepay Diario Efectivo",
+    naturaleza: "EFECTIVO",
+    titularidad: "PROPIA",
+    moneda: "ARS",
+    estado: "ACTIVO",
+    saldo_centavos: 0,
+    saldo_formateado: "$0,00",
+    disponibilidad_inmediata: true,
     permite_sobregiro: 0,
     version: 1,
     created_at: new Date().toISOString(),

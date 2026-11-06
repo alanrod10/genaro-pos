@@ -41,6 +41,16 @@ test("Reglas Financieras: Segregación de capitales PREPAY, Claro y SUBE MP", ()
   const sube = clasificarServicio("SUBE_MERCADOPAGO");
   assert.equal(sube.categoria, "SUBE_MP");
   assert.equal(sube.cajaCapital, "MERCADO_PAGO");
+
+  // 4. SUBE estándar (sin MP ni plataforma Mercado Pago) -> PREPAY (Caja B)
+  const subePrepay = clasificarServicio("SUBE");
+  assert.equal(subePrepay.categoria, "PREPAY");
+  assert.equal(subePrepay.cajaCapital, "CAJA_B");
+
+  // 5. SUBE con plataforma MERCADO PAGO -> SUBE_MP
+  const subePlatMp = clasificarServicio("SUBE", "MERCADO PAGO");
+  assert.equal(subePlatMp.categoria, "SUBE_MP");
+  assert.equal(subePlatMp.cajaCapital, "MERCADO_PAGO");
 });
 
 test("Reglas Financieras: Balances de Cajas A-E y Arqueo Físico de Cajón", () => {
