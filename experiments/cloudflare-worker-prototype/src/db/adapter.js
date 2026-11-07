@@ -3649,6 +3649,8 @@ export async function obtenerSaldosInicialesWorker(client) {
   let totalDigitalesCents = 0;
   let totalActualFisicosCents = 0;
   let totalActualDigitalesCents = 0;
+  let conteoAbiertos = 0;
+  let conteoPendientes = 0;
 
   for (const row of resFondos.rows) {
     const cod = String(row.codigo);
@@ -3662,6 +3664,18 @@ export async function obtenerSaldosInicialesWorker(client) {
     } catch {}
     const sInit = Number(row.saldo_inicial_cents ?? 0);
     const sAct = Number(row.saldo_centavos ?? 0);
+    const rawConf = String(row.estado_configuracion || "");
+    const isOpen = (rawConf === "CONFIGURADO" || (sInit > 0 && row.saldo_inicial_configurado_en));
+    const estadoApertura = isOpen ? "OPENED" : "PENDING_OPENING";
+    if (estadoApertura === "OPENED") {
+      conteoAbiertos++;
+    } else {
+      conteoPendientes++;
+    }
+    const subestado = (estadoApertura === "OPENED")
+      ? "CONFIRMADO"
+      : (tieneMovs ? "MOVIMIENTOS_POSTERIORES_REGISTRADOS" : "SIN_MOVIMIENTOS");
+
     const item = {
       codigo: cod,
       nombre: String(row.nombre),
@@ -3670,12 +3684,15 @@ export async function obtenerSaldosInicialesWorker(client) {
       saldo_actual_cents: sAct,
       saldo_inicial_formateado: formatMoneyWorker(sInit),
       saldo_actual_formateado: formatMoneyWorker(sAct),
+      estado_apertura: estadoApertura,
+      subestado_apertura: subestado,
+      disponibilidad_confirmada: (estadoApertura === "OPENED"),
       configurado_en: row.saldo_inicial_configurado_en || null,
       configurado_por: row.saldo_inicial_configurado_por || null,
-      estado_configuracion: row.estado_configuracion || "INICIAL_CERO",
+      estado_configuracion: row.estado_configuracion || (isOpen ? "CONFIGURADO" : "INICIAL_CERO"),
       tiene_movimientos: tieneMovs,
-      puede_editar_apertura: !tieneMovs,
-      editable: !tieneMovs,
+      puede_editar_apertura: !tieneMovs || isOpen,
+      editable: !tieneMovs || isOpen,
     };
     if (item.categoria === "FONDO_FISICO") {
       fondosFisicos.push(item);
@@ -3713,6 +3730,10 @@ export async function obtenerSaldosInicialesWorker(client) {
         }
       } catch {}
     }
+    const rawConf = String(row.estado_configuracion || "");
+    const isOpen = (rawConf === "CONFIGURADO" || (sInit > 0 && row.configurado_en));
+    const estadoApertura = isOpen ? "OPENED" : "PENDING_OPENING";
+
     obligaciones.push({
       codigo: cod,
       nombre: String(row.nombre),
@@ -3721,16 +3742,20 @@ export async function obtenerSaldosInicialesWorker(client) {
       saldo_actual_cents: sAct,
       saldo_inicial_formateado: formatMoneyWorker(sInit),
       saldo_actual_formateado: formatMoneyWorker(sAct),
+      estado_apertura: estadoApertura,
+      disponibilidad_confirmada: (estadoApertura === "OPENED"),
       configurado_en: row.configurado_en || null,
       configurado_por: row.configurado_por || null,
-      estado_configuracion: row.estado_configuracion || "INICIAL_CERO",
+      estado_configuracion: row.estado_configuracion || (isOpen ? "CONFIGURADO" : "INICIAL_CERO"),
       tiene_movimientos: tieneMovs,
-      puede_editar_apertura: !tieneMovs,
-      editable: !tieneMovs,
+      puede_editar_apertura: !tieneMovs || isOpen,
+      editable: !tieneMovs || isOpen,
     });
     totalObligacionesCents += sInit;
     totalActualObligacionesCents += sAct;
   }
+
+  const aperturaCompleta = (conteoPendientes === 0);
 
   return {
     fondos_fisicos: fondosFisicos,
@@ -3742,6 +3767,10 @@ export async function obtenerSaldosInicialesWorker(client) {
     total_actual_fondos_fisicos_cents: totalActualFisicosCents,
     total_actual_cuentas_digitales_cents: totalActualDigitalesCents,
     total_actual_obligaciones_cents: totalActualObligacionesCents,
+    conteo_abiertos: conteoAbiertos,
+    conteo_pendientes: conteoPendientes,
+    apertura_completa: aperturaCompleta,
+    estado_general_apertura: aperturaCompleta ? "COMPLETO" : "DIFERIDO_PENDIENTE",
   };
 }
 

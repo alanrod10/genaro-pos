@@ -778,15 +778,32 @@ export interface ReponerAnticipoPreventistaPayload {
 // --- APERTURAS Y SALDOS INICIALES (Saldos en $0 y Configuración Auditada) ---
 // ==========================================
 
+export type EstadoApertura =
+  | "NOT_CONFIGURED"
+  | "PENDING_OPENING"
+  | "OPENED"
+  | "RECONCILIATION_REQUIRED"
+  | "BLOCKED";
+
 export interface SaldoInicialItem {
   codigo: string;
   nombre: string;
   categoria: "FONDO_FISICO" | "CUENTA_DIGITAL" | "OBLIGACION";
+  naturaleza?: string;
   saldo_inicial_cents: number;
   saldo_actual_cents: number;
+  estado_apertura?: EstadoApertura;
+  subestado_apertura?: "SIN_MOVIMIENTOS" | "MOVIMIENTOS_POSTERIORES_REGISTRADOS" | "CONFIRMADO";
+  disponibilidad_confirmada?: boolean;
+  fecha_corte?: string | null;
+  naturaleza_saldo?: string | null;
+  observaciones?: string | null;
+  comprobante?: string | null;
   configurado_en: string | null;
   configurado_por: string | null;
-  estado_configuracion: "INICIAL_CERO" | "CONFIGURADO";
+  estado_configuracion: "INICIAL_CERO" | "CONFIGURADO" | string;
+  tiene_movimientos?: boolean;
+  puede_editar_apertura?: boolean;
   editable: boolean;
 }
 
@@ -797,6 +814,10 @@ export interface SaldosInicialesResponse {
   total_fondos_fisicos_cents: number;
   total_cuentas_digitales_cents: number;
   total_obligaciones_cents: number;
+  conteo_abiertos?: number;
+  conteo_pendientes?: number;
+  apertura_completa?: boolean;
+  estado_general_apertura?: "COMPLETO" | "DIFERIDO_PENDIENTE" | string;
 }
 
 export interface ModificarSaldoInicialPayload {
@@ -804,6 +825,11 @@ export interface ModificarSaldoInicialPayload {
   saldo_nuevo_cents: number;
   motivo: string;
   referencia_autorizacion?: string | null;
+  fecha_corte?: string | null;
+  naturaleza_saldo?: string | null;
+  comprobante?: string | null;
+  idempotency_key?: string | null;
+  tipo_operacion?: "APERTURA_INICIAL" | "AJUSTE_COMPENSATORIO" | string;
 }
 
 export interface AuditoriaSaldoInicialItem {
@@ -819,6 +845,11 @@ export interface AuditoriaSaldoInicialItem {
   referencia_autorizacion: string | null;
   jornada_id?: number | null;
   es_apertura_inicial: boolean;
+  fecha_corte?: string | null;
+  naturaleza_saldo?: string | null;
+  idempotency_key?: string | null;
+  tipo_operacion?: string;
+  estado_apertura?: string;
 }
 
 

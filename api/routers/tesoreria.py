@@ -187,6 +187,14 @@ class SaldoInicialItem(BaseModel):
     saldo_actual_cents: int
     saldo_inicial_formateado: str
     saldo_actual_formateado: str
+    naturaleza: Optional[str] = None
+    estado_apertura: Optional[str] = "PENDING_OPENING"
+    subestado_apertura: Optional[str] = "SIN_MOVIMIENTOS"
+    disponibilidad_confirmada: Optional[bool] = False
+    fecha_corte: Optional[str] = None
+    naturaleza_saldo: Optional[str] = None
+    observaciones: Optional[str] = None
+    comprobante: Optional[str] = None
     configurado_por: Optional[str] = None
     configurado_en: Optional[str] = None
     tiene_movimientos: bool = False
@@ -201,6 +209,10 @@ class SaldosInicialesResponse(BaseModel):
     total_fondos_fisicos_cents: int
     total_cuentas_digitales_cents: int
     total_obligaciones_cents: int
+    conteo_abiertos: Optional[int] = 0
+    conteo_pendientes: Optional[int] = 0
+    apertura_completa: Optional[bool] = False
+    estado_general_apertura: Optional[str] = "DIFERIDO_PENDIENTE"
 
 
 class ModificarSaldoInicialRequest(BaseModel):
@@ -208,6 +220,11 @@ class ModificarSaldoInicialRequest(BaseModel):
     saldo_nuevo_cents: int = Field(..., ge=0, description="Nuevo saldo inicial en centavos (entero >= 0)")
     motivo: str = Field(..., min_length=3, description="Motivo obligatorio de la modificación")
     referencia_autorizacion: Optional[str] = Field(None, description="Referencia de autorización o acta")
+    fecha_corte: Optional[str] = Field(None, description="Fecha y hora de corte (ISO o texto)")
+    naturaleza_saldo: Optional[str] = Field(None, description="Naturaleza del saldo (EFECTIVO_CONTADO, SALDO_PLATAFORMA, OBLIGACION_EXIGIBLE)")
+    comprobante: Optional[str] = Field(None, description="Comprobante o evidencia")
+    idempotency_key: Optional[str] = Field(None, description="Clave de idempotencia única")
+    tipo_operacion: Optional[str] = Field("APERTURA_INICIAL", description="APERTURA_INICIAL o AJUSTE_COMPENSATORIO")
 
 
 class AuditoriaSaldoInicialItem(BaseModel):
@@ -224,6 +241,11 @@ class AuditoriaSaldoInicialItem(BaseModel):
     motivo: str
     referencia_autorizacion: Optional[str] = None
     es_apertura_inicial: bool = False
+    fecha_corte: Optional[str] = None
+    naturaleza_saldo: Optional[str] = None
+    idempotency_key: Optional[str] = None
+    tipo_operacion: Optional[str] = "APERTURA_INICIAL"
+    estado_apertura: Optional[str] = "OPENED"
 
 
 class ResumenTesoreriaResponse(BaseModel):
@@ -470,22 +492,29 @@ def get_saldos_iniciales(user: AuthenticatedUser = Depends(get_current_user)):
         conn.close()
 
 
-@router.post("/apertura/saldos-iniciales", summary="Modificar saldo inicial con auditoría (Alan y Yilda)")
+@router.post("/apertura/saldos-iniciales", summary="Modificar saldo inicial o registrar apertura con auditoría (Alan y Yilda)")
 def post_modificar_saldo_inicial(
     payload: ModificarSaldoInicialRequest,
     user: AuthenticatedUser = Depends(require_admin_or_socio),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
     conn = _get_lab_db()
     try:
         jornada = obtener_jornada_actual(conn)
         j_id = jornada["id"] if jornada else None
+        idem_key = payload.idempotency_key or idempotency_key
+        ref_comp = payload.comprobante or payload.referencia_autorizacion
         res = modificar_saldo_inicial(
             conn,
             codigo=payload.codigo,
             saldo_nuevo_cents=payload.saldo_nuevo_cents,
             usuario=user.username,
             motivo=payload.motivo,
-            referencia_autorizacion=payload.referencia_autorizacion,
+            referencia_autorizacion=ref_comp,
+            fecha_corte=payload.fecha_corte,
+            naturaleza_saldo=payload.naturaleza_saldo,
+            idempotency_key=idem_key,
+            tipo_operacion=payload.tipo_operacion or "APERTURA_INICIAL",
             jornada_id=j_id,
         )
         return res

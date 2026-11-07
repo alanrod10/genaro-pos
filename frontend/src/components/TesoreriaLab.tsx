@@ -1508,8 +1508,32 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
   const [nuevoSaldoAperturaInput, setNuevoSaldoAperturaInput] = useState("");
   const [motivoAperturaInput, setMotivoAperturaInput] = useState("");
   const [referenciaAperturaInput, setReferenciaAperturaInput] = useState("");
+  const [fechaCorteInput, setFechaCorteInput] = useState("");
+  const [naturalezaSaldoInput, setNaturalezaSaldoInput] = useState("EFECTIVO_CONTADO");
+  const [tipoOperacionInput, setTipoOperacionInput] = useState<"APERTURA_INICIAL" | "AJUSTE_COMPENSATORIO">("APERTURA_INICIAL");
+  const [idempotencyKeyInput, setIdempotencyKeyInput] = useState("");
   const [guardandoApertura, setGuardandoApertura] = useState(false);
   const [confirmandoApertura, setConfirmandoApertura] = useState(false);
+
+  const abrirModalApertura = (item: SaldoInicialItem, esAjuste: boolean = false) => {
+    setModalEditarApertura(item);
+    setTipoOperacionInput(esAjuste ? "AJUSTE_COMPENSATORIO" : "APERTURA_INICIAL");
+    setNuevoSaldoAperturaInput(item.saldo_inicial_cents > 0 ? (item.saldo_inicial_cents / 100).toFixed(2) : "");
+    setMotivoAperturaInput("");
+    setReferenciaAperturaInput("");
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    setFechaCorteInput(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`);
+    setNaturalezaSaldoInput(
+      item.categoria === "FONDO_FISICO"
+        ? "EFECTIVO_CONTADO"
+        : item.categoria === "OBLIGACION"
+        ? "OBLIGACION_EXIGIBLE"
+        : "SALDO_PLATAFORMA"
+    );
+    setIdempotencyKeyInput(`IDEM_OPEN_${item.codigo}_${Date.now()}`);
+    setConfirmandoApertura(false);
+  };
 
   const cargarSaldosApertura = useCallback(async () => {
     setCargandoAperturas(true);
@@ -1558,6 +1582,10 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
         saldo_nuevo_cents: nuevoCents,
         motivo: motivoAperturaInput.trim(),
         referencia_autorizacion: referenciaAperturaInput.trim() || undefined,
+        fecha_corte: fechaCorteInput || undefined,
+        naturaleza_saldo: naturalezaSaldoInput || undefined,
+        tipo_operacion: tipoOperacionInput,
+        idempotency_key: idempotencyKeyInput || undefined,
       });
       setModalEditarApertura(null);
       setNuevoSaldoAperturaInput("");
@@ -1565,9 +1593,11 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
       setReferenciaAperturaInput("");
       setConfirmandoApertura(false);
       await Promise.all([cargarSaldosApertura(), cargarDatos()]);
-      alert("Saldo inicial configurado correctamente con trazabilidad y auditoría.");
+      alert(tipoOperacionInput === "AJUSTE_COMPENSATORIO"
+        ? "Ajuste compensatorio registrado exitosamente con trazabilidad inmutable."
+        : "Saldo inicial de apertura registrado y confirmado correctamente.");
     } catch (err: any) {
-      alert(`Error al configurar saldo inicial: ${err.message}`);
+      alert(`Error al registrar apertura/ajuste: ${err.message}`);
     } finally {
       setGuardandoApertura(false);
     }
@@ -5256,17 +5286,28 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
         </div>
       )}
 
-      {/* TAB: SALDOS INICIALES / APERTURA DE TESORERÍA (MEGA SYSTEM PROMPT DIRECTIVAS 2 Y 3) */}
+      {/* TAB: APERTURA ECONÓMICA MANUAL DIFERIDA / SALDOS INICIALES (ETAPA V) */}
       {tabActiva === "aperturas" && (
         <div className="space-y-6" data-testid="seccion-aperturas-tesoreria">
           {/* Banner Informativo Directiva de Apertura */}
           <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200 text-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-sm">
             <div className="flex items-center gap-2.5">
-              <span className="text-xl">⚙️</span>
+              <span className="text-xl">📋</span>
               <div>
-                <p className="font-bold text-sm">Configuración de Saldos Iniciales / Apertura Oficial en $0</p>
-                <p className="text-[11px] text-blue-700 dark:text-blue-300">
-                  Todos los saldos abren estrictamente en $0 (fondos físicos, digitales y obligaciones). Toda modificación de apertura genera auditoría append-only inmutable con motivo obligatorio. Si el fondo ya posee movimientos, la alteración silenciosa queda bloqueada.
+                <div className="flex items-center gap-2">
+                  <p className="font-bold text-sm">APERTURA ECONÓMICA / SALDOS INICIALES</p>
+                  {saldosApertura?.apertura_completa ? (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                      ✅ APERTURA COMPLETA ({saldosApertura?.conteo_abiertos ?? 0}/10)
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                      ⏳ APERTURA DIFERIDA ({saldosApertura?.conteo_pendientes ?? 10} pendientes)
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-0.5">
+                  Directiva del Propietario: Los fondos sin saldo inicial confirmado permanecen en estado explícito <strong>PENDIENTE DE APERTURA</strong> (sin saldos ficticios ni ceros arbitrarios). Toda carga o ajuste genera auditoría inmutable append-only.
                 </p>
                 {errorAperturas && <p className="text-red-600 font-bold mt-1">{errorAperturas}</p>}
               </div>
@@ -5310,9 +5351,9 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
           <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <span>💵</span> 2.1. Fondos Físicos de Tesorería
+                <span>💵</span> 1. Fondos Físicos de Mostrador y Bóveda
               </h3>
-              <span className="text-xs text-gray-400 font-mono">Total: {formatMoney(saldosApertura?.total_fondos_fisicos_cents ?? 0)}</span>
+              <span className="text-xs text-gray-400 font-mono">Total Apertura: {formatMoney(saldosApertura?.total_fondos_fisicos_cents ?? 0)}</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left" data-testid="tabla-apertura-fisicos">
@@ -5322,50 +5363,56 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
                     <th className="py-2 px-3">Fondo Físico</th>
                     <th className="py-2 px-3 text-right">Saldo Inicial Apertura</th>
                     <th className="py-2 px-3 text-right">Saldo Actual Libros</th>
-                    <th className="py-2 px-3 text-center">Estado Configuración</th>
+                    <th className="py-2 px-3 text-center">Estado de Apertura</th>
                     <th className="py-2 px-3 text-right">Acción</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                  {saldosApertura?.fondos_fisicos.map((f) => (
-                    <tr key={f.codigo} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition">
-                      <td className="py-2.5 px-3 font-mono font-bold text-gray-900 dark:text-gray-100">{f.codigo}</td>
-                      <td className="py-2.5 px-3 font-semibold text-gray-800 dark:text-gray-200">{f.nombre}</td>
-                      <td className="py-2.5 px-3 text-right font-mono font-bold text-gray-900 dark:text-gray-100">
-                        {formatMoney(f.saldo_inicial_cents)}
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-mono text-gray-500">
-                        {formatMoney(f.saldo_actual_cents)}
-                      </td>
-                      <td className="py-2.5 px-3 text-center">
-                        {f.estado_configuracion === "CONFIGURADO" ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-                            CONFIGURADO {f.configurado_por ? `(${f.configurado_por})` : ""}
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
-                            $0 PREDETERMINADO
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setModalEditarApertura(f);
-                            setNuevoSaldoAperturaInput((f.saldo_inicial_cents / 100).toFixed(2));
-                            setMotivoAperturaInput("");
-                            setReferenciaAperturaInput("");
-                            setConfirmandoApertura(false);
-                          }}
-                          data-testid={`btn-configurar-apertura-${f.codigo}`}
-                          className="px-2.5 py-1 text-xs font-semibold rounded bg-[#C97B5A] hover:bg-[#b06748] text-white shadow-sm transition"
-                        >
-                          Configurar
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {saldosApertura?.fondos_fisicos.map((f) => {
+                    const isOpened = f.estado_apertura === "OPENED" || f.estado_configuracion === "CONFIGURADO";
+                    return (
+                      <tr key={f.codigo} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition">
+                        <td className="py-2.5 px-3 font-mono font-bold text-gray-900 dark:text-gray-100">{f.codigo}</td>
+                        <td className="py-2.5 px-3 font-semibold text-gray-800 dark:text-gray-200">
+                          {f.nombre}
+                          {f.naturaleza && <span className="block text-[10px] text-gray-400 font-normal">{f.naturaleza}</span>}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono font-bold text-gray-900 dark:text-gray-100">
+                          {isOpened ? formatMoney(f.saldo_inicial_cents) : <span className="text-amber-600 dark:text-amber-400 font-normal text-[11px]">PENDIENTE</span>}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono text-gray-500">
+                          {formatMoney(f.saldo_actual_cents)}
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          {isOpened ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                              ABIERTO {f.configurado_por ? `(${f.configurado_por})` : ""}
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                              {f.subestado_apertura === "MOVIMIENTOS_POSTERIORES_REGISTRADOS"
+                                ? "SALDO INICIAL PENDIENTE — MOVIMIENTOS POSTERIORES"
+                                : "PENDIENTE DE APERTURA"}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => abrirModalApertura(f, isOpened)}
+                            data-testid={`btn-configurar-apertura-${f.codigo}`}
+                            className={`px-2.5 py-1 text-xs font-semibold rounded text-white shadow-sm transition ${
+                              isOpened
+                                ? "bg-indigo-600 hover:bg-indigo-700"
+                                : "bg-[#C97B5A] hover:bg-[#b06748]"
+                            }`}
+                          >
+                            {isOpened ? "✏️ Ajuste" : "Configurar"}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -5375,9 +5422,9 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
           <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <span>💳</span> 2.2. Cuentas Digitales y Tránsito
+                <span>💳</span> 2. Cuentas Digitales y Plataformas
               </h3>
-              <span className="text-xs text-gray-400 font-mono">Total: {formatMoney(saldosApertura?.total_cuentas_digitales_cents ?? 0)}</span>
+              <span className="text-xs text-gray-400 font-mono">Total Apertura: {formatMoney(saldosApertura?.total_cuentas_digitales_cents ?? 0)}</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left" data-testid="tabla-apertura-digitales">
@@ -5387,50 +5434,56 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
                     <th className="py-2 px-3">Cuenta Digital</th>
                     <th className="py-2 px-3 text-right">Saldo Inicial Apertura</th>
                     <th className="py-2 px-3 text-right">Saldo Actual Libros</th>
-                    <th className="py-2 px-3 text-center">Estado Configuración</th>
+                    <th className="py-2 px-3 text-center">Estado de Apertura</th>
                     <th className="py-2 px-3 text-right">Acción</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                  {saldosApertura?.cuentas_digitales.map((c) => (
-                    <tr key={c.codigo} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition">
-                      <td className="py-2.5 px-3 font-mono font-bold text-gray-900 dark:text-gray-100">{c.codigo}</td>
-                      <td className="py-2.5 px-3 font-semibold text-gray-800 dark:text-gray-200">{c.nombre}</td>
-                      <td className="py-2.5 px-3 text-right font-mono font-bold text-gray-900 dark:text-gray-100">
-                        {formatMoney(c.saldo_inicial_cents)}
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-mono text-gray-500">
-                        {formatMoney(c.saldo_actual_cents)}
-                      </td>
-                      <td className="py-2.5 px-3 text-center">
-                        {c.estado_configuracion === "CONFIGURADO" ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-                            CONFIGURADO {c.configurado_por ? `(${c.configurado_por})` : ""}
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
-                            $0 PREDETERMINADO
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setModalEditarApertura(c);
-                            setNuevoSaldoAperturaInput((c.saldo_inicial_cents / 100).toFixed(2));
-                            setMotivoAperturaInput("");
-                            setReferenciaAperturaInput("");
-                            setConfirmandoApertura(false);
-                          }}
-                          data-testid={`btn-configurar-apertura-${c.codigo}`}
-                          className="px-2.5 py-1 text-xs font-semibold rounded bg-[#C97B5A] hover:bg-[#b06748] text-white shadow-sm transition"
-                        >
-                          Configurar
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {saldosApertura?.cuentas_digitales.map((c) => {
+                    const isOpened = c.estado_apertura === "OPENED" || c.estado_configuracion === "CONFIGURADO";
+                    return (
+                      <tr key={c.codigo} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition">
+                        <td className="py-2.5 px-3 font-mono font-bold text-gray-900 dark:text-gray-100">{c.codigo}</td>
+                        <td className="py-2.5 px-3 font-semibold text-gray-800 dark:text-gray-200">
+                          {c.nombre}
+                          {c.naturaleza && <span className="block text-[10px] text-gray-400 font-normal">{c.naturaleza}</span>}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono font-bold text-gray-900 dark:text-gray-100">
+                          {isOpened ? formatMoney(c.saldo_inicial_cents) : <span className="text-amber-600 dark:text-amber-400 font-normal text-[11px]">PENDIENTE</span>}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono text-gray-500">
+                          {formatMoney(c.saldo_actual_cents)}
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          {isOpened ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                              ABIERTO {c.configurado_por ? `(${c.configurado_por})` : ""}
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                              {c.subestado_apertura === "MOVIMIENTOS_POSTERIORES_REGISTRADOS"
+                                ? "SALDO INICIAL PENDIENTE — MOVIMIENTOS POSTERIORES"
+                                : "PENDIENTE DE APERTURA"}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => abrirModalApertura(c, isOpened)}
+                            data-testid={`btn-configurar-apertura-${c.codigo}`}
+                            className={`px-2.5 py-1 text-xs font-semibold rounded text-white shadow-sm transition ${
+                              isOpened
+                                ? "bg-indigo-600 hover:bg-indigo-700"
+                                : "bg-[#C97B5A] hover:bg-[#b06748]"
+                            }`}
+                          >
+                            {isOpened ? "✏️ Ajuste" : "Configurar"}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -5440,9 +5493,9 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
           <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <span>📋</span> 2.3. Obligaciones y Cuentas Corrientes
+                <span>📋</span> 3. Obligaciones Iniciales con Proveedores
               </h3>
-              <span className="text-xs text-amber-500 font-mono font-bold">Total: {formatMoney(saldosApertura?.total_obligaciones_cents ?? 0)}</span>
+              <span className="text-xs text-amber-500 font-mono font-bold">Total Deuda Inicial: {formatMoney(saldosApertura?.total_obligaciones_cents ?? 0)}</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left" data-testid="tabla-apertura-obligaciones">
@@ -5451,47 +5504,48 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
                     <th className="py-2 px-3">Código</th>
                     <th className="py-2 px-3">Obligación / Contraparte</th>
                     <th className="py-2 px-3 text-right">Deuda Inicial Apertura</th>
-                    <th className="py-2 px-3 text-center">Estado Configuración</th>
+                    <th className="py-2 px-3 text-center">Estado de Apertura</th>
                     <th className="py-2 px-3 text-right">Acción</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                  {saldosApertura?.obligaciones.map((ob) => (
-                    <tr key={ob.codigo} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition">
-                      <td className="py-2.5 px-3 font-mono font-bold text-gray-900 dark:text-gray-100">{ob.codigo}</td>
-                      <td className="py-2.5 px-3 font-semibold text-gray-800 dark:text-gray-200">{ob.nombre}</td>
-                      <td className="py-2.5 px-3 text-right font-mono font-bold text-amber-600 dark:text-amber-400">
-                        {formatMoney(ob.saldo_inicial_cents)}
-                      </td>
-                      <td className="py-2.5 px-3 text-center">
-                        {ob.estado_configuracion === "CONFIGURADO" ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-                            CONFIGURADO {ob.configurado_por ? `(${ob.configurado_por})` : ""}
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
-                            $0 PREDETERMINADO
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setModalEditarApertura(ob);
-                            setNuevoSaldoAperturaInput((ob.saldo_inicial_cents / 100).toFixed(2));
-                            setMotivoAperturaInput("");
-                            setReferenciaAperturaInput("");
-                            setConfirmandoApertura(false);
-                          }}
-                          data-testid={`btn-configurar-apertura-${ob.codigo}`}
-                          className="px-2.5 py-1 text-xs font-semibold rounded bg-[#C97B5A] hover:bg-[#b06748] text-white shadow-sm transition"
-                        >
-                          Configurar
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {saldosApertura?.obligaciones.map((ob) => {
+                    const isOpened = ob.estado_apertura === "OPENED" || ob.estado_configuracion === "CONFIGURADO";
+                    return (
+                      <tr key={ob.codigo} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition">
+                        <td className="py-2.5 px-3 font-mono font-bold text-gray-900 dark:text-gray-100">{ob.codigo}</td>
+                        <td className="py-2.5 px-3 font-semibold text-gray-800 dark:text-gray-200">{ob.nombre}</td>
+                        <td className="py-2.5 px-3 text-right font-mono font-bold text-amber-600 dark:text-amber-400">
+                          {isOpened ? formatMoney(ob.saldo_inicial_cents) : <span className="text-amber-600 dark:text-amber-400 font-normal text-[11px]">PENDIENTE</span>}
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          {isOpened ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                              ABIERTO {ob.configurado_por ? `(${ob.configurado_por})` : ""}
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                              PENDIENTE DE CARGA
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => abrirModalApertura(ob, isOpened)}
+                            data-testid={`btn-configurar-apertura-${ob.codigo}`}
+                            className={`px-2.5 py-1 text-xs font-semibold rounded text-white shadow-sm transition ${
+                              isOpened
+                                ? "bg-indigo-600 hover:bg-indigo-700"
+                                : "bg-[#C97B5A] hover:bg-[#b06748]"
+                            }`}
+                          >
+                            {isOpened ? "✏️ Ajuste" : "Configurar"}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -5501,22 +5555,22 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
           <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <span>📜</span> 3.4. Pista de Auditoría de Aperturas y Saldos Iniciales (Append-Only)
+                <span>📜</span> 4. Pista de Auditoría de Aperturas y Ajustes Compensatorios (Append-Only)
               </h3>
-              <span className="text-xs text-gray-400 font-mono">{historialAperturas.length} registros</span>
+              <span className="text-xs text-gray-400 font-mono">{historialAperturas.length} registros auditados</span>
             </div>
             <div className="overflow-x-auto max-h-96">
               <table className="w-full text-xs text-left" data-testid="tabla-historial-aperturas">
                 <thead className="text-[11px] text-gray-500 bg-gray-50 dark:bg-gray-800/50 uppercase border-y border-gray-100 dark:border-gray-800 sticky top-0">
                   <tr>
                     <th className="py-2 px-3">Fecha y Hora</th>
+                    <th className="py-2 px-3">Operación</th>
                     <th className="py-2 px-3">Ítem</th>
-                    <th className="py-2 px-3">Categoría</th>
                     <th className="py-2 px-3 text-right">Saldo Anterior</th>
                     <th className="py-2 px-3 text-right">Saldo Nuevo</th>
                     <th className="py-2 px-3">Responsable</th>
                     <th className="py-2 px-3">Motivo Obligatorio</th>
-                    <th className="py-2 px-3">Referencia</th>
+                    <th className="py-2 px-3">Comprobante / Ref</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -5532,14 +5586,18 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
                           second: "2-digit",
                         })}
                       </td>
+                      <td className="py-2 px-3 whitespace-nowrap">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                          h.tipo_operacion === "AJUSTE_COMPENSATORIO"
+                            ? "bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300"
+                            : "bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300"
+                        }`}>
+                          {h.tipo_operacion || (h.es_apertura_inicial ? "APERTURA_INICIAL" : "AJUSTE")}
+                        </span>
+                      </td>
                       <td className="py-2 px-3 font-semibold text-gray-900 dark:text-gray-100 whitespace-nowrap">
                         <span className="font-mono text-gray-500 mr-1.5">{h.item_codigo}</span>
                         {h.item_nombre}
-                      </td>
-                      <td className="py-2 px-3 whitespace-nowrap">
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
-                          {h.categoria}
-                        </span>
                       </td>
                       <td className="py-2 px-3 text-right font-mono text-gray-500 whitespace-nowrap">
                         {formatMoney(h.saldo_anterior_cents)}
@@ -5565,13 +5623,16 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
         </div>
       )}
 
-      {/* MODAL: CONFIGURAR SALDO INICIAL CON CONFIRMACIÓN OBLIGATORIA */}
+      {/* MODAL: ASISTENTE DE APERTURA MANUAL / AJUSTE COMPENSATORIO */}
       {modalEditarApertura && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" data-testid="modal-configurar-apertura">
-          <div className="bg-white dark:bg-gray-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-800 space-y-4">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-800 space-y-4 max-h-[90vh] overflow-y-auto">
             <div>
               <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <span>⚙️</span> Configurar Saldo Inicial
+                <span>{tipoOperacionInput === "AJUSTE_COMPENSATORIO" ? "✏️" : "🟢"}</span>
+                {tipoOperacionInput === "AJUSTE_COMPENSATORIO"
+                  ? "Registrar Ajuste Compensatorio Auditado"
+                  : "Asistente de Apertura Económica Inicial"}
               </h3>
               <p className="text-xs text-gray-500 mt-0.5">
                 {modalEditarApertura.codigo} — {modalEditarApertura.nombre} ({modalEditarApertura.categoria})
@@ -5579,31 +5640,39 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
             </div>
 
             <div className="bg-amber-50 dark:bg-amber-950/40 p-3 rounded-lg border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-200 space-y-1">
-              <p className="font-semibold">⚠️ Regla de Inmutabilidad Económica:</p>
+              <p className="font-semibold">⚠️ Regla Económica de Inmutabilidad:</p>
               <p>
-                Esta modificación se registrará inmutablemente en la pista de auditoría. Si el fondo u obligación ya registra movimientos, el sistema bloqueará la alteración silenciosa.
+                {tipoOperacionInput === "AJUSTE_COMPENSATORIO"
+                  ? "Esta operación generará un ajuste compensatorio sin sobrescribir la apertura original ni reescribir la historia contable."
+                  : "Esta carga confirmará el saldo real inicial del fondo. Para efectivo físico, debe corresponder al conteo presencial. Para plataformas, al saldo oficial en pantalla."}
               </p>
             </div>
 
             <form onSubmit={handleGuardarSaldoInicial} className="space-y-3.5 text-xs">
               <div className="grid grid-cols-2 gap-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800">
                 <div>
-                  <span className="text-gray-500 block text-[10px] uppercase font-bold">Valor Anterior</span>
+                  <span className="text-gray-500 block text-[10px] uppercase font-bold">Saldo Inicial Previo</span>
                   <span className="text-base font-bold font-mono text-gray-700 dark:text-gray-300">
                     {formatMoney(modalEditarApertura.saldo_inicial_cents)}
                   </span>
                 </div>
                 <div>
-                  <span className="text-gray-500 block text-[10px] uppercase font-bold">Valor Nuevo</span>
+                  <span className="text-gray-500 block text-[10px] uppercase font-bold">Nuevo Saldo Confirmado</span>
                   <span className="text-base font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                    {formatMoney(parseMoney(nuevoSaldoAperturaInput))}
+                    {formatMoney((() => {
+                      try {
+                        return nuevoSaldoAperturaInput && nuevoSaldoAperturaInput.trim() ? parseMoney(nuevoSaldoAperturaInput) : 0;
+                      } catch {
+                        return 0;
+                      }
+                    })())}
                   </span>
                 </div>
               </div>
 
               <div>
                 <label className="block text-gray-700 dark:text-gray-300 font-semibold mb-1">
-                  Nuevo Saldo Inicial ($ ARS) *
+                  Importe Real Confirmado ($ ARS) *
                 </label>
                 <input
                   type="text"
@@ -5620,14 +5689,46 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
                 />
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-gray-700 dark:text-gray-300 font-semibold mb-1">
+                    Fecha y Hora de Corte *
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={fechaCorteInput}
+                    onChange={(e) => setFechaCorteInput(e.target.value)}
+                    disabled={confirmandoApertura || guardandoApertura}
+                    className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-gray-900 dark:text-gray-100 text-xs"
+                    data-testid="input-fecha-corte-apertura"
+                  />
+                </div>
+                <div>
+                  <label className="block text-gray-700 dark:text-gray-300 font-semibold mb-1">
+                    Naturaleza del Saldo *
+                  </label>
+                  <select
+                    value={naturalezaSaldoInput}
+                    onChange={(e) => setNaturalezaSaldoInput(e.target.value)}
+                    disabled={confirmandoApertura || guardandoApertura}
+                    className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-xs"
+                    data-testid="select-naturaleza-apertura"
+                  >
+                    <option value="EFECTIVO_CONTADO">💵 Efectivo Contado (Arqueo Físico)</option>
+                    <option value="SALDO_PLATAFORMA">📱 Saldo Digital en Plataforma</option>
+                    <option value="OBLIGACION_EXIGIBLE">📋 Obligación Exigible con Proveedor</option>
+                  </select>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-gray-700 dark:text-gray-300 font-semibold mb-1">
-                  Motivo de la Modificación * (Obligatorio para Auditoría)
+                  Motivo / Observación Obligatoria * (Mínimo 3 caracteres)
                 </label>
                 <textarea
                   required
                   rows={2}
-                  placeholder="Motivo formal de la apertura / regularización..."
+                  placeholder="Detalle del conteo físico, extracto bancario o justificación de apertura..."
                   value={motivoAperturaInput}
                   onChange={(e) => {
                     setMotivoAperturaInput(e.target.value);
@@ -5641,11 +5742,11 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
 
               <div>
                 <label className="block text-gray-700 dark:text-gray-300 font-semibold mb-1">
-                  Referencia de Autorización (Opcional)
+                  Comprobante o Referencia de Autorización
                 </label>
                 <input
                   type="text"
-                  placeholder="Ej: Acta Arqueo Conjunto, Firma Alan/Yilda"
+                  placeholder="Ej: Acta Arqueo Día D, Extracto MP #1234, Firma Alan/Yilda"
                   value={referenciaAperturaInput}
                   onChange={(e) => setReferenciaAperturaInput(e.target.value)}
                   disabled={confirmandoApertura || guardandoApertura}
@@ -5656,11 +5757,18 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
 
               {confirmandoApertura && (
                 <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-lg text-red-900 dark:text-red-200 space-y-1">
-                  <p className="font-bold text-xs">⚠️ ¿Confirmás guardar esta apertura?</p>
+                  <p className="font-bold text-xs">⚠️ ¿Confirmás asentar esta operación?</p>
                   <p className="text-[11px]">
                     El saldo inicial de <strong>{modalEditarApertura.codigo}</strong> cambiará de{" "}
                     <strong>{formatMoney(modalEditarApertura.saldo_inicial_cents)}</strong> a{" "}
-                    <strong>{formatMoney(parseMoney(nuevoSaldoAperturaInput))}</strong>.
+                    <strong>{formatMoney((() => {
+                      try {
+                        return nuevoSaldoAperturaInput && nuevoSaldoAperturaInput.trim() ? parseMoney(nuevoSaldoAperturaInput) : 0;
+                      } catch {
+                        return 0;
+                      }
+                    })())}</strong> mediante{" "}
+                    <span className="font-bold">{tipoOperacionInput}</span>.
                   </p>
                 </div>
               )}

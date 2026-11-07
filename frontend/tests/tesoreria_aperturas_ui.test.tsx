@@ -122,12 +122,15 @@ describe("TesoreriaLab — Pestaña de Saldos Iniciales / Apertura", () => {
     fireEvent.click(btnConfirmar);
 
     await waitFor(() => {
-      expect(modificarSpy).toHaveBeenCalledWith({
-        codigo: "1110",
-        saldo_nuevo_cents: 5000000,
-        motivo: "Fondo de cambio para inicio operativo",
-        referencia_autorizacion: undefined,
-      });
+      expect(modificarSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          codigo: "1110",
+          saldo_nuevo_cents: 5000000,
+          motivo: "Fondo de cambio para inicio operativo",
+          referencia_autorizacion: undefined,
+          tipo_operacion: "APERTURA_INICIAL",
+        })
+      );
       expect(screen.queryByTestId("modal-configurar-apertura")).not.toBeInTheDocument();
       expect(screen.getByTestId("btn-configurar-apertura-1110")).not.toBeDisabled();
     });

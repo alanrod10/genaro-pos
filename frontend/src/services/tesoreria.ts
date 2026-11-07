@@ -1156,7 +1156,7 @@ export const TesoreriaService = {
   async modificarSaldoInicial(payload: ModificarSaldoInicialPayload): Promise<any> {
     const res = await fetch(`${getApiBaseUrl()}/apertura/saldos-iniciales`, {
       method: "POST",
-      headers: getAuthHeaders(),
+      headers: getAuthHeaders(payload.idempotency_key || undefined),
       body: JSON.stringify(payload),
     });
     return handleResponse<any>(res);
