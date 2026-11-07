@@ -1067,11 +1067,11 @@ export const TesoreriaService = {
     return handleResponse<FondeoPendienteItem[]>(res);
   },
 
-  async ejecutarFondeoPendiente(fondeoId: number, observaciones?: string): Promise<any> {
+  async ejecutarFondeoPendiente(fondeoId: number, observaciones?: string, fondoOrigen?: string): Promise<any> {
     const res = await fetch(`${getApiBaseUrl()}/fondeos-pendientes/${fondeoId}/ejecutar`, {
       method: "POST",
       headers: getAuthHeaders(),
-      body: JSON.stringify({ observaciones }),
+      body: JSON.stringify({ observaciones, fondo_origen: fondoOrigen }),
     });
     return handleResponse<any>(res);
   },

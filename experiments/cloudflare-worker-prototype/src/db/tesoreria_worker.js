@@ -819,6 +819,10 @@ const TRANSFERENCIAS_PERMITIDAS = new Set([
   "1130->1110",
   "1110->1130",
   "1120->1130",
+  "1110->1160",
+  "1120->1160",
+  "1110->1150",
+  "1120->1150",
   "1160->1130",
   "1110->1210",
   "1310->1110",
@@ -3106,20 +3110,20 @@ export async function aplicarLiquidacionPrepayOutboxWorker(
       client,
       {
         origin_fund_code: "1120",
-        destination_fund_code: "1130",
+        destination_fund_code: "1160",
         amount_cents: capTransfCents,
-        reason: `Compensación inmediata 1120 -> 1130 por capital PREPAY cobrado por transferencia (#${realCargaId})`,
+        reason: `Compensación inmediata 1120 -> 1160 por capital PREPAY cobrado por transferencia (#${realCargaId})`,
         evidence_reference: refEv,
       },
       usuario,
-      `${keyLimpia}_COMP_INIT_1120_1130`,
+      `${keyLimpia}_COMP_INIT_1120_1160`,
       { allowInternalSweepOrRepo: true }
     );
     await confirmarTrasladoWorker(
       client,
       tr.transfer_id,
       usuario,
-      `${keyLimpia}_COMP_CONF_1120_1130`
+      `${keyLimpia}_COMP_CONF_1120_1160`
     );
     movements.push(tr.exit_movement_id);
   }
@@ -3324,20 +3328,20 @@ export async function ejecutarCircuitoServicioTesoreriaWorker(
         client,
         {
           origin_fund_code: "1120",
-          destination_fund_code: "1130",
+          destination_fund_code: "1160",
           amount_cents: capTransfCents,
-          reason: `Compensación inmediata 1120 -> 1130 por capital PREPAY cobrado por transferencia (#${cargaId})`,
+          reason: `Compensación inmediata 1120 -> 1160 por capital PREPAY cobrado por transferencia (#${cargaId})`,
           evidence_reference: refEv,
         },
         usuario || "sistema",
-        `${baseKey}_COMP_INIT_1120_1130`,
+        `${baseKey}_COMP_INIT_1120_1160`,
         { allowInternalSweepOrRepo: true }
       );
       await confirmarTrasladoWorker(
         client,
         tr.transfer_id,
         usuario || "sistema",
-        `${baseKey}_COMP_CONF_1120_1130`
+        `${baseKey}_COMP_CONF_1120_1160`
       );
       movements.push(tr.exit_movement_id);
     }

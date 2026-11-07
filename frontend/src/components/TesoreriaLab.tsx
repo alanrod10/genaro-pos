@@ -1358,13 +1358,14 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
     }
   };
 
-  const handleEjecutarFondeo = async (fondeo: FondeoPendienteItem) => {
-    if (!window.confirm(`¿Confirmar fondeo físico de ${fondeo.monto_capital_formatted} desde ${fondeo.fondo_origen_esperado} hacia ${fondeo.fondo_destino_custodia}?`)) {
+  const handleEjecutarFondeo = async (fondeo: FondeoPendienteItem, fondoOrigen?: string) => {
+    const origenElegido = fondoOrigen || fondeo.fondo_origen_esperado || "1110";
+    if (!window.confirm(`¿Confirmar fondeo físico de ${fondeo.monto_capital_formatted} desde ${origenElegido} hacia ${fondeo.fondo_destino_custodia}?`)) {
       return;
     }
     setEjecutandoFondeoId(fondeo.id);
     try {
-      await TesoreriaService.ejecutarFondeoPendiente(fondeo.id);
+      await TesoreriaService.ejecutarFondeoPendiente(fondeo.id, origenElegido);
       await Promise.all([cargarFondeosPendientes(filtroCircuitoFondeo), cargarDatos()]);
     } catch (err: any) {
       alert(err.message || "Error al ejecutar fondeo físico pendiente.");
@@ -4402,8 +4403,8 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
             </div>
           )}
 
-          {/* Grilla de 5 Indicadores Contables Obligatorios */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+          {/* Grilla de Indicadores Contables David (5 Obligatorios + 2 Desglose Digital 1220) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-3.5">
             {/* KPI 1: Obligación Pendiente */}
             <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border-2 border-[#C97B5A] shadow-sm">
               <span className="text-[10px] font-bold uppercase tracking-wider text-[#C97B5A] block">
@@ -4481,6 +4482,38 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
               </span>
               <span className="text-[10px] text-gray-400 mt-0.5 block">
                 Efectivo Prepay Acumulado
+              </span>
+            </div>
+
+            {/* KPI 6: Saldo Digital Disponible en 1220 */}
+            <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-600 dark:text-cyan-400 block">
+                Digital Disp. 1220
+              </span>
+              <span
+                className="text-2xl font-black text-gray-900 dark:text-gray-100 font-mono mt-1 block"
+                data-testid="kpi-disponible-1220"
+              >
+                {estadoCCDavid?.saldo_disponible_1220_formatted || "$0,00"}
+              </span>
+              <span className="text-[10px] text-gray-400 mt-0.5 block">
+                Saldo Digital Prepay
+              </span>
+            </div>
+
+            {/* KPI 7: Capital Consumido en Recargas */}
+            <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 block">
+                Capital Consumido
+              </span>
+              <span
+                className="text-2xl font-black text-gray-900 dark:text-gray-100 font-mono mt-1 block"
+                data-testid="kpi-capital-consumido"
+              >
+                {estadoCCDavid?.capital_consumido_recargas_formatted || "$0,00"}
+              </span>
+              <span className="text-[10px] text-gray-400 mt-0.5 block">
+                Recargas Prepay
               </span>
             </div>
           </div>
@@ -5011,15 +5044,28 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
                         </td>
                         <td className="py-2.5 px-3 text-right whitespace-nowrap">
                           {f.estado === "PENDIENTE" ? (
-                            <button
-                              type="button"
-                              onClick={() => handleEjecutarFondeo(f)}
-                              disabled={ejecutandoFondeoId === f.id}
-                              data-testid={`btn-ejecutar-fondeo-${f.id}`}
-                              className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-[11px] transition shadow-sm disabled:opacity-50"
-                            >
-                              {ejecutandoFondeoId === f.id ? "Ejecutando..." : "⚡ Fondeo a 1150"}
-                            </button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleEjecutarFondeo(f, f.fondo_origen_esperado || "1110")}
+                                disabled={ejecutandoFondeoId === f.id}
+                                data-testid={`btn-ejecutar-fondeo-${f.id}`}
+                                className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-[11px] transition shadow-sm disabled:opacity-50"
+                                title={`Regularizar fondeo desde ${f.fondo_origen_esperado || "1110"}`}
+                              >
+                                {ejecutandoFondeoId === f.id ? "Ejecutando..." : `⚡ Desde ${f.fondo_origen_esperado || "1110"}`}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleEjecutarFondeo(f, "1120")}
+                                disabled={ejecutandoFondeoId === f.id}
+                                data-testid={`btn-ejecutar-fondeo-1120-${f.id}`}
+                                className="px-2 py-1 bg-slate-600 hover:bg-slate-700 text-white font-bold rounded-lg text-[11px] transition shadow-sm disabled:opacity-50"
+                                title="Regularizar fondeo desde 1120 (Drugstore Acumulado)"
+                              >
+                                {ejecutandoFondeoId === f.id ? "..." : "Desde 1120"}
+                              </button>
+                            </div>
                           ) : (
                             <span className="text-[10px] text-gray-400 font-mono" title={f.movement_id_traslado || ""}>
                               {f.movement_id_traslado ? `mov: ${f.movement_id_traslado.substring(0, 8)}...` : "Regularizado"}

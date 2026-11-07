@@ -1895,6 +1895,7 @@ class ReconocimientoDeudaHistoricaEzequielRequest(BaseModel):
 
 class EjecutarFondeoRequest(BaseModel):
     observaciones: Optional[str] = Field(None, description="Notas de la ejecución del fondeo")
+    fondo_origen: Optional[str] = Field(None, description="Fondo origen alternativo autorizado ('1110' o '1120')")
 
 
 @router.get("/cuenta-corriente/ezequiel", summary="Consultar estado y movimientos de la Cuenta Corriente Claro / Ezequiel")
@@ -2035,7 +2036,12 @@ def post_ejecutar_fondeo(
 ):
     conn = _get_lab_db()
     try:
-        res = ejecutar_fondeo_pendiente(conn, fondeo_id=fondeo_id, actor=user.username)
+        res = ejecutar_fondeo_pendiente(
+            conn,
+            fondeo_id=fondeo_id,
+            actor=user.username,
+            fondo_origen=payload.fondo_origen if payload else None,
+        )
     except ErrorSaldoInsuficienteEzequiel as e:
         conn.close()
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))

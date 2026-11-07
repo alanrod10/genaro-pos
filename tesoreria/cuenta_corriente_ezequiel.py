@@ -770,9 +770,13 @@ def ejecutar_fondeo_pendiente(
     conn: sqlite3.Connection,
     fondeo_id: int,
     actor: str,
+    fondo_origen: Optional[str] = None,
     auto_commit: bool = True,
 ) -> Dict[str, Any]:
-    """Ejecuta el traslado de fondos para un fondeo pendiente, verificando disponibilidad real sin sobregiro."""
+    """Ejecuta el traslado de fondos para un fondeo pendiente, verificando disponibilidad real sin sobregiro.
+    
+    Permite regularizar tanto desde 1110 (Drugstore Diario) como desde 1120 (Drugstore Acumulado).
+    """
     cursor = conn.cursor()
     cursor.execute(
         """
@@ -796,26 +800,52 @@ def ejecutar_fondeo_pendiente(
         cursor.close()
         raise ErrorValidacionEzequiel(f"El fondeo #{fondeo_id} fue cancelado previamente.")
 
-    disp_origen = _obtener_saldo_disponible_fondo(conn, origen)
-    if disp_origen < monto:
-        cursor.close()
-        raise ErrorSaldoInsuficienteEzequiel(
-            f"Saldo insuficiente en {origen} para completar fondeo: disponible {formatMoney(disp_origen)}, requerido {formatMoney(monto)}."
-        )
+    # Selección y validación del fondo origen (1110 o 1120)
+    if fondo_origen and fondo_origen.strip():
+        fo_clean = fondo_origen.strip()
+        if fo_clean not in ("1110", "1120"):
+            cursor.close()
+            raise ErrorValidacionEzequiel(
+                f"Fondo de origen '{fo_clean}' no autorizado para fondeos. Debe ser '1110' o '1120'."
+            )
+        origen_final = fo_clean
+        disp_origen = _obtener_saldo_disponible_fondo(conn, origen_final)
+        if disp_origen < monto:
+            cursor.close()
+            raise ErrorSaldoInsuficienteEzequiel(
+                f"Saldo insuficiente en {origen_final} para completar fondeo: disponible {formatMoney(disp_origen)}, requerido {formatMoney(monto)}."
+            )
+    else:
+        disp_origen = _obtener_saldo_disponible_fondo(conn, origen)
+        if disp_origen >= monto:
+            origen_final = origen
+        else:
+            alt = "1120" if origen == "1110" else "1110"
+            disp_alt = _obtener_saldo_disponible_fondo(conn, alt)
+            if disp_alt >= monto:
+                origen_final = alt
+            else:
+                cursor.close()
+                raise ErrorSaldoInsuficienteEzequiel(
+                    f"Saldo insuficiente en Drugstore para completar fondeo: "
+                    f"disponible en {origen}: {formatMoney(disp_origen)}, en {alt}: {formatMoney(disp_alt)}, "
+                    f"requerido {formatMoney(monto)}."
+                )
 
-    context = "FONDEO_CUSTODIA_CLARO" if circuito == "CLARO" else "PREPAY_DRAWER_SWEEP"
+    context = "FONDEO_CUSTODIA_CLARO" if circuito == "CLARO" else "PREPAY_COMPENSATION"
+    ev_ref = f"TICKET_{srv_id}" if circuito == "PREPAY" else f"SRV_{srv_id}"
     ahora_utc = datetime.now(timezone.utc).isoformat()
 
     try:
         trf = transferFunds(
             conn=conn,
-            origin_fund_code=origen,
+            origin_fund_code=origen_final,
             destination_fund_code=destino,
             amount_cents=monto,
             dispatched_by=actor,
-            reason=f"Fondeo físico custodia {circuito} para servicio #{srv_id}",
+            reason=f"Fondeo físico custodia {circuito} para servicio #{srv_id} desde {origen_final}",
             idempotency_key=f"EXEC-{key}",
-            evidence_reference=f"SRV_{srv_id}",
+            evidence_reference=ev_ref,
             context=context,
             occurred_at=ahora_utc,
             auto_commit=False,
@@ -832,11 +862,12 @@ def ejecutar_fondeo_pendiente(
             """
             UPDATE tesoreria_fondeos_pendientes
             SET estado = 'FONDEADO',
+                fondo_origen_esperado = ?,
                 movement_id_traslado = ?,
                 funded_at_utc = ?
             WHERE id = ?;
             """,
-            (f"TRANSFER_{trf['transfer_id']}", ahora_utc, f_id),
+            (origen_final, f"TRANSFER_{trf['transfer_id']}", ahora_utc, f_id),
         )
 
         if auto_commit:

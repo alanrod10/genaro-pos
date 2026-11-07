@@ -102,19 +102,17 @@ def clasificar_servicio(servicio: Optional[str], plataforma_origen: Optional[str
     """Clasifica de forma canónica el nombre de un servicio o carga.
 
     Retorna:
-    - 'CLARO': recargas y pagos de Claro ('Claro', 'CLARO', 'Claro Recarga', etc. o plataforma CLARO COMERCIOS).
-    - 'SUBE_MP': cargas SUBE abonadas vía MercadoPago ('SUBE (MP)', 'SUBE MP',
-      'SUBE MercadoPago', 'SUBE - Mercado Pago', o plataforma MERCADO PAGO con destino SUBE).
-    - 'PREPAY': resto de servicios prepagos ('SUBE', 'Personal', 'Movistar',
-      'Tuenti', 'DirecTV', 'PREPAY', etc.).
+    - 'CLARO': recargas y pagos de Claro Comercios.
+    - 'SUBE_MP': cargas emitidas directamente desde Mercado Pago Propio (saldo digital 1210).
+    - 'PREPAY': resto de servicios prepagos mayoristas (David / 1220).
     """
     plat_norm = str(plataforma_origen or "").strip().upper()
     normalizado = " ".join(str(servicio or "").strip().lower().split())
+    if plat_norm == "MERCADO PAGO":
+        return "SUBE_MP"
     if "claro" in normalizado or plat_norm == "CLARO COMERCIOS":
         return "CLARO"
-    if "sube" in normalizado and ("mp" in normalizado or "mercado" in normalizado or plat_norm == "MERCADO PAGO"):
-        return "SUBE_MP"
-    if plat_norm == "MERCADO PAGO" and "sube" in normalizado:
+    if "sube" in normalizado and ("mp" in normalizado or "mercado" in normalizado):
         return "SUBE_MP"
     return "PREPAY"
 

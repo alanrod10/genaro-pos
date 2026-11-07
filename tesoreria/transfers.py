@@ -41,6 +41,8 @@ TRANSFERENCIAS_PERMITIDAS = {
     ("1130", "1110"),  # Prepay Efectivo -> Drugstore Diario (Cambio operativo de mostrador)
     ("1110", "1130"),  # Drugstore Diario -> Prepay Efectivo (Dotación de efectivo para recargas)
     ("1120", "1130"),  # Drugstore Acumulado -> Prepay Efectivo (Compensación física PREPAY transferencia y reposición)
+    ("1110", "1160"),  # Drugstore Diario -> Prepay Diario (Compensación física PREPAY transferencia)
+    ("1120", "1160"),  # Drugstore Acumulado -> Prepay Diario (Compensación física PREPAY transferencia)
     ("1160", "1130"),  # Prepay Diario Efectivo -> Prepay Efectivo (Barrido de cierre PREPAY)
     ("1110", "1210"),  # Drugstore Diario -> Mercado Pago Propio (Depósito bancario con comprobante)
     ("1310", "1110"),  # Tránsito Preventistas -> Drugstore Diario (Rendición de cobranzas en mostrador)
@@ -59,8 +61,8 @@ def validar_politica_traslado(
     if origin_fund_code == destination_fund_code:
         raise ErrorTraslado("El fondo origen y destino deben ser diferentes.")
 
-    # Excepción de dominio restrictiva: Fondeo de Custodia Claro (DEC-02)
-    if origin_fund_code == "1110" and destination_fund_code == "1150":
+    # Excepción de dominio restrictiva: Fondeo de Custodia Claro (DEC-02) desde 1110 o 1120
+    if origin_fund_code in ("1110", "1120") and destination_fund_code == "1150":
         ctx_upper = (context or "").strip().upper()
         if ctx_upper != "FONDEO_CUSTODIA_CLARO":
             raise ErrorTraslado(
@@ -70,7 +72,7 @@ def validar_politica_traslado(
             )
         if not evidence_reference or not evidence_reference.strip():
             raise ErrorTraslado(
-                "FONDEO CLARO: El traslado 1110 -> 1150 exige referencia obligatoria al servicio en evidence_reference."
+                f"FONDEO CLARO: El traslado {origin_fund_code} -> 1150 exige referencia obligatoria al servicio en evidence_reference."
             )
         return
 
@@ -255,8 +257,11 @@ def transferFunds(
     saldo_reservado_origen = _obtener_saldo_reservado_fondo(conn, fondo_origen["id"])
     disponible_origen = subtractMoney(saldo_origen, saldo_reservado_origen)
 
-    # Validación canónica y relacional para 1120 -> 1130 con base de datos
-    if origin_fund_code == "1120" and destination_fund_code == "1130":
+    # Validación canónica y relacional para 1120/1110 -> 1130/1160 con base de datos
+    if (origin_fund_code in ("1110", "1120") and destination_fund_code in ("1130", "1160")) and (
+        (context or "").strip().upper() in ("REPOSICION_PREVENTISTAS", "PREPAY_COMPENSATION")
+        or (origin_fund_code == "1120" and destination_fund_code == "1130")
+    ):
         ctx_upper = (context or "").strip().upper()
         if ctx_upper == "REPOSICION_PREVENTISTAS":
             raw_ref = (evidence_reference or "").strip()
@@ -356,16 +361,16 @@ def transferFunds(
                         f"(traslado #{dup_id}). Prohibida la doble compensación."
                     )
 
-    # Validación canónica para Fondeo Claro 1110 -> 1150
-    if origin_fund_code == "1110" and destination_fund_code == "1150":
+    # Validación canónica para Fondeo Claro 1110 / 1120 -> 1150
+    if origin_fund_code in ("1110", "1120") and destination_fund_code == "1150":
         ctx_upper = (context or "").strip().upper()
         if ctx_upper != "FONDEO_CUSTODIA_CLARO":
             raise ErrorTraslado(
-                "GOBERNANZA: El traslado 1110 -> 1150 requiere obligatoriamente contexto 'FONDEO_CUSTODIA_CLARO'."
+                f"GOBERNANZA: El traslado {origin_fund_code} -> 1150 requiere obligatoriamente contexto 'FONDEO_CUSTODIA_CLARO'."
             )
         if not evidence_reference or not evidence_reference.strip():
             raise ErrorTraslado(
-                "GOBERNANZA: El traslado 1110 -> 1150 requiere referencia obligatoria al servicio en evidence_reference."
+                f"GOBERNANZA: El traslado {origin_fund_code} -> 1150 requiere referencia obligatoria al servicio en evidence_reference."
             )
 
     # Validación canónica y relacional para 1110 -> 1130 con base de datos en contexto de reposición

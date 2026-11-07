@@ -85,23 +85,23 @@ flowchart TD
 1. **Drugstore Diario (`1110` en el sistema):**
    - Comienza cada jornada estrictamente en **$0**.
    - Concentra el efectivo de ventas de mercadería y entradas operativas directas de Drugstore.
-   - Al cerrar la jornada, el 100% del efectivo remanente se traslada a Drugstore Acumulado.
-2. **Drugstore Acumulado o General (`1111`):**
+   - Al cerrar la jornada, el 100% del efectivo remanente se traslada a Drugstore Acumulado (`1120`).
+2. **Drugstore Acumulado o General (`1120`):**
    - Es el reservorio de liquidez operativa del comercio.
    - Destinos autorizados: pago de proveedores comerciales, facturas de servicios del local, gastos generales, reposición de préstamos tomados de Prepay y retiros del titular.
-3. **Prepay Diario (`1112`):**
+3. **Prepay Diario (`1160`):**
    - Comienza cada jornada en **$0**.
    - Recibe el capital en efectivo de las recargas realizadas a través de la plataforma Prepay (SUBE, Personal, Movistar, Claro) o la compensación en efectivo proveniente de Drugstore cuando el cliente paga por transferencia.
    - **Prohibición absoluta:** Nunca debe mezclarse con la caja de Drugstore Diario ni absorberse en el fondo general del negocio.
-   - Al finalizar la jornada, se cuenta el dinero físico remanente y se traslada íntegramente a Prepay Acumulado.
-4. **Prepay Acumulado (`1113`):**
+   - Al finalizar la jornada, se cuenta el dinero físico remanente y se traslada íntegramente a Prepay Acumulado (`1130`).
+4. **Prepay Acumulado (`1130`):**
    - Fondo físico donde se concentra el capital histórico acumulado de Prepay.
    - **Destino prioritario y excluyente:** Liquidaciones presenciales con David.
    - Excepción controlada: Se puede utilizar de forma temporal para pagar preventistas cuando Drugstore carece de efectivo, generando automáticamente un pasivo interno por reponer.
-5. **Caja de Adicionales (`1114`):**
+5. **Caja de Adicionales (`1140`):**
    - Caja física independiente donde se depositan los adicionales cobrados en todas las recargas (SUBE, Personal, Movistar, Claro).
    - Representa la ganancia real y neta del servicio de recargas. No se entrega a David ni a Ezequiel.
-6. **Claro Físico (`1115`):**
+6. **Claro Físico (`1150`):**
    - Caja física destinada exclusivamente al capital de las recargas procesadas en Claro Comercios.
    - Se destina a la liquidación periódica con Ezequiel.
 
@@ -252,15 +252,16 @@ En las bases SQLite / libSQL de GenaroPOS V4, la tesorería está modelada media
 
 | Código | Nombre Canónico | Tipo | Categoría | Propósito en el Negocio |
 |:------:|-----------------|:----:|:---------:|-------------------------|
-| `1110` | **Drugstore Diario** | ACTIVO | Físico | Caja operativa diaria de mercadería. Abre en 0, cierra a 1111. |
-| `1111` | **Drugstore Acumulado** | ACTIVO | Físico | Fondo general de reserva. Paga gastos, cuentas y reposiciones. |
-| `1112` | **Prepay Diario** | ACTIVO | Físico | Capital de recargas Prepay del día. Abre en 0, cierra a 1113. |
-| `1113` | **Prepay Acumulado** | ACTIVO | Físico | Capital histórico Prepay. Destinado a liquidar con David. |
-| `1114` | **Caja de Adicionales** | ACTIVO | Físico | Ganancias por comisiones de recargas (SUBE/Personal/Mov/Claro). |
-| `1115` | **Claro Físico** | ACTIVO | Físico | Capital de recargas Claro Comercios para liquidar con Ezequiel. |
+| `1110` | **Drugstore Diario** | ACTIVO | Físico | Caja operativa diaria de mercadería. Abre en 0, cierra a 1120. |
+| `1120` | **Drugstore Acumulado** | ACTIVO | Físico | Fondo general de reserva. Paga gastos, cuentas y reposiciones. |
+| `1160` | **Prepay Diario** | ACTIVO | Físico | Capital de recargas Prepay del día. Abre en 0, cierra a 1130. |
+| `1130` | **Prepay Acumulado** | ACTIVO | Físico | Capital histórico Prepay. Destinado a liquidar con David. |
+| `1140` | **Caja de Adicionales** | ACTIVO | Físico | Ganancias por comisiones de recargas (SUBE/Personal/Mov/Claro). |
+| `1150` | **Claro Físico** | ACTIVO | Físico | Capital de recargas Claro Comercios para liquidar con Ezequiel. |
 | `1210` | **Mercado Pago Digital**| ACTIVO | Digital | Saldo en cuenta virtual Mercado Pago. |
 | `1220` | **Prepay Digital** | ACTIVO | Digital | Saldo en portal Prepay para emitir recargas. |
 | `1230` | **Claro Digital** | ACTIVO | Digital | Saldo en portal Claro Comercios. |
+| `1310` | **Cobranzas en Tránsito**| ACTIVO | Transitorio | Anticipos transitorios a preventistas. |
 | `2110` | **Cuenta Corriente David**| PASIVO | Deuda Proveedor | Pasivo exigible por cargas Prepay recibidas. |
 | `2120` | **Cuenta Corriente Ezequiel**| PASIVO | Deuda Proveedor | Pasivo exigible por cargas Claro Comercios. |
 | `2130` | **Anticipos Preventistas Prepay** | PASIVO / REGULADORA | Deuda Interna | Control de fondos Prepay prestados transitoriamente a compras. |

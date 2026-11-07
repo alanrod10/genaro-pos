@@ -572,6 +572,10 @@ export interface EstadoCuentaDavidResponse {
   total_deuda_historica_formatted: string;
   saldo_disponible_1130_cents: number;
   saldo_disponible_1130_formatted: string;
+  saldo_disponible_1220_cents?: number;
+  saldo_disponible_1220_formatted?: string;
+  capital_consumido_recargas_cents?: number;
+  capital_consumido_recargas_formatted?: string;
   fecha_corte?: string | null;
   cantidad_movimientos: number;
   movimientos: MovimientoCCDavid[];

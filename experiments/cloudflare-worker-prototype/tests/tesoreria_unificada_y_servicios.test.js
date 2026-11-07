@@ -528,10 +528,10 @@ test("Worker Unificado: Regla Económica PREPAY (Efectivo 1160+1140, Transferenc
   const mapFondos = Object.fromEntries(fondos.map((f) => [f.codigo, f.saldo_centavos]));
 
   assert.equal(mapFondos["1110"], 5000000); // Intacto
-  assert.equal(mapFondos["1120"], 100000); // $3.000 - $2.000 compensados a 1130
-  assert.equal(mapFondos["1130"], 200000); // +$2.000 por compensación de transferencia PREPAY
+  assert.equal(mapFondos["1120"], 100000); // $3.000 - $2.000 compensados a 1160
+  assert.equal(mapFondos["1130"], 0); // 1130 en $0 hasta cierre diario
   assert.equal(mapFondos["1140"], 20000); // $100 + $100 adicionales efectivo
-  assert.equal(mapFondos["1160"], 300000); // $2.000 + $1.000 capital PREPAY efectivo
+  assert.equal(mapFondos["1160"], 500000); // $2.000 + $1.000 capital efectivo + $2.000 compensación transf. (barre a 1130 al cierre)
   assert.equal(mapFondos["1210"], 210000); // $2.100 cobro transferencia PREPAY
   assert.equal(mapFondos["1220"], 465000); // $10.000 - $350 cargo diario - $2.000 - $1.000 - $2.000 = $4.650
 
