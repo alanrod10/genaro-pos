@@ -289,6 +289,20 @@ def test_punto_a_recarga_prepay_transferencia_sin_liquidez_encola_fondeo_pendien
     assert prepay_fondeos[0]["monto_capital_cents"] == 5000_00
     assert prepay_fondeos[0]["fondo_destino_custodia"] == "1160"
 
+    # Regularizar fondeo pendiente PREPAY dinámicamente hacia 1160
+    registerEntry(tes_conn, "1120", 10000_00, "FONDEO", "Fondo tesoro para regularizar", "admin")
+    res_reg = ejecutar_fondeo_pendiente(
+        conn=tes_conn,
+        fondeo_id=prepay_fondeos[0]["id"],
+        actor="admin",
+        fondo_origen="1120",
+    )
+    assert res_reg["estado"] == "FONDEADO"
+    assert res_reg["fondo_destino"] == "1160"
+    assert _get_saldo(tes_conn, "1120") == 5000_00
+    assert _get_saldo(tes_conn, "1160") == 5000_00
+    assert _get_saldo(tes_conn, "1150") == 0  # Garantizar que jamás se desvió a 1150
+
 
 # =====================================================================
 # PUNTO B: Reconocimiento de Adicionales en recargas por transferencia
@@ -553,4 +567,66 @@ def test_punto_g_anticipos_preventistas_salida_1130_y_cascada_reposicion(env_v4)
     assert _get_saldo(tes_conn, "1110") == 3000_00
     # 1130 recuperó la totalidad del dinero prestado ($5.000 + $15.000 = $20.000)
     assert _get_saldo(tes_conn, "1130") == 20000_00
+
+
+def test_destino_dinamico_fondeos_pendientes_derivacion_segun_circuito(env_v4):
+    """Verifica que ejecutar_fondeo_pendiente derive dinámicamente el destino canónico:
+    1. Lee destino/fondo_destino/fondo_destino_custodia.
+    2. Si es PREPAY -> destino 1160 (Prepay Diario).
+    3. Si es CLARO -> destino 1150 (Claro Físico).
+    4. Si la tabla no tiene columna de destino, deriva según el circuito (1160 PREPAY / 1150 CLARO).
+    """
+    comm_conn, tes_conn, _, _ = env_v4
+
+    # Dotar 1110 de fondos para regularizaciones
+    registerEntry(tes_conn, "1110", 50000_00, "FONDEO", "Fondo para regularizaciones", "admin")
+
+    # Caso A: Fondeo CLARO leyendo columna -> transfiere a 1150
+    cur = tes_conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO tesoreria_fondeos_pendientes
+            (tipo_circuito, servicio_id, idempotency_key, monto_capital_cents, fondo_origen_esperado, fondo_destino_custodia, estado, actor)
+        VALUES ('CLARO', 201, 'fondeo-dinamico-claro-01', 3000_00, '1110', '1150', 'PENDIENTE', 'admin');
+        """
+    )
+    f_claro_id = cur.lastrowid
+    tes_conn.commit()
+    cur.close()
+
+    res_claro = ejecutar_fondeo_pendiente(tes_conn, f_claro_id, actor="admin", fondo_origen="1110")
+    assert res_claro["estado"] == "FONDEADO"
+    assert res_claro["fondo_destino"] == "1150"
+    assert _get_saldo(tes_conn, "1150") == 3000_00
+
+    # Caso B: Fondeo PREPAY leyendo columna -> transfiere a 1160
+    cur = tes_conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO tesoreria_prepay_coordinacion
+            (coordination_id, idempotency_key, request_hash, jornada_id, servicio_destino,
+             plataforma, monto_capital_cents, monto_adicional_cents, pago_efvo_cents, pago_transf_cents,
+             asume_cargo_diario, monto_cargo_cents, capital_reservation_id, fee_reservation_id,
+             estado, actor, commercial_ticket_id, created_at, updated_at)
+        VALUES ('coord-dinamico-01', 'fondeo-dinamico-prepay-01', 'hash01', 1, 'PERSONAL',
+                'PREPAY', 4000_00, 200_00, 0, 4200_00, 0, 0, 'res01', NULL, 'FULLY_APPLIED', 'admin', '202',
+                datetime('now'), datetime('now'));
+        """
+    )
+    cur.execute(
+        """
+        INSERT INTO tesoreria_fondeos_pendientes
+            (tipo_circuito, servicio_id, idempotency_key, monto_capital_cents, fondo_origen_esperado, fondo_destino_custodia, estado, actor)
+        VALUES ('PREPAY', 202, 'fondeo-dinamico-prepay-01', 4000_00, '1110', '1160', 'PENDIENTE', 'admin');
+        """
+    )
+    f_prepay_id = cur.lastrowid
+    tes_conn.commit()
+    cur.close()
+
+    res_prepay = ejecutar_fondeo_pendiente(tes_conn, f_prepay_id, actor="admin", fondo_origen="1110")
+    assert res_prepay["estado"] == "FONDEADO"
+    assert res_prepay["fondo_destino"] == "1160"
+    assert _get_saldo(tes_conn, "1160") == 4000_00
+
 

@@ -778,27 +778,51 @@ def ejecutar_fondeo_pendiente(
     Permite regularizar tanto desde 1110 (Drugstore Diario) como desde 1120 (Drugstore Acumulado).
     """
     cursor = conn.cursor()
-    cursor.execute(
-        """
-        SELECT id, tipo_circuito, servicio_id, monto_capital_cents, fondo_origen_esperado,
-               fondo_destino_custodia, estado, idempotency_key
-        FROM tesoreria_fondeos_pendientes
-        WHERE id = ?;
-        """,
-        (fondeo_id,),
-    )
-    row = cursor.fetchone()
-    if not row:
+    cursor.execute("PRAGMA table_info(tesoreria_fondeos_pendientes);")
+    cols_info = cursor.fetchall()
+    cols = [r[1] for r in cols_info]
+
+    cursor.execute("SELECT * FROM tesoreria_fondeos_pendientes WHERE id = ?;", (fondeo_id,))
+    row_tuple = cursor.fetchone()
+    if not row_tuple:
         cursor.close()
         raise ErrorValidacionEzequiel(f"Fondeo pendiente #{fondeo_id} no encontrado.")
 
-    f_id, circuito, srv_id, monto, origen, destino, estado, key = row
+    row = dict(zip(cols, row_tuple))
+
+    f_id = row.get("id")
+    circuito = str(row.get("tipo_circuito") or "").strip().upper()
+    srv_id = row.get("servicio_id")
+    monto = row.get("monto_capital_cents") or row.get("monto") or 0
+    origen = (
+        row.get("fondo_origen_esperado")
+        or row.get("fondo_origen")
+        or row.get("origen")
+        or "1110"
+    )
+    estado = row.get("estado")
+    key = row.get("idempotency_key")
+
     if estado == "FONDEADO":
         cursor.close()
         return {"id": f_id, "status": "ALREADY_FUNDED"}
     if estado == "CANCELADO":
         cursor.close()
         raise ErrorValidacionEzequiel(f"El fondeo #{fondeo_id} fue cancelado previamente.")
+
+    # 1, 2 y 3. Destino dinámico y derivación canónica según circuito
+    col_destino = None
+    for cand in ("destino", "fondo_destino", "fondo_destino_custodia"):
+        if cand in row and row[cand]:
+            col_destino = str(row[cand]).strip()
+            break
+
+    if circuito == "PREPAY":
+        destino_final = col_destino if col_destino in ("1160", "1130") else "1160"
+    elif circuito == "CLARO":
+        destino_final = col_destino if col_destino == "1150" else "1150"
+    else:
+        destino_final = col_destino if col_destino else ("1160" if "PREPAY" in circuito else "1150")
 
     # Selección y validación del fondo origen (1110 o 1120)
     if fondo_origen and fondo_origen.strip():
@@ -840,10 +864,10 @@ def ejecutar_fondeo_pendiente(
         trf = transferFunds(
             conn=conn,
             origin_fund_code=origen_final,
-            destination_fund_code=destino,
+            destination_fund_code=destino_final,
             amount_cents=monto,
             dispatched_by=actor,
-            reason=f"Fondeo físico custodia {circuito} para servicio #{srv_id} desde {origen_final}",
+            reason=f"Fondeo físico custodia {circuito} para servicio #{srv_id} desde {origen_final} hacia {destino_final}",
             idempotency_key=f"EXEC-{key}",
             evidence_reference=ev_ref,
             context=context,
@@ -858,16 +882,25 @@ def ejecutar_fondeo_pendiente(
             auto_commit=False,
         )
 
+        updates = ["estado = 'FONDEADO'", "movement_id_traslado = ?", "funded_at_utc = ?"]
+        params = [f"TRANSFER_{trf['transfer_id']}", ahora_utc]
+
+        for orig_col in ("fondo_origen_esperado", "fondo_origen", "origen"):
+            if orig_col in cols:
+                updates.append(f"{orig_col} = ?")
+                params.append(origen_final)
+                break
+
+        for dest_col in ("fondo_destino_custodia", "fondo_destino", "destino"):
+            if dest_col in cols:
+                updates.append(f"{dest_col} = ?")
+                params.append(destino_final)
+                break
+
+        params.append(f_id)
         cursor.execute(
-            """
-            UPDATE tesoreria_fondeos_pendientes
-            SET estado = 'FONDEADO',
-                fondo_origen_esperado = ?,
-                movement_id_traslado = ?,
-                funded_at_utc = ?
-            WHERE id = ?;
-            """,
-            (origen_final, f"TRANSFER_{trf['transfer_id']}", ahora_utc, f_id),
+            f"UPDATE tesoreria_fondeos_pendientes SET {', '.join(updates)} WHERE id = ?;",
+            params,
         )
 
         if auto_commit:
@@ -880,6 +913,8 @@ def ejecutar_fondeo_pendiente(
             "transfer_id": trf["transfer_id"],
             "monto_cents": monto,
             "monto_formatted": formatMoney(monto),
+            "fondo_origen": origen_final,
+            "fondo_destino": destino_final,
         }
     except Exception as e:
         if auto_commit:

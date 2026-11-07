@@ -1001,11 +1001,12 @@ def aplicar_movimientos_prepay_worker(
             """
             UPDATE tesoreria_prepay_coordinacion
             SET estado = 'FULLY_APPLIED',
+                commercial_ticket_id = COALESCE(commercial_ticket_id, ?),
                 worker_movement_ids = ?,
                 updated_at = ?
             WHERE coordination_id = ?;
             """,
-            (mov_str, ahora_utc, coord_id),
+            (str(servicio_id), mov_str, ahora_utc, coord_id),
         )
         tes_cur.close()
 

@@ -299,10 +299,10 @@ def transferFunds(
                 """
                 SELECT id, coordination_id, commercial_ticket_id, monto_capital_cents, monto_adicional_cents, pago_transf_cents, estado
                 FROM tesoreria_prepay_coordinacion
-                WHERE commercial_ticket_id = ? OR coordination_id = ?
+                WHERE commercial_ticket_id = ? OR coordination_id = ? OR idempotency_key = ?
                 LIMIT 1
                 """,
-                (ticket_key, raw_ref),
+                (ticket_key, raw_ref, ticket_key),
             )
             row_coord = cur_coord.fetchone()
             if not row_coord:
