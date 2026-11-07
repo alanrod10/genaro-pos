@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useRef } from "react";
 import { Producto, ProductoInput } from "../types/catalog";
 import { getApiClient } from "../services/api";
 import {
@@ -39,6 +39,7 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
   const [formActivo, setFormActivo] = useState<boolean>(true);
   const [formError, setFormError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const savingRef = useRef<boolean>(false);
 
   // Categorías presentes en los productos
   const categoriasUnicas = useMemo(() => {
@@ -96,9 +97,9 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
   };
 
   // Guardar formulario
-  const handleSave = async (e?: React.FormEvent) => {
+  const handleSave = async (e?: React.FormEvent | React.MouseEvent) => {
     if (e) e.preventDefault();
-    if (isSaving) return;
+    if (isSaving || savingRef.current) return;
     setFormError(null);
 
     const nomLimpio = formNombre.trim();
@@ -117,6 +118,7 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
       return;
     }
 
+    savingRef.current = true;
     setIsSaving(true);
     const api = getApiClient();
 
@@ -158,6 +160,7 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
       const msg = err instanceof Error ? err.message : "Error inesperado al guardar.";
       if (typeof window !== "undefined") setFormError(msg);
     } finally {
+      savingRef.current = false;
       if (typeof window !== "undefined") setIsSaving(false);
     }
   };

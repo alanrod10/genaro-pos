@@ -27,6 +27,18 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     setShowPassword(false);
   }, [isOpen]);
 
+  // Cerrar modal con tecla Escape si está abierto y no está cargando
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !isLoading) {
+        handleClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, isLoading]);
+
   const handleClose = () => {
     setPassword("");
     setError(null);
@@ -87,6 +99,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             type="button"
             className="btn-modal-close"
             onClick={handleClose}
+            aria-label="Cerrar ventana de inicio de sesión"
             title="Cerrar ventana de inicio de sesión"
             data-testid="btn-close-login"
           >
