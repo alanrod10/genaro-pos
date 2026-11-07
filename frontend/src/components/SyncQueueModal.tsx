@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { DemoSimulationMode, MockApiClient } from "../services/api";
 import { GastoColaLocal, ServicioColaLocal } from "../services/db";
 import { EstadoSincronizacion, VentaLocal } from "../types/sales";
@@ -31,6 +31,17 @@ export const SyncQueueModal: React.FC<SyncQueueModalProps> = ({
   const [demoMode, setDemoMode] = useState<DemoSimulationMode>(
     mockClient?.getSimulationMode() || "exito_201"
   );
+
+  // Cerrar modal con tecla Escape si no se está sincronizando
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !isSyncing) {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, isSyncing]);
 
   const pendientesVentas = ventas.filter((v) => v.estado === "pendiente");
   const sincronizadasVentas = ventas.filter((v) => v.estado === "sincronizada");
@@ -110,6 +121,7 @@ export const SyncQueueModal: React.FC<SyncQueueModalProps> = ({
             type="button"
             className="btn-modal-close"
             onClick={onClose}
+            aria-label="Cerrar modal de cola de sincronización"
             data-testid="btn-close-queue"
           >
             ✕

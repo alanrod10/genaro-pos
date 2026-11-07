@@ -1,4 +1,4 @@
-import React, { useState, useId } from "react";
+import React, { useState, useId, useEffect } from "react";
 import { Producto } from "../types/catalog";
 import { ItemCarrito } from "../types/sales";
 import {
@@ -56,6 +56,17 @@ export const WeightSaleModal: React.FC<WeightSaleModalProps> = ({
   });
 
   const [errorMsg, setErrorMsg] = useState<string | null>(refData.error || null);
+
+  // Cerrar modal con tecla Escape
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   // Manejo de cambio en ajuste de precio puntual
   const handlePrecioAjustadoChange = (valStr: string) => {

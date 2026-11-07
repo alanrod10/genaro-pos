@@ -48,6 +48,17 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     }
   }, [totalVenta, isExactMode]);
 
+  // Cerrar modal con tecla Escape si no se está enviando
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !submittingRef.current && !isSubmitting) {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, isSubmitting]);
+
   // Validación y cálculo de efectivo recibido
   const hasCashInput = efectivoRecibido !== "";
   const numEfectivo =
@@ -191,6 +202,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             className="btn-modal-close"
             onClick={onClose}
             disabled={isSubmitting}
+            aria-label="Cerrar modal de pago"
             data-testid="btn-close-payment"
           >
             ✕
