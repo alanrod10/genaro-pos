@@ -58,6 +58,8 @@ DICCIONARIO_ORTOGRAFICO: Dict[str, str] = {
     "salame": "Salame",
     "sandwich": "Sándwich",
     "sandwiches": "Sándwiches",
+    "sanguche": "Sándwich",
+    "sanguches": "Sándwiches",
     "lacteo": "Lácteo",
     "lacteos": "Lácteos",
     "rapido": "Rápido",
