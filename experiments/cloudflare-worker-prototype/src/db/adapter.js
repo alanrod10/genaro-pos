@@ -282,6 +282,109 @@ export async function cambiarEstadoProducto(client, id, activo, usuario) {
   return { id, activo: activo ? 1 : 0 };
 }
 
+export async function eliminarProductoInteligente(client, id, usuario) {
+  const nowUtc = new Date().toISOString();
+  const prodId = Number(id);
+
+  // 1. Obtener producto existente
+  const rs = await client.execute({
+    sql: "SELECT id, nombre, categoria, proveedor, unidad, costo, precio_dia, activo, fecha_actualizacion FROM productos WHERE id = ? OR nombre = ?;",
+    args: [isNaN(prodId) ? id : prodId, String(id)],
+  });
+
+  if (rs.rows.length === 0) {
+    throw new Error(`No existe ningún producto con ID ${id}.`);
+  }
+
+  const p = rs.rows[0];
+  const realId = Number(p.id);
+  const nombreProd = String(p.nombre).trim();
+
+  // 2. Verificar si posee ventas en ticket_items
+  let tieneVentas = false;
+  try {
+    const rsVentas = await client.execute({
+      sql: `SELECT 1 FROM ticket_items 
+            WHERE producto_id = ? OR (producto_id IS NULL AND LOWER(producto_nombre) = LOWER(?)) 
+            LIMIT 1;`,
+      args: [realId, nombreProd],
+    });
+    if (rsVentas.rows.length > 0) {
+      tieneVentas = true;
+    }
+  } catch (err) {
+    tieneVentas = false;
+  }
+
+  // 3. Smart Delete: Baja lógica si tiene ventas, borrado físico si no tiene
+  if (tieneVentas) {
+    const snapshotAnt = {
+      id_producto: realId,
+      nombre: nombreProd,
+      categoria: p.categoria || "Otro",
+      proveedor: p.proveedor || "General",
+      unidad: p.unidad || "Unidad",
+      costo: Number(p.costo || 0),
+      precio_venta: Number(p.precio_dia || 0),
+      activo: Boolean(p.activo),
+      fecha_act: String(p.fecha_actualizacion || ""),
+    };
+    const snapshotNuevo = { ...snapshotAnt, activo: false, fecha_act: nowUtc };
+
+    await client.batch([
+      {
+        sql: "UPDATE productos SET activo = 0, fecha_actualizacion = ? WHERE id = ?;",
+        args: [nowUtc, realId],
+      },
+      {
+        sql: `INSERT INTO productos_auditoria (producto_id, accion, valores_anteriores, valores_nuevos, fecha_utc, actor)
+              VALUES (?, 'DESACTIVAR', ?, ?, ?, ?);`,
+        args: [
+          realId,
+          JSON.stringify(snapshotAnt),
+          JSON.stringify(snapshotNuevo),
+          nowUtc,
+          usuario || "sistema",
+        ],
+      },
+    ], "write");
+
+    return {
+      id_producto: realId,
+      nombre: nombreProd,
+      status: "desactivado",
+      accion: "baja_logica",
+      eliminado_fisico: false,
+      activo: false,
+      tiene_ventas: true,
+      mensaje: `El producto '${nombreProd}' posee ventas registradas y fue desactivado lógicamente.`,
+    };
+  } else {
+    // Borrado físico limpio de auditoría y producto
+    await client.batch([
+      {
+        sql: "DELETE FROM productos_auditoria WHERE producto_id = ?;",
+        args: [realId],
+      },
+      {
+        sql: "DELETE FROM productos WHERE id = ?;",
+        args: [realId],
+      },
+    ], "write");
+
+    return {
+      id_producto: realId,
+      nombre: nombreProd,
+      status: "eliminado",
+      accion: "borrado_fisico",
+      eliminado_fisico: true,
+      activo: false,
+      tiene_ventas: false,
+      mensaje: `Producto '${nombreProd}' eliminado físicamente del catálogo.`,
+    };
+  }
+}
+
 // --- Módulo Ventas POS ---
 export function normalizarPayloadVenta(ticket, items) {
   if (!ticket || typeof ticket !== "object") {

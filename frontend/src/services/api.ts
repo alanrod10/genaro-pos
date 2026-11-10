@@ -1279,7 +1279,7 @@ export class RealApiClient implements IApiClient {
     baseUrl: string = "",
     readOnlySmoke: boolean = IS_READ_ONLY_SMOKE_MODE
   ) {
-    this.baseUrl = baseUrl;
+    this.baseUrl = baseUrl ? baseUrl.replace(/\/+$/, "") : "";
     this.readOnlySmoke = readOnlySmoke;
   }
 
@@ -1791,7 +1791,8 @@ export class RealApiClient implements IApiClient {
 
   async eliminarProducto(id: number): Promise<ApiResponse<ProductoDeleteResponse>> {
     try {
-      const resp = await this.fetchWithAuth(`${this.baseUrl}/api/catalog/${id}`, {
+      const cleanBase = this.baseUrl ? this.baseUrl.replace(/\/+$/, "") : "";
+      const resp = await this.fetchWithAuth(`${cleanBase}/api/catalog/${id}`, {
         method: "DELETE",
         headers: {
           Accept: "application/json",

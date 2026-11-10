@@ -34,6 +34,7 @@ router = APIRouter()
 
 
 @router.get("", response_model=CatalogoResponse)
+@router.get("/", response_model=CatalogoResponse, include_in_schema=False)
 def get_catalog(
     include_inactive: bool = Query(
         default=False,
@@ -67,6 +68,7 @@ def get_catalog(
 
 
 @router.post("", response_model=ProductoCatalogo, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=ProductoCatalogo, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 def create_product(
     payload: ProductoCreateIn,
     current_user: AuthenticatedUser = Depends(get_current_user),
@@ -100,6 +102,7 @@ def create_product(
 
 
 @router.patch("/{id_producto}", response_model=ProductoCatalogo)
+@router.patch("/{id_producto}/", response_model=ProductoCatalogo, include_in_schema=False)
 def update_product(
     id_producto: int,
     payload: ProductoUpdateIn,
@@ -156,6 +159,7 @@ def update_product(
 
 
 @router.patch("/{id_producto}/status", response_model=ProductoCatalogo)
+@router.patch("/{id_producto}/status/", response_model=ProductoCatalogo, include_in_schema=False)
 def update_product_status(
     id_producto: int,
     payload: ProductoStatusIn,
@@ -185,6 +189,7 @@ def update_product_status(
 
 
 @router.delete("/{id_producto}", response_model=ProductoDeleteOut)
+@router.delete("/{id_producto}/", response_model=ProductoDeleteOut, include_in_schema=False)
 def delete_product(
     id_producto: int,
     current_user: AuthenticatedUser = Depends(get_current_user),

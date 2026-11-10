@@ -19,6 +19,7 @@ import {
   crearProducto,
   actualizarProducto,
   cambiarEstadoProducto,
+  eliminarProductoInteligente,
   registrarVentaIdempotente,
   listarVentas,
   obtenerDetalleVenta,
@@ -405,7 +406,7 @@ export async function handleRequest(request, env, dbClient, scramServer) {
     }
 
     // 08. PATCH /api/catalog/:id/status
-    const matchCatalogStatus = path.match(/^\/api\/catalog\/([^/]+)\/status$/);
+    const matchCatalogStatus = path.match(/^\/api\/catalog\/([^/]+)\/status\/?$/);
     if (method === "PATCH" && matchCatalogStatus) {
       const authErr = requireRole(["admin"], "modificar el estado activo/inactivo de productos");
       if (authErr) return authErr;
@@ -416,7 +417,7 @@ export async function handleRequest(request, env, dbClient, scramServer) {
     }
 
     // 07. PATCH /api/catalog/:id
-    const matchCatalogEdit = path.match(/^\/api\/catalog\/([^/]+)$/);
+    const matchCatalogEdit = path.match(/^\/api\/catalog\/([^/]+)\/?$/);
     if (method === "PATCH" && matchCatalogEdit) {
       const authErr = requireRole(["admin"], "editar datos de productos en el catálogo");
       if (authErr) return authErr;
@@ -425,6 +426,24 @@ export async function handleRequest(request, env, dbClient, scramServer) {
       const res = await actualizarProducto(dbClient, id, body, currentUser);
       if (!res) return errorResponse(`No se encontró el producto con ID ${id}.`, 404);
       return jsonResponse(res);
+    }
+
+    // 09. DELETE /api/catalog/:id (Smart Delete)
+    const matchCatalogDelete = path.match(/^\/api\/catalog\/([^/]+)\/?$/);
+    if (method === "DELETE" && matchCatalogDelete) {
+      const authErr = requireRole(["admin"], "eliminar productos del catálogo");
+      if (authErr) return authErr;
+      const id = matchCatalogDelete[1];
+      try {
+        const res = await eliminarProductoInteligente(dbClient, id, currentUser);
+        if (!res) return errorResponse(`No se encontró el producto con ID ${id}.`, 404);
+        return jsonResponse(res);
+      } catch (err) {
+        if (err.message && err.message.includes("No existe")) {
+          return errorResponse(err.message, 404);
+        }
+        return errorResponse(`Error al eliminar producto: ${err.message}`, 500);
+      }
     }
 
     // ==========================================

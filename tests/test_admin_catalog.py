@@ -367,6 +367,15 @@ def test_smart_delete_sin_ventas_borrado_fisico(api_client, sqlite_test_db):
     ids = [p["id_producto"] for p in resp_cat.json()["productos"]]
     assert 2 not in ids
 
+    # Trailing slash tolerance: probar DELETE con trailing slash en producto existente
+    # Primero insertamos un producto temporal ID 99
+    sqlite_test_db.execute(
+        "INSERT INTO productos (id, nombre, categoria, proveedor, unidad, costo, precio_dia, activo) VALUES (99, 'Test Slash', 'Kiosco', 'General', 'Unidad', 10, 20, 1);"
+    )
+    resp_slash = api_client.delete("/api/catalog/99/")
+    assert resp_slash.status_code == 200
+    assert resp_slash.json()["eliminado_fisico"] is True
+
 
 def test_smart_delete_con_ventas_baja_logica(api_client, sqlite_test_db):
     """Smart Delete: Si el producto SÍ tiene ventas en ticket_items, ejecuta UPDATE activo = 0."""
