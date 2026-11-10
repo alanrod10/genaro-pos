@@ -1,4 +1,4 @@
-import { Producto, ProductoInput } from "../types/catalog";
+import { Producto, ProductoDeleteResponse, ProductoInput } from "../types/catalog";
 import {
   TicketDetalle,
   TicketResumen,
@@ -993,6 +993,64 @@ export async function cambiarEstadoProductoDemo(
   activo: boolean
 ): Promise<Producto> {
   return editarProductoDemo(id_producto, { activo });
+}
+
+export async function eliminarProductoDemo(
+  id_producto: number
+): Promise<ProductoDeleteResponse> {
+  const db = await openDB();
+  const productos = await listarProductosDemo(false);
+  const actual = productos.find((p) => p.id_producto === id_producto);
+  if (!actual) {
+    throw new Error(`No se encontró el producto con ID ${id_producto}.`);
+  }
+
+  // Verificar si el producto tiene ventas en la base demo o en la cola local
+  await inicializarVentasDemoSiVacio();
+  const ventasDemo = await listarVentasDemo();
+  const ventasQueue = await listarVentasLocales();
+  const todasVentas = [...ventasDemo, ...ventasQueue];
+
+  const nomNorm = actual.nombre.trim().toLowerCase();
+  const tieneVentas = todasVentas.some((v) =>
+    (v.payload?.items || []).some(
+      (it: any) =>
+        it.producto_id === id_producto ||
+        String(it.producto || "").trim().toLowerCase() === nomNorm
+    )
+  );
+
+  if (tieneVentas) {
+    await editarProductoDemo(id_producto, { activo: false });
+    return {
+      id_producto,
+      nombre: actual.nombre,
+      status: "desactivado",
+      accion: "baja_logica",
+      eliminado_fisico: false,
+      activo: false,
+      tiene_ventas: true,
+      mensaje: `El producto '${actual.nombre}' posee ventas registradas y fue desactivado lógicamente.`,
+    };
+  }
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_CATALOGO_DEMO, "readwrite");
+    const store = tx.objectStore(STORE_CATALOGO_DEMO);
+    const req = store.delete(id_producto);
+    req.onsuccess = () =>
+      resolve({
+        id_producto,
+        nombre: actual.nombre,
+        status: "eliminado",
+        accion: "borrado_fisico",
+        eliminado_fisico: true,
+        activo: false,
+        tiene_ventas: false,
+        mensaje: `Producto '${actual.nombre}' eliminado físicamente del catálogo.`,
+      });
+    req.onerror = () => reject(req.error);
+  });
 }
 
 // ==============================================================================

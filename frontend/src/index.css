@@ -2925,6 +2925,54 @@ textarea:focus-visible {
   color: var(--caja-terracotta);
 }
 
+.btn-action-duplicate {
+  background: var(--caja-surface-elevated);
+  border: 1px solid var(--caja-border);
+  color: var(--caja-text-main);
+  padding: 0.42rem 0.85rem;
+  border-radius: var(--caja-radius-sm);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  margin-right: 0.4rem;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  transition: all 140ms ease;
+  touch-action: manipulation;
+}
+
+.btn-action-duplicate:hover {
+  background: var(--caja-surface-card-hover);
+  border-color: var(--caja-terracotta);
+  color: var(--caja-terracotta);
+}
+
+.btn-action-delete {
+  background: rgba(240, 106, 106, 0.14);
+  border: 1px solid rgba(240, 106, 106, 0.45);
+  color: #F06A6A;
+  padding: 0.42rem 0.85rem;
+  border-radius: var(--caja-radius-sm);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  margin-left: 0.4rem;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  transition: all 140ms ease;
+  touch-action: manipulation;
+}
+
+.btn-action-delete:hover {
+  background: #F06A6A;
+  border-color: #F06A6A;
+  color: #FFFFFF;
+}
+
 .btn-action-status {
   border: 1px solid transparent;
   padding: 0.42rem 0.85rem;
@@ -3069,7 +3117,9 @@ textarea:focus-visible {
 }
 
 .btn-card-edit,
-.btn-card-status {
+.btn-card-duplicate,
+.btn-card-status,
+.btn-card-delete {
   flex: 1;
   padding: 0.65rem 0.85rem;
   border-radius: var(--caja-radius-md);
@@ -3086,15 +3136,35 @@ textarea:focus-visible {
   box-sizing: border-box;
 }
 
-.btn-card-edit {
+.btn-card-edit,
+.btn-card-duplicate {
   background: var(--caja-surface-elevated);
   color: var(--caja-text-main);
   border: 1px solid var(--caja-border);
 }
 
-.btn-card-edit:hover {
+.btn-card-edit:hover,
+.btn-card-duplicate:hover {
   background: var(--caja-surface-card-hover);
   border-color: var(--caja-terracotta);
+}
+
+.btn-card-delete {
+  background: rgba(240, 106, 106, 0.14);
+  color: #F06A6A;
+  border: 1px solid rgba(240, 106, 106, 0.45);
+}
+
+.btn-card-delete:hover {
+  background: #F06A6A;
+  color: #FFFFFF;
+}
+
+.form-helper-text {
+  font-size: 0.78rem;
+  color: var(--caja-text-muted);
+  line-height: 1.35;
+  margin-top: 0.15rem;
 }
 
 /* FORMULARIO MODAL (PRODUCTOS) */
@@ -7759,7 +7829,9 @@ textarea:focus-visible {
   }
 
   .btn-action-edit,
+  .btn-action-duplicate,
   .btn-action-status,
+  .btn-action-delete,
   .btn-action-cancel {
     padding: 0.28rem 0.48rem;
     font-size: 0.76rem;
@@ -7800,7 +7872,9 @@ textarea:focus-visible {
 }
 
 .btn-card-edit,
+.btn-card-duplicate,
 .btn-card-status,
+.btn-card-delete,
 .btn-card-cancel {
   flex: 1 1 100px;
   min-height: 42px;

@@ -330,3 +330,107 @@ def test_crear_y_editar_producto_actualiza_margen_ratio_en_bd():
     assert lista_prov[0]["margen_ratio"] == pytest.approx(1.0)
     assert lista_prov[0]["margen_porcentaje"] == pytest.approx(100.0)
     conn.close()
+
+
+def test_smart_delete_sin_ventas_borrado_fisico(api_client, sqlite_test_db):
+    """Smart Delete: Si el producto NO tiene ventas en ticket_items, ejecuta DELETE físico."""
+    # Crear tabla ticket_items vacía
+    sqlite_test_db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ticket_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticket_id TEXT NOT NULL,
+            producto_id INTEGER,
+            producto_nombre TEXT NOT NULL,
+            cantidad REAL NOT NULL,
+            unidad TEXT NOT NULL DEFAULT 'Unidad',
+            precio_unitario INTEGER NOT NULL,
+            subtotal INTEGER NOT NULL,
+            metodo_pago TEXT NOT NULL
+        );
+        """
+    )
+
+    resp = api_client.delete("/api/catalog/2")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id_producto"] == 2
+    assert data["eliminado_fisico"] is True
+    assert data["tiene_ventas"] is False
+    assert data["accion"] == "borrado_fisico"
+
+    # Ya no existe en la base de datos física
+    assert obtener_producto_por_id_turso(2, conn=sqlite_test_db) is None
+
+    # No aparece en el catálogo de caja
+    resp_cat = api_client.get("/api/catalog")
+    ids = [p["id_producto"] for p in resp_cat.json()["productos"]]
+    assert 2 not in ids
+
+
+def test_smart_delete_con_ventas_baja_logica(api_client, sqlite_test_db):
+    """Smart Delete: Si el producto SÍ tiene ventas en ticket_items, ejecuta UPDATE activo = 0."""
+    sqlite_test_db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ticket_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticket_id TEXT NOT NULL,
+            producto_id INTEGER,
+            producto_nombre TEXT NOT NULL,
+            cantidad REAL NOT NULL,
+            unidad TEXT NOT NULL DEFAULT 'Unidad',
+            precio_unitario INTEGER NOT NULL,
+            subtotal INTEGER NOT NULL,
+            metodo_pago TEXT NOT NULL
+        );
+        """
+    )
+    sqlite_test_db.execute(
+        """
+        INSERT INTO ticket_items (ticket_id, producto_id, producto_nombre, cantidad, unidad, precio_unitario, subtotal, metodo_pago)
+        VALUES ('T-001', 1, 'Gaseosa Cola 500ml', 1, 'Unidad', 1200, 1200, 'EFECTIVO');
+        """
+    )
+
+    resp = api_client.delete("/api/catalog/1")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id_producto"] == 1
+    assert data["eliminado_fisico"] is False
+    assert data["tiene_ventas"] is True
+    assert data["accion"] == "baja_logica"
+    assert data["activo"] is False
+
+    # Sigue existiendo en la base de datos pero con activo = False
+    prod = obtener_producto_por_id_turso(1, conn=sqlite_test_db)
+    assert prod is not None
+    assert prod["activo"] is False
+
+    # Desaparece del listado de caja registradora (activos)
+    resp_cat = api_client.get("/api/catalog")
+    ids = [p["id_producto"] for p in resp_cat.json()["productos"]]
+    assert 1 not in ids
+
+    # Eliminar producto inexistente retorna 404
+    resp_404 = api_client.delete("/api/catalog/99999")
+    assert resp_404.status_code == 404
+
+
+def test_script_normalizar_catalogo_v4_heuristica():
+    """Verifica el mapeo heurístico de categorías antiguas a las 10 categorías canónicas."""
+    from scripts.normalizar_catalogo_v4 import CATEGORIAS_CANONICAS, sugerir_categoria_canonica
+
+    assert sugerir_categoria_canonica("Golosina", "Caramelos Menta") == "Golosinas y Chocolates"
+    assert sugerir_categoria_canonica("golosinas", "Alfajor Triple Chocolate") == "Galletitas y Alfajores"
+    assert sugerir_categoria_canonica("Bebidas", "Gaseosa Coca Cola Original 500ml") == "Bebidas e Infusiones"
+    assert sugerir_categoria_canonica("Bebidas", "Cerveza Quilmes 1L") == "Bebidas con Alcohol"
+    assert sugerir_categoria_canonica("varios", "Papas Fritas Lays 85g") == "Snacks y Salados"
+    assert sugerir_categoria_canonica("Servicios", "Fotocopia B/N") == "Librería y Regalería"
+    assert sugerir_categoria_canonica("Limpieza", "Jabón Tocador") == "Higiene y Cuidado Personal"
+    assert sugerir_categoria_canonica("Panadería", "Mignon") == "Panadería y Fiambrería"
+    assert sugerir_categoria_canonica("Almacén", "Leche Entera 1L") == "Almacén y Lácteos"
+    assert sugerir_categoria_canonica("Tabaquería", "Cigarrillos Box 20") == "Cigarrillos y Tabaquería"
+    for cat in CATEGORIAS_CANONICAS:
+        assert sugerir_categoria_canonica(cat, "Producto Genérico") == cat
+
+

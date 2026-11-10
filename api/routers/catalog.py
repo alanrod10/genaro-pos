@@ -7,10 +7,15 @@ from api.schemas import (
     CatalogoResponse,
     ProductoCatalogo,
     ProductoCreateIn,
+    ProductoDeleteOut,
     ProductoStatusIn,
     ProductoUpdateIn,
 )
-from db.catalog import ErrorAccesoCatalogoTurso, cargar_catalogo_turso_filas
+from db.catalog import (
+    ErrorAccesoCatalogoTurso,
+    cargar_catalogo_turso_filas,
+    eliminar_producto_inteligente_turso,
+)
 from db.readiness import ErrorEsquemaNoPreparado
 from db.admin_catalog import (
     ErrorAdminCatalogo,
@@ -177,3 +182,34 @@ def update_product_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error interno al cambiar el estado del producto.",
         ) from e
+
+
+@router.delete("/{id_producto}", response_model=ProductoDeleteOut)
+def delete_product(
+    id_producto: int,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    conn: Optional[Any] = Depends(get_db_connection),
+) -> ProductoDeleteOut:
+    """Elimina un producto mediante Smart Delete (borrado físico si no tiene ventas, baja lógica si tiene ventas)."""
+    try:
+        res = eliminar_producto_inteligente_turso(
+            id_producto, conn=conn, actor=current_user.username
+        )
+        return ProductoDeleteOut(**res)
+    except ProductoNoEncontrado as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e),
+        ) from e
+    except ErrorEsquemaNoPreparado as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"SCHEMA_NOT_READY: {str(e)}",
+        ) from e
+    except ErrorAdminCatalogo as e:
+        logger.error("Error al eliminar producto ID %d: %s", id_producto, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno al eliminar el producto.",
+        ) from e
+

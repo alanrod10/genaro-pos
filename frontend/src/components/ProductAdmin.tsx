@@ -1,11 +1,54 @@
-import React, { useMemo, useState, useRef } from "react";
-import { Producto, ProductoInput } from "../types/catalog";
+import React, { useMemo, useState, useRef, useEffect } from "react";
+import {
+  CATEGORIAS_CANONICAS,
+  Producto,
+  ProductoInput,
+} from "../types/catalog";
 import { getApiClient } from "../services/api";
 import {
   coincideBusquedaProducto,
   ordenarProductosPorBusqueda,
   renderHighlightedText,
 } from "../utils/search";
+
+export function normalizarCategoriaCanonica(categoria?: string): string {
+  const raw = (categoria || "").trim();
+  if ((CATEGORIAS_CANONICAS as readonly string[]).includes(raw)) {
+    return raw;
+  }
+  const lower = raw.toLowerCase();
+  if (lower.includes("golosina") || lower.includes("chocolate") || lower.includes("caramelo") || lower.includes("chicle")) {
+    return "Golosinas y Chocolates";
+  }
+  if (lower.includes("galletita") || lower.includes("alfajor") || lower.includes("oblea")) {
+    return "Galletitas y Alfajores";
+  }
+  if (lower.includes("snack") || lower.includes("salado") || lower.includes("papas")) {
+    return "Snacks y Salados";
+  }
+  if (lower.includes("alcohol") || lower.includes("cerveza") || lower.includes("vino") || lower.includes("fernet")) {
+    return "Bebidas con Alcohol";
+  }
+  if (lower.includes("bebida") || lower.includes("gaseosa") || lower.includes("agua") || lower.includes("jugo") || lower.includes("infusi")) {
+    return "Bebidas e Infusiones";
+  }
+  if (lower.includes("cigarr") || lower.includes("tabac") || lower.includes("encendedor")) {
+    return "Cigarrillos y Tabaquería";
+  }
+  if (lower.includes("panad") || lower.includes("fiambr") || lower.includes("queso") || lower.includes("jamon")) {
+    return "Panadería y Fiambrería";
+  }
+  if (lower.includes("almac") || lower.includes("lácteo") || lower.includes("lacteo") || lower.includes("leche") || lower.includes("yerba")) {
+    return "Almacén y Lácteos";
+  }
+  if (lower.includes("librer") || lower.includes("regal") || lower.includes("servicio") || lower.includes("fotocopia") || lower.includes("impresi")) {
+    return "Librería y Regalería";
+  }
+  if (lower.includes("higien") || lower.includes("cuidado") || lower.includes("limpieza") || lower.includes("perfum")) {
+    return "Higiene y Cuidado Personal";
+  }
+  return "Otros";
+}
 
 interface ProductAdminProps {
   productos: Producto[];
@@ -25,13 +68,14 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
   const [categoriaFiltro, setCategoriaFiltro] = useState<string>("TODAS");
   const [estadoFiltro, setEstadoFiltro] = useState<"TODOS" | "ACTIVOS" | "INACTIVOS">("TODOS");
 
-  // Estado del modal de creación / edición
+  // Estado del modal de creación / edición / duplicación
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [editingProduct, setEditingProduct] = useState<Producto | null>(null);
+  const [isDuplicating, setIsDuplicating] = useState<boolean>(false);
 
   // Campos del formulario
   const [formNombre, setFormNombre] = useState<string>("");
-  const [formCategoria, setFormCategoria] = useState<string>("Otro");
+  const [formCategoria, setFormCategoria] = useState<string>("Golosinas y Chocolates");
   const [formProveedor, setFormProveedor] = useState<string>("General");
   const [formUnidad, setFormUnidad] = useState<string>("Unidad");
   const [formCosto, setFormCosto] = useState<number>(0);
@@ -40,6 +84,17 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
   const [formError, setFormError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const savingRef = useRef<boolean>(false);
+  const inputNombreRef = useRef<HTMLInputElement | null>(null);
+
+  // Focalizar y seleccionar automáticamente el campo Nombre al abrir el modal
+  useEffect(() => {
+    if (isModalOpen && inputNombreRef.current) {
+      inputNombreRef.current.focus();
+      if (isDuplicating || inputNombreRef.current.value) {
+        inputNombreRef.current.select();
+      }
+    }
+  }, [isModalOpen, isDuplicating]);
 
   // Categorías presentes en los productos
   const categoriasUnicas = useMemo(() => {
@@ -71,8 +126,9 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
   // Abrir modal para nuevo producto
   const handleOpenCreate = () => {
     setEditingProduct(null);
+    setIsDuplicating(false);
     setFormNombre("");
-    setFormCategoria("Almacén");
+    setFormCategoria("Golosinas y Chocolates");
     setFormProveedor("General");
     setFormUnidad("Unidad");
     setFormCosto(0);
@@ -82,11 +138,27 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
     setIsModalOpen(true);
   };
 
+  // Abrir modal para duplicar producto (Clonado Rápido)
+  const handleOpenDuplicate = (prod: Producto) => {
+    setEditingProduct(null);
+    setIsDuplicating(true);
+    setFormNombre(`${prod.nombre} (Copia)`);
+    setFormCategoria(normalizarCategoriaCanonica(prod.categoria));
+    setFormProveedor(prod.proveedor || "General");
+    setFormUnidad(prod.unidad || "Unidad");
+    setFormCosto(prod.costo);
+    setFormPrecio(prod.precio_venta ?? prod.precio_dia ?? 0);
+    setFormActivo(prod.activo !== false);
+    setFormError(null);
+    setIsModalOpen(true);
+  };
+
   // Abrir modal para editar producto
   const handleOpenEdit = (prod: Producto) => {
     setEditingProduct(prod);
+    setIsDuplicating(false);
     setFormNombre(prod.nombre);
-    setFormCategoria(prod.categoria);
+    setFormCategoria(normalizarCategoriaCanonica(prod.categoria));
     setFormProveedor(prod.proveedor);
     setFormUnidad(prod.unidad);
     setFormCosto(prod.costo);
@@ -182,6 +254,38 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error al cambiar estado.";
+      onAddToast(msg, "error");
+    }
+  };
+
+  // Eliminación inteligente (Smart Delete) con confirmación rápida
+  const handleDelete = async (prod: Producto) => {
+    const confirmado =
+      typeof window !== "undefined" && typeof window.confirm === "function"
+        ? window.confirm(
+            `¿Estás seguro de eliminar "${prod.nombre}"?\n\nSi tiene ventas registradas se desactivará (baja lógica); si no tiene ventas se borrará definitivamente.`
+          )
+        : true;
+
+    if (!confirmado) return;
+
+    const api = getApiClient();
+    try {
+      const res = await api.eliminarProducto(prod.id_producto);
+      if (res.status === 200 && res.data) {
+        onAddToast(
+          res.data.mensaje ||
+            (res.data.eliminado_fisico
+              ? `Producto "${prod.nombre}" eliminado definitivamente.`
+              : `Producto "${prod.nombre}" desactivado lógicamente (posee ventas).`),
+          res.data.eliminado_fisico ? "success" : "info"
+        );
+        await onRefresh();
+      } else {
+        onAddToast(res.error || "Error al eliminar el producto.", "error");
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Error al eliminar el producto.";
       onAddToast(msg, "error");
     }
   };
@@ -341,12 +445,30 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
                       </button>
                       <button
                         type="button"
+                        className="btn-action-duplicate"
+                        onClick={() => handleOpenDuplicate(prod)}
+                        title="Duplicar producto (Clonado rápido)"
+                        data-testid={`btn-duplicate-${prod.id_producto}`}
+                      >
+                        📋 Duplicar
+                      </button>
+                      <button
+                        type="button"
                         className={`btn-action-status ${prod.activo !== false ? "btn-deactivate" : "btn-activate"}`}
                         onClick={() => handleToggleStatus(prod)}
                         title={prod.activo !== false ? "Desactivar de Caja" : "Activar en Caja"}
                         data-testid={`btn-toggle-status-${prod.id_producto}`}
                       >
                         {prod.activo !== false ? "Desactivar" : "Activar"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-action-delete"
+                        onClick={() => handleDelete(prod)}
+                        title="Eliminar producto (Smart Delete)"
+                        data-testid={`btn-delete-${prod.id_producto}`}
+                      >
+                        🗑️ Eliminar
                       </button>
                     </td>
                   </tr>
@@ -432,11 +554,27 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
                   </button>
                   <button
                     type="button"
+                    className="btn-card-duplicate"
+                    onClick={() => handleOpenDuplicate(prod)}
+                    data-testid={`btn-card-duplicate-${prod.id_producto}`}
+                  >
+                    📋 Duplicar
+                  </button>
+                  <button
+                    type="button"
                     className={`btn-card-status ${prod.activo !== false ? "btn-deactivate" : "btn-activate"}`}
                     onClick={() => handleToggleStatus(prod)}
                     data-testid={`btn-card-status-${prod.id_producto}`}
                   >
                     {prod.activo !== false ? "Desactivar" : "Activar"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-card-delete"
+                    onClick={() => handleDelete(prod)}
+                    data-testid={`btn-card-delete-${prod.id_producto}`}
+                  >
+                    🗑️ Eliminar
                   </button>
                 </div>
               </div>
@@ -478,37 +616,39 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
                     Nombre del Producto: <span className="req">*</span>
                   </label>
                   <input
+                    ref={inputNombreRef}
                     id="prod-nombre"
                     type="text"
                     required
+                    autoFocus
                     className="form-input"
-                    placeholder="Ej. Alfajor de Chocolate 70g"
+                    placeholder="Ej: Gaseosa Coca Cola Original 500ml"
                     value={formNombre}
                     onChange={(e) => setFormNombre(e.target.value)}
                     data-testid="input-prod-nombre"
                   />
+                  <small className="form-helper-text" data-testid="nombre-helper-text">
+                    Estructura sugerida: <strong>[TIPO] + [MARCA] + [VARIEDAD/SABOR] + [CONTENIDO/PESO]</strong> (Ej: <em>Gaseosa Coca Cola Original 500ml</em>)
+                  </small>
                 </div>
 
                 {/* Categoría y Proveedor */}
                 <div className="form-row">
                   <div className="form-group flex-1">
                     <label htmlFor="prod-cat">Categoría:</label>
-                    <input
+                    <select
                       id="prod-cat"
-                      type="text"
-                      list="categorias-list"
                       className="form-input"
                       value={formCategoria}
                       onChange={(e) => setFormCategoria(e.target.value)}
                       data-testid="input-prod-categoria"
-                    />
-                    <datalist id="categorias-list">
-                      <option value="Bebidas" />
-                      <option value="Golosinas" />
-                      <option value="Almacén" />
-                      <option value="Servicios" />
-                      <option value="Otro" />
-                    </datalist>
+                    >
+                      {CATEGORIAS_CANONICAS.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="form-group flex-1">

@@ -1,4 +1,9 @@
-import { CatalogoResponse, Producto, ProductoInput } from "../types/catalog";
+import {
+  CatalogoResponse,
+  Producto,
+  ProductoDeleteResponse,
+  ProductoInput,
+} from "../types/catalog";
 import {
   TicketDetalle,
   VentaPayload,
@@ -33,6 +38,7 @@ import {
   cambiarEstadoProductoDemo,
   crearProductoDemo,
   editarProductoDemo,
+  eliminarProductoDemo,
   inicializarCatalogoDemoSiVacio,
   listarProductosDemo,
   inicializarServiciosDemoSiVacio,
@@ -100,6 +106,7 @@ export interface IApiClient {
   crearProducto(datos: ProductoInput): Promise<ApiResponse<Producto>>;
   editarProducto(id: number, cambios: Partial<ProductoInput>): Promise<ApiResponse<Producto>>;
   cambiarEstadoProducto(id: number, activo: boolean): Promise<ApiResponse<Producto>>;
+  eliminarProducto(id: number): Promise<ApiResponse<ProductoDeleteResponse>>;
   registrarVenta(payload: VentaPayload): Promise<ApiResponse<VentaResponse>>;
   // Servicios y Cargas
   obtenerCargas(
@@ -454,6 +461,17 @@ export class MockApiClient implements IApiClient {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error al cambiar estado";
       return { status: 400, error: msg };
+    }
+  }
+
+  async eliminarProducto(id: number): Promise<ApiResponse<ProductoDeleteResponse>> {
+    await new Promise((r) => setTimeout(r, 60));
+    try {
+      const resultado = await eliminarProductoDemo(id);
+      return { status: 200, data: resultado };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Error al eliminar producto";
+      return { status: 404, error: msg };
     }
   }
 
@@ -1764,6 +1782,29 @@ export class RealApiClient implements IApiClient {
         id_producto: Number(raw.id_producto ?? raw.id),
         activo: raw.activo !== 0 && raw.activo !== false,
       };
+      return { status: resp.status, data };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Error de red";
+      return { status: 0, error: `Error de conexión: ${message}` };
+    }
+  }
+
+  async eliminarProducto(id: number): Promise<ApiResponse<ProductoDeleteResponse>> {
+    try {
+      const resp = await this.fetchWithAuth(`${this.baseUrl}/api/catalog/${id}`, {
+        method: "DELETE",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+      if (!resp.ok) {
+        const errorData = await resp.json().catch(() => ({}));
+        return {
+          status: resp.status,
+          error: errorData.detail || `Error HTTP ${resp.status} al eliminar producto.`,
+        };
+      }
+      const data: ProductoDeleteResponse = await resp.json();
       return { status: resp.status, data };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Error de red";

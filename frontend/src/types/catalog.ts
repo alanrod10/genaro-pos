@@ -1,3 +1,19 @@
+export const CATEGORIAS_CANONICAS = [
+  "Golosinas y Chocolates",
+  "Galletitas y Alfajores",
+  "Snacks y Salados",
+  "Bebidas e Infusiones",
+  "Bebidas con Alcohol",
+  "Cigarrillos y Tabaquería",
+  "Panadería y Fiambrería",
+  "Almacén y Lácteos",
+  "Librería y Regalería",
+  "Higiene y Cuidado Personal",
+  "Otros",
+] as const;
+
+export type CategoriaCanonica = (typeof CATEGORIAS_CANONICAS)[number];
+
 export interface Producto {
   id_producto: number;
   nombre: string;
@@ -24,7 +40,19 @@ export interface ProductoInput {
   activo?: boolean;
 }
 
+export interface ProductoDeleteResponse {
+  id_producto: number;
+  nombre: string;
+  status: string;
+  accion: "borrado_fisico" | "baja_logica" | string;
+  eliminado_fisico: boolean;
+  activo: boolean;
+  tiene_ventas: boolean;
+  mensaje: string;
+}
+
 export interface CatalogoResponse {
   total: number;
   productos: Producto[];
 }
+

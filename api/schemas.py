@@ -113,6 +113,19 @@ class ProductoStatusIn(BaseModel):
     activo: bool
 
 
+class ProductoDeleteOut(BaseModel):
+    """Respuesta de eliminación inteligente (Smart Delete) de un producto."""
+
+    id_producto: int
+    nombre: str
+    status: str
+    accion: str
+    eliminado_fisico: bool
+    activo: bool = False
+    tiene_ventas: bool
+    mensaje: str
+
+
 class CatalogoResponse(BaseModel):
     """Respuesta estructurada para el catálogo de productos."""
 

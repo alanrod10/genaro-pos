@@ -45,6 +45,18 @@ class ErrorAccesoCatalogoTurso(ErrorCatalogo):
   pass
 
 
+class ErrorAdminCatalogo(ErrorCatalogo):
+  """Excepción base para errores de administración del catálogo."""
+
+  pass
+
+
+class ProductoNoEncontrado(ErrorAdminCatalogo):
+  """El producto solicitado no existe en la base de datos."""
+
+  pass
+
+
 class CatalogoFrameLiviano:
   """Representación tabular liviana compatible con columnas e iterrows para entornos sin pandas."""
 
@@ -227,3 +239,182 @@ def cargar_catalogo_turso(conn: Optional[Any] = None) -> Any:
     return df
 
   return CatalogoFrameLiviano(datos, columnas=COLUMNAS_CATALOGO_POS)
+
+
+def eliminar_producto_inteligente_turso(
+    id_producto: int,
+    conn: Optional[Any] = None,
+    actor: str = "sistema",
+) -> Dict[str, Any]:
+  """Elimina un producto aplicando la lógica de Smart Delete.
+
+  - Consulta si `id_producto` posee ventas registradas en `ticket_items`.
+  - Si NO tiene ventas: ejecuta `DELETE FROM productos WHERE id = ?` (borrado físico limpio).
+  - Si SÍ tiene ventas: ejecuta `UPDATE productos SET activo = 0 WHERE id = ?` (baja lógica).
+  """
+  cerrar_al_terminar = False
+  if conn is None:
+    conn = _obtener_conexion_turso()
+    cerrar_al_terminar = True
+
+  try:
+    cur_prod = conn.execute(
+        """
+        SELECT id, nombre, categoria, proveedor, unidad, costo, precio_dia, activo, fecha_actualizacion
+        FROM productos
+        WHERE id = ?;
+        """,
+        (id_producto,),
+    )
+    fila = cur_prod.fetchone()
+    if not fila:
+      raise ProductoNoEncontrado(
+          f"No existe ningún producto con ID {id_producto}."
+      )
+
+    nombre_prod = str(fila[1]).strip()
+    fecha_act = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Consultar si existen ventas asociadas en ticket_items
+    tiene_ventas = False
+    cur_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ticket_items';"
+    )
+    if cur_table.fetchone():
+      cols = {
+          str(r[1]).lower()
+          for r in conn.execute("PRAGMA table_info(ticket_items);").fetchall()
+      }
+      condiciones: List[str] = []
+      params_ventas: List[Any] = []
+      if "producto_id" in cols:
+        condiciones.append("producto_id = ?")
+        params_ventas.append(id_producto)
+      if "id_producto" in cols:
+        condiciones.append("id_producto = ?")
+        params_ventas.append(id_producto)
+      if "producto_nombre" in cols:
+        if "producto_id" in cols:
+          condiciones.append(
+              "(producto_id IS NULL AND producto_nombre = ? COLLATE NOCASE)"
+          )
+          params_ventas.append(nombre_prod)
+        elif not condiciones:
+          condiciones.append("producto_nombre = ? COLLATE NOCASE")
+          params_ventas.append(nombre_prod)
+
+      if condiciones:
+        sql_ventas = (
+            f"SELECT 1 FROM ticket_items WHERE {' OR '.join(condiciones)} LIMIT 1;"
+        )
+        if conn.execute(sql_ventas, tuple(params_ventas)).fetchone():
+          tiene_ventas = True
+
+    tiene_auditoria = bool(
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='productos_auditoria';"
+        ).fetchone()
+    )
+
+    if tiene_ventas:
+      conn.execute(
+          """
+          UPDATE productos
+          SET activo = 0, fecha_actualizacion = ?
+          WHERE id = ?;
+          """,
+          (fecha_act, id_producto),
+      )
+      if tiene_auditoria:
+        import json
+
+        snapshot_ant = {
+            "id_producto": int(fila[0]),
+            "nombre": nombre_prod,
+            "categoria": str(fila[2] or "Otro"),
+            "proveedor": str(fila[3] or "General"),
+            "unidad": str(fila[4] or "Unidad"),
+            "costo": int(fila[5] or 0),
+            "precio_venta": int(fila[6] or 0),
+            "activo": bool(fila[7]),
+            "fecha_act": str(fila[8] or ""),
+        }
+        snapshot_nuevo = dict(snapshot_ant, activo=False, fecha_act=fecha_act)
+        conn.execute(
+            """
+            INSERT INTO productos_auditoria (
+                producto_id, accion, valores_anteriores, valores_nuevos, fecha_utc, actor
+            )
+            VALUES (?, 'DESACTIVAR', ?, ?, ?, ?);
+            """,
+            (
+                id_producto,
+                json.dumps(snapshot_ant, ensure_ascii=False),
+                json.dumps(snapshot_nuevo, ensure_ascii=False),
+                fecha_act,
+                actor,
+            ),
+        )
+      try:
+        conn.commit()
+      except Exception:
+        pass
+
+      return {
+          "id_producto": id_producto,
+          "nombre": nombre_prod,
+          "status": "desactivado",
+          "accion": "baja_logica",
+          "eliminado_fisico": False,
+          "activo": False,
+          "tiene_ventas": True,
+          "mensaje": (
+              f"El producto '{nombre_prod}' posee ventas registradas y fue "
+              "desactivado lógicamente."
+          ),
+      }
+    else:
+      if tiene_auditoria:
+        conn.execute(
+            "DELETE FROM productos_auditoria WHERE producto_id = ?;",
+            (id_producto,),
+        )
+      conn.execute("DELETE FROM productos WHERE id = ?;", (id_producto,))
+      try:
+        conn.commit()
+      except Exception:
+        pass
+
+      return {
+          "id_producto": id_producto,
+          "nombre": nombre_prod,
+          "status": "eliminado",
+          "accion": "borrado_fisico",
+          "eliminado_fisico": True,
+          "activo": False,
+          "tiene_ventas": False,
+          "mensaje": (
+              f"Producto '{nombre_prod}' eliminado físicamente del catálogo."
+          ),
+      }
+  except ProductoNoEncontrado:
+    try:
+      conn.rollback()
+    except Exception:
+      pass
+    raise
+  except Exception as e:
+    try:
+      conn.rollback()
+    except Exception:
+      pass
+    raise ErrorAdminCatalogo(
+        f"Error al eliminar el producto ID {id_producto}: {e}"
+    ) from e
+  finally:
+    if cerrar_al_terminar:
+      try:
+        conn.close()
+      except Exception:
+        pass
+
