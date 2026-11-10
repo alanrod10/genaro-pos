@@ -479,6 +479,7 @@ describe("Integración Local Real Frontend (RealApiClient) ↔ Backend (Worker +
       expect(getApiClient().isDemo()).toBe(false);
       expect(screen.getByTestId("user-badge")).toHaveTextContent(/Alan/i);
     });
+    await screen.findByText("Alfajor Chocolate");
 
     // Verificar que ninguna operación caiga en ventas_demo
     const demoBefore = await listarVentasDemo();

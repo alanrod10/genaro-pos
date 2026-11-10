@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { ServicesAdmin, calcularRecargoAutomatico } from "../src/components/ServicesAdmin";
 import { resetDBInstance, listarServiciosDemo } from "../src/services/db";
 import { activarModoDemo } from "../src/services/api";
@@ -119,6 +119,7 @@ describe("GenaroPOS — Módulo Servicios: Corrección de Importe Libre y Acceso
     fireEvent.click(screen.getByTestId("btn-register-charge"));
 
     await waitFor(async () => {
+      expect(screen.getByTestId("select-plataforma-origen")).toHaveValue("");
       const cargas = await listarServiciosDemo();
       expect(cargas.some((c) => c.monto_carga === 2000)).toBe(true);
     });
@@ -126,10 +127,7 @@ describe("GenaroPOS — Módulo Servicios: Corrección de Importe Libre y Acceso
     // Abrir modal de edición para la carga registrada
     const cargas = await listarServiciosDemo();
     const cargaReciente = cargas[0];
-    await waitFor(() => {
-      expect(screen.getByTestId(`btn-edit-charge-${cargaReciente.id}`)).toBeInTheDocument();
-    });
-    const btnEdit = screen.getByTestId(`btn-edit-charge-${cargaReciente.id}`);
+    const btnEdit = await screen.findByTestId(`btn-edit-charge-${cargaReciente.id}`);
     fireEvent.click(btnEdit);
 
     expect(screen.getByTestId("modal-edit-charge")).toBeInTheDocument();
@@ -145,6 +143,7 @@ describe("GenaroPOS — Módulo Servicios: Corrección de Importe Libre y Acceso
 
     await waitFor(async () => {
       expect(screen.queryByTestId("modal-edit-charge")).not.toBeInTheDocument();
+      expect(screen.getByTestId("btn-refresh-services")).not.toBeDisabled();
       const actualizadas = await listarServiciosDemo();
       const editada = actualizadas.find((c) => c.id === cargaReciente.id);
       expect(editada?.monto_carga).toBe(9350);
