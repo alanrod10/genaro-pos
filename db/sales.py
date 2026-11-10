@@ -1210,5 +1210,35 @@ def editar_item_venta_turso(
                 f"Error al registrar auditoría de edición de ítem: {str(e)}. Se requiere la tabla 'ventas_auditoria' (migración 007)."
             ) from e
 
+        # Emisión de evento outbox de ajuste con trazabilidad contable
+        import time
+        adj_ts = int(time.time() * 1000)
+        is_mixed_reduction = bool(diff > 0 and efvo > 0 and transf > 0)
+
+        enqueue_commercial_event(
+            conn=conexion,
+            event_type="SALE_ADJUSTED",
+            entity_type="TICKET",
+            entity_id=ticket_id,
+            action_type="ADJUST",
+            idempotency_key=f"COMM_SALE_{ticket_id}_ADJUST_{item_id}_{adj_ts}",
+            payload={
+                "ticket_id": ticket_id,
+                "item_id": item_id,
+                "usuario": usuario,
+                "old_total_venta_cents": to_amount_cents(old_total),
+                "new_total_venta_cents": to_amount_cents(new_total),
+                "old_monto_efectivo_cents": to_amount_cents(efvo),
+                "old_monto_transferencia_cents": to_amount_cents(transf),
+                "monto_efectivo_cents": to_amount_cents(new_efvo if new_total > 0 else 0),
+                "monto_transferencia_cents": to_amount_cents(new_transf if new_total > 0 else 0),
+                "metodo_pago": new_metodo if new_total > 0 else "ANULADO",
+                "diff_cents": to_amount_cents(diff),
+                "is_mixed_reduction": is_mixed_reduction,
+                "reference_action": "CONFIRM",
+                "reference_idempotency_key": f"COMM_SALE_{ticket_id}_CONFIRM",
+            },
+        )
+
         conexion.commit()
         return obtener_detalle_ticket_turso(ticket_id, conn=conexion)

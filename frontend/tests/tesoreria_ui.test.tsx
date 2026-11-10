@@ -2,10 +2,53 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { TesoreriaLab } from "../src/components/TesoreriaLab";
 import { Header } from "../src/components/Header";
+import { TesoreriaService } from "../src/services/tesoreria";
+
+const dummyFondos = [
+  { id: 1, codigo: "1110", nombre: "Drugstore Diario", saldo_centavos: 0, saldo_formateado: "$0,00", estado: "ACTIVO", naturaleza: "EFECTIVO", titularidad: "PROPIA", permite_sobregiro: 0, version: 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 2, codigo: "1120", nombre: "Drugstore Acumulado", saldo_centavos: 0, saldo_formateado: "$0,00", estado: "ACTIVO", naturaleza: "EFECTIVO", titularidad: "PROPIA", permite_sobregiro: 0, version: 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 3, codigo: "1130", nombre: "Prepay Efectivo", saldo_centavos: 0, saldo_formateado: "$0,00", estado: "ACTIVO", naturaleza: "EFECTIVO", titularidad: "PROPIA", permite_sobregiro: 0, version: 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 4, codigo: "1140", nombre: "Adicionales Efectivo", saldo_centavos: 0, saldo_formateado: "$0,00", estado: "ACTIVO", naturaleza: "ADICIONALES_PARTICULARES", titularidad: "PROPIA", permite_sobregiro: 0, version: 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 5, codigo: "1150", nombre: "Claro Efectivo", saldo_centavos: 0, saldo_formateado: "$0,00", estado: "ACTIVO", naturaleza: "RECAUDACION_TERCEROS", titularidad: "CUSTODIA", permite_sobregiro: 0, version: 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 6, codigo: "1210", nombre: "Mercado Pago Propio", saldo_centavos: 0, saldo_formateado: "$0,00", estado: "ACTIVO", naturaleza: "BILLETERA_VIRTUAL", titularidad: "PROPIA", permite_sobregiro: 0, version: 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 7, codigo: "1220", nombre: "Prepay Digital Saldo", saldo_centavos: 0, saldo_formateado: "$0,00", estado: "ACTIVO", naturaleza: "BILLETERA_VIRTUAL", titularidad: "PROPIA", permite_sobregiro: 0, version: 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 8, codigo: "1230", nombre: "Claro Comercios Digital Saldo", saldo_centavos: 0, saldo_formateado: "$0,00", estado: "ACTIVO", naturaleza: "BILLETERA_VIRTUAL", titularidad: "PROPIA", permite_sobregiro: 0, version: 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+  { id: 9, codigo: "1310", nombre: "Cobranzas en Tránsito Preventistas", saldo_centavos: 0, saldo_formateado: "$0,00", estado: "ACTIVO", naturaleza: "TRANSITO_PREVENTISTAS", titularidad: "TRANSITO", permite_sobregiro: 0, version: 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+];
 
 describe("GENARO TESORERÍA — Interfaz de Laboratorio (Sprint 1 & Sprint 2)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(TesoreriaService, "obtenerResumen").mockResolvedValue({
+      total_fondos: dummyFondos.length,
+      fondos_activos: dummyFondos.length,
+      total_saldo_registrado_centavos: 0,
+      total_saldo_registrado_formateado: "$0,00",
+      total_saldo_disponible_centavos: 0,
+      total_saldo_disponible_formateado: "$0,00",
+      jornada_activa: null,
+      aislamiento_confirmado: true,
+      db_path: "db/tesoreria_lab.db",
+    });
+    vi.spyOn(TesoreriaService, "obtenerFondos").mockResolvedValue(dummyFondos as any);
+    vi.spyOn(TesoreriaService, "obtenerFondoDetalle").mockImplementation(async (codigo: string) => {
+      const f = dummyFondos.find(d => d.codigo === codigo);
+      if (!f) throw new Error("Fondo no encontrado");
+      return f as any;
+    });
+    vi.spyOn(TesoreriaService, "obtenerAuditoriaFondo").mockResolvedValue([
+      {
+        id: 1,
+        fondo_id: 1,
+        codigo: "1110",
+        accion: "INSERT",
+        usuario: "SISTEMA_LAB",
+        valores_previos: null,
+        valores_nuevos: dummyFondos[0],
+        motivo: "Alta inicial en catálogo",
+        timestamp_utc: new Date().toISOString(),
+      },
+    ]);
   });
 
   it("1. Renderiza encabezado, badges de aislamiento y resumen general de saldos", async () => {

@@ -10,20 +10,15 @@ import json
 import logging
 import os
 from typing import Any, Dict, List, Optional
-from db.catalog import _obtener_conexion_turso
+from db.catalog import (
+    ErrorAdminCatalogo,
+    ProductoNoEncontrado,
+    _obtener_conexion_turso,
+    eliminar_producto_inteligente_turso,
+)
 from db.readiness import ErrorEsquemaNoPreparado
 
 logger = logging.getLogger(__name__)
-
-
-class ErrorAdminCatalogo(Exception):
-    """Excepción base para errores de administración del catálogo."""
-    pass
-
-
-class ProductoNoEncontrado(ErrorAdminCatalogo):
-    """El producto solicitado no existe en la base de datos."""
-    pass
 
 
 class ErrorValidacionProducto(ErrorAdminCatalogo):

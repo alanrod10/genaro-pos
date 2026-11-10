@@ -1,4 +1,4 @@
-import React, { useState, useId } from "react";
+import React, { useState, useId, useEffect } from "react";
 import { ItemCarrito } from "../types/sales";
 import { isWeighableProduct, formatearPesoDisplay } from "../utils/weightSales";
 
@@ -34,6 +34,18 @@ export const Cart: React.FC<CartProps> = ({
   const [customPriceUnit, setCustomPriceUnit] = useState<string>("");
   const [customSubtotal, setCustomSubtotal] = useState<string>("");
   const [adjustError, setAdjustError] = useState<string | null>(null);
+
+  // Cerrar modal de ajuste de precio con Escape
+  useEffect(() => {
+    if (!adjustingItem) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setAdjustingItem(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [adjustingItem]);
 
   const totalArticulos = items.reduce((acc, it) => {
     // Si la cantidad es fraccionaria (peso), mostrar 1 ítem fraccionado o sumar unidades enteras
@@ -193,6 +205,7 @@ export const Cart: React.FC<CartProps> = ({
                         )
                       }
                       disabled={item.cantidad <= 0.001}
+                      aria-label="Disminuir cantidad"
                       data-testid={`btn-qty-minus-${item.producto_id}`}
                     >
                       -
@@ -203,6 +216,7 @@ export const Cart: React.FC<CartProps> = ({
                       min="0.001"
                       className="qty-input"
                       value={item.cantidad}
+                      aria-label="Cantidad"
                       onChange={(e) => {
                         const val = parseFloat(e.target.value);
                         if (!isNaN(val) && val > 0) {
@@ -220,6 +234,7 @@ export const Cart: React.FC<CartProps> = ({
                           isWeight ? item.cantidad + 0.25 : item.cantidad + 1
                         )
                       }
+                      aria-label="Aumentar cantidad"
                       data-testid={`btn-qty-plus-${item.producto_id}`}
                     >
                       +
@@ -235,6 +250,7 @@ export const Cart: React.FC<CartProps> = ({
                     className="btn-remove-item"
                     onClick={() => onRemoveItem(item.producto_id)}
                     title="Eliminar del carrito"
+                    aria-label="Eliminar del carrito"
                     data-testid={`btn-remove-${item.producto_id}`}
                   >
                     🗑️

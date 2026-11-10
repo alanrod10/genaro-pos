@@ -41,6 +41,8 @@ TRANSFERENCIAS_PERMITIDAS = {
     ("1130", "1110"),  # Prepay Efectivo -> Drugstore Diario (Cambio operativo de mostrador)
     ("1110", "1130"),  # Drugstore Diario -> Prepay Efectivo (Dotación de efectivo para recargas)
     ("1120", "1130"),  # Drugstore Acumulado -> Prepay Efectivo (Compensación física PREPAY transferencia y reposición)
+    ("1110", "1160"),  # Drugstore Diario -> Prepay Diario (Compensación física PREPAY transferencia)
+    ("1120", "1160"),  # Drugstore Acumulado -> Prepay Diario (Compensación física PREPAY transferencia)
     ("1160", "1130"),  # Prepay Diario Efectivo -> Prepay Efectivo (Barrido de cierre PREPAY)
     ("1110", "1210"),  # Drugstore Diario -> Mercado Pago Propio (Depósito bancario con comprobante)
     ("1310", "1110"),  # Tránsito Preventistas -> Drugstore Diario (Rendición de cobranzas en mostrador)
@@ -58,6 +60,34 @@ def validar_politica_traslado(
     """Valida que la combinación de fondos esté explícitamente autorizada en la matriz operativa."""
     if origin_fund_code == destination_fund_code:
         raise ErrorTraslado("El fondo origen y destino deben ser diferentes.")
+
+    # Excepción de dominio restrictiva: Fondeo de Custodia Claro (DEC-02) desde 1110 o 1120
+    if origin_fund_code in ("1110", "1120") and destination_fund_code == "1150":
+        ctx_upper = (context or "").strip().upper()
+        if ctx_upper != "FONDEO_CUSTODIA_CLARO":
+            raise ErrorTraslado(
+                "Fondo 1150 (Claro Efectivo) es recaudación de terceros en custodia; "
+                "no admite traslados internos comerciales hacia o desde fondos propios del negocio "
+                "salvo fondeo controlado con contexto 'FONDEO_CUSTODIA_CLARO'."
+            )
+        if not evidence_reference or not evidence_reference.strip():
+            raise ErrorTraslado(
+                f"FONDEO CLARO: El traslado {origin_fund_code} -> 1150 exige referencia obligatoria al servicio en evidence_reference."
+            )
+        return
+
+    # Excepción de dominio restrictiva: Liquidación a Ezequiel vía transferencia digital Mercado Pago -> Claro Comercios
+    if origin_fund_code == "1210" and destination_fund_code == "1230":
+        ctx_upper = (context or "").strip().upper()
+        if ctx_upper != "LIQUIDACION_EZEQUIEL_TRANSFERENCIA":
+            raise ErrorTraslado(
+                "Transferencia 1210 -> 1230 solo autorizada bajo contexto 'LIQUIDACION_EZEQUIEL_TRANSFERENCIA'."
+            )
+        if not evidence_reference or not evidence_reference.strip():
+            raise ErrorTraslado(
+                "LIQUIDACION EZEQUIEL: La transferencia 1210 -> 1230 exige comprobante o referencia en evidence_reference."
+            )
+        return
 
     if (origin_fund_code, destination_fund_code) not in TRANSFERENCIAS_PERMITIDAS:
         # Validaciones explicativas según la política económica violada
@@ -227,8 +257,11 @@ def transferFunds(
     saldo_reservado_origen = _obtener_saldo_reservado_fondo(conn, fondo_origen["id"])
     disponible_origen = subtractMoney(saldo_origen, saldo_reservado_origen)
 
-    # Validación canónica y relacional para 1120 -> 1130 con base de datos
-    if origin_fund_code == "1120" and destination_fund_code == "1130":
+    # Validación canónica y relacional para 1120/1110 -> 1130/1160 con base de datos
+    if (origin_fund_code in ("1110", "1120") and destination_fund_code in ("1130", "1160")) and (
+        (context or "").strip().upper() in ("REPOSICION_PREVENTISTAS", "PREPAY_COMPENSATION")
+        or (origin_fund_code == "1120" and destination_fund_code == "1130")
+    ):
         ctx_upper = (context or "").strip().upper()
         if ctx_upper == "REPOSICION_PREVENTISTAS":
             raw_ref = (evidence_reference or "").strip()
@@ -266,10 +299,10 @@ def transferFunds(
                 """
                 SELECT id, coordination_id, commercial_ticket_id, monto_capital_cents, monto_adicional_cents, pago_transf_cents, estado
                 FROM tesoreria_prepay_coordinacion
-                WHERE commercial_ticket_id = ? OR coordination_id = ?
+                WHERE commercial_ticket_id = ? OR coordination_id = ? OR idempotency_key = ?
                 LIMIT 1
                 """,
-                (ticket_key, raw_ref),
+                (ticket_key, raw_ref, ticket_key),
             )
             row_coord = cur_coord.fetchone()
             if not row_coord:
@@ -327,6 +360,18 @@ def transferFunds(
                         f"GOBERNANZA: Ya existe una compensación física activa para el ticket #{coord_data['commercial_ticket_id']} "
                         f"(traslado #{dup_id}). Prohibida la doble compensación."
                     )
+
+    # Validación canónica para Fondeo Claro 1110 / 1120 -> 1150
+    if origin_fund_code in ("1110", "1120") and destination_fund_code == "1150":
+        ctx_upper = (context or "").strip().upper()
+        if ctx_upper != "FONDEO_CUSTODIA_CLARO":
+            raise ErrorTraslado(
+                f"GOBERNANZA: El traslado {origin_fund_code} -> 1150 requiere obligatoriamente contexto 'FONDEO_CUSTODIA_CLARO'."
+            )
+        if not evidence_reference or not evidence_reference.strip():
+            raise ErrorTraslado(
+                f"GOBERNANZA: El traslado {origin_fund_code} -> 1150 requiere referencia obligatoria al servicio en evidence_reference."
+            )
 
     # Validación canónica y relacional para 1110 -> 1130 con base de datos en contexto de reposición
     if origin_fund_code == "1110" and destination_fund_code == "1130":

@@ -461,9 +461,12 @@ export async function obtenerResumenGeneralWorker(client) {
   const totalDisp = summary.fondos_propios.total_disponible_cents;
   const activosCount = fondos.filter((f) => f.estado === "ACTIVO").length;
 
+  const dbPath = client?.url || "turso://staging-isolated";
+  const isIsolated = !String(dbPath).toLowerCase().includes("live-ops") && !String(dbPath).toLowerCase().includes("prod");
+
   return {
-    aislamiento_confirmado: true,
-    db_path: "turso://genaro-pos-live-ops",
+    aislamiento_confirmado: isIsolated,
+    db_path: dbPath,
     total_saldo_registrado_centavos: totalReg,
     total_saldo_registrado_formateado: formatMoney(totalReg),
     total_saldo_disponible_centavos: totalDisp,
@@ -816,6 +819,10 @@ const TRANSFERENCIAS_PERMITIDAS = new Set([
   "1130->1110",
   "1110->1130",
   "1120->1130",
+  "1110->1160",
+  "1120->1160",
+  "1110->1150",
+  "1120->1150",
   "1160->1130",
   "1110->1210",
   "1310->1110",
@@ -2380,41 +2387,51 @@ export async function reprocesarOutboxWorker(client, eventId, usuario) {
 export async function obtenerBridgeStatusWorker(client) {
   try {
     const res = await client.execute(
-      `SELECT status, COUNT(*) as cnt, COALESCE(SUM(retry_count), 0) as retries
-       FROM commercial_events_outbox
-       GROUP BY status;`
+      `SELECT
+         COUNT(*) as total,
+         COALESCE(SUM(CASE WHEN status = 'PENDING' AND (tesoreria_movement_id IS NULL OR (tesoreria_movement_id NOT LIKE 'PENDING_DEFINITION%' AND tesoreria_movement_id NOT LIKE 'UNSPECIFIED_PLATFORM%')) THEN 1 ELSE 0 END), 0) as pending,
+         COALESCE(SUM(CASE WHEN status = 'PROCESSING' THEN 1 ELSE 0 END), 0) as processing,
+         COALESCE(SUM(CASE WHEN status = 'PUBLISHED' AND (tesoreria_movement_id IS NULL OR (tesoreria_movement_id NOT LIKE 'PENDING_DEFINITION%' AND tesoreria_movement_id NOT LIKE 'UNSPECIFIED_PLATFORM%')) THEN 1 ELSE 0 END), 0) as published,
+         COALESCE(SUM(CASE WHEN (tesoreria_movement_id LIKE 'PENDING_DEFINITION%' OR tesoreria_movement_id LIKE 'UNSPECIFIED_PLATFORM%') THEN 1 ELSE 0 END), 0) as held_pending_definition,
+         COALESCE(SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END), 0) as failed,
+         COALESCE(SUM(CASE WHEN status = 'DEAD_LETTER' THEN 1 ELSE 0 END), 0) as dead_letter,
+         COALESCE(SUM(retry_count), 0) as retry_count_total
+       FROM commercial_events_outbox;`
     );
-    const counts = { PENDING: 0, PROCESSING: 0, PUBLISHED: 0, FAILED: 0, DEAD_LETTER: 0 };
-    let retryTotal = 0;
-    for (const r of res.rows) {
-      counts[String(r.status)] = Number(r.cnt);
-      retryTotal += Number(r.retries || 0);
+    const r = res.rows[0];
+    if (!r) {
+      return { total: 0, pending: 0, processing: 0, published: 0, held_pending_definition: 0, failed: 0, dead_letter: 0, retry_count_total: 0 };
     }
-    const total = Object.values(counts).reduce((a, b) => a + b, 0);
     return {
-      total,
-      pending: counts.PENDING || 0,
-      processing: counts.PROCESSING || 0,
-      published: counts.PUBLISHED || 0,
-      failed: counts.FAILED || 0,
-      dead_letter: counts.DEAD_LETTER || 0,
-      retry_count_total: retryTotal,
+      total: Number(r.total || 0),
+      pending: Number(r.pending || 0),
+      processing: Number(r.processing || 0),
+      published: Number(r.published || 0),
+      held_pending_definition: Number(r.held_pending_definition || 0),
+      failed: Number(r.failed || 0),
+      dead_letter: Number(r.dead_letter || 0),
+      retry_count_total: Number(r.retry_count_total || 0),
     };
   } catch {
-    return { total: 0, pending: 0, processing: 0, published: 0, failed: 0, dead_letter: 0, retry_count_total: 0 };
+    return { total: 0, pending: 0, processing: 0, published: 0, held_pending_definition: 0, failed: 0, dead_letter: 0, retry_count_total: 0 };
   }
 }
 
 export async function obtenerSyncStatusBridgeWorker(client) {
   const st = await obtenerBridgeStatusWorker(client);
-  const pendientes = st.pending + st.processing + st.failed;
-  const reqAtencion = st.failed > 0 || st.dead_letter > 0;
+  const pendientes = st.pending + st.processing;
+  const retenidas = st.held_pending_definition || 0;
+  const fallidas = st.failed + st.dead_letter;
+  const reqAtencion = fallidas > 0 || retenidas > 0;
   return {
     sincronizadas: st.published,
     pendientes,
+    held_pending_definition: retenidas,
     requiere_atencion: reqAtencion,
-    mensaje_cajero: reqAtencion
-      ? "Existen eventos con observación pendientes de revisión administrativa."
+    mensaje_cajero: fallidas > 0
+      ? `Atención requerida: ${fallidas} operación(es) con error de sincronización. Avise a Administración.`
+      : retenidas > 0
+      ? `Atención: ${retenidas} operación(es) retenida(s) pendiente(s) de definición de plataforma.`
       : pendientes > 0
       ? `${pendientes} operación(es) en cola de sincronización.`
       : "Operaciones sincronizadas al día.",
@@ -2430,8 +2447,15 @@ export async function listarCommercialEventsWorker(
     let sql = "SELECT * FROM commercial_events_outbox WHERE 1=1";
     const args = [];
     if (status) {
-      sql += " AND status = ?";
-      args.push(String(status).trim().toUpperCase());
+      const sf = String(status).trim().toUpperCase();
+      if (sf === "PENDING_DEFINITION" || sf === "HELD" || sf === "HELD_PENDING_DEFINITION") {
+        sql += " AND (tesoreria_movement_id LIKE 'PENDING_DEFINITION%' OR tesoreria_movement_id LIKE 'UNSPECIFIED_PLATFORM%')";
+      } else if (sf === "PUBLISHED") {
+        sql += " AND status = 'PUBLISHED' AND (tesoreria_movement_id IS NULL OR (tesoreria_movement_id NOT LIKE 'PENDING_DEFINITION%' AND tesoreria_movement_id NOT LIKE 'UNSPECIFIED_PLATFORM%'))";
+      } else {
+        sql += " AND status = ?";
+        args.push(sf);
+      }
     }
     if (event_type) {
       sql += " AND event_type LIKE ?";
@@ -3086,20 +3110,20 @@ export async function aplicarLiquidacionPrepayOutboxWorker(
       client,
       {
         origin_fund_code: "1120",
-        destination_fund_code: "1130",
+        destination_fund_code: "1160",
         amount_cents: capTransfCents,
-        reason: `Compensación inmediata 1120 -> 1130 por capital PREPAY cobrado por transferencia (#${realCargaId})`,
+        reason: `Compensación inmediata 1120 -> 1160 por capital PREPAY cobrado por transferencia (#${realCargaId})`,
         evidence_reference: refEv,
       },
       usuario,
-      `${keyLimpia}_COMP_INIT_1120_1130`,
+      `${keyLimpia}_COMP_INIT_1120_1160`,
       { allowInternalSweepOrRepo: true }
     );
     await confirmarTrasladoWorker(
       client,
       tr.transfer_id,
       usuario,
-      `${keyLimpia}_COMP_CONF_1120_1130`
+      `${keyLimpia}_COMP_CONF_1120_1160`
     );
     movements.push(tr.exit_movement_id);
   }
@@ -3304,20 +3328,20 @@ export async function ejecutarCircuitoServicioTesoreriaWorker(
         client,
         {
           origin_fund_code: "1120",
-          destination_fund_code: "1130",
+          destination_fund_code: "1160",
           amount_cents: capTransfCents,
-          reason: `Compensación inmediata 1120 -> 1130 por capital PREPAY cobrado por transferencia (#${cargaId})`,
+          reason: `Compensación inmediata 1120 -> 1160 por capital PREPAY cobrado por transferencia (#${cargaId})`,
           evidence_reference: refEv,
         },
         usuario || "sistema",
-        `${baseKey}_COMP_INIT_1120_1130`,
+        `${baseKey}_COMP_INIT_1120_1160`,
         { allowInternalSweepOrRepo: true }
       );
       await confirmarTrasladoWorker(
         client,
         tr.transfer_id,
         usuario || "sistema",
-        `${baseKey}_COMP_CONF_1120_1130`
+        `${baseKey}_COMP_CONF_1120_1160`
       );
       movements.push(tr.exit_movement_id);
     }
@@ -3459,45 +3483,39 @@ export async function ejecutarCircuitoServicioTesoreriaWorker(
 }
 
 export async function triggerDrainCommercialBridgeWorker(client) {
+  // Arquitectura CENTRAL: La contabilización es responsabilidad exclusiva del motor central Python.
+  // El Worker comercial de Cloudflare NO finge drenaje marcando 'PUBLISHED' sin asientos contables.
   try {
     await reconciliarCoordinacionesPrepayWorker(client, { usuario: "bridge_drain" });
-    const pendingRes = await client.execute(
-      "SELECT * FROM commercial_events_outbox WHERE status IN ('PENDING', 'FAILED') ORDER BY sequence_id ASC LIMIT 50;"
-    );
-    const nowUtc = new Date().toISOString();
-    for (const r of pendingRes.rows) {
-      const evId = String(r.event_id);
-      await client.execute({
-        sql: "UPDATE commercial_events_outbox SET status = 'PUBLISHED', updated_at = ?, published_at = ? WHERE event_id = ?;",
-        args: [nowUtc, nowUtc, evId],
-      });
-    }
   } catch {}
   const st = await obtenerBridgeStatusWorker(client);
   return {
     published: st.published,
     failed: st.failed,
     dead_letter: st.dead_letter,
-    message: `Ciclo completado: ${st.published} confirmados, ${st.failed} con fallo, ${st.dead_letter} en letra muerta.`,
+    pending: st.pending,
+    message: `Estado actual del bridge outbox: ${st.pending} pendientes de contabilización central, ${st.published} publicados, ${st.failed} con fallo.`,
   };
 }
 
 export async function reprocesarCommercialEventWorker(client, eventId, usuario) {
   const nowUtc = new Date().toISOString();
+  // Al reencolar, se restablece a PENDING para que el motor central lo contabilice genuinamente
   await client.execute({
     sql: `UPDATE commercial_events_outbox
-          SET status = 'PUBLISHED', reprocessed_by = ?, reprocessed_at = ?, updated_at = ?, published_at = ?
+          SET status = 'PENDING', retry_count = 0, error_message = NULL, reprocessed_by = ?, reprocessed_at = ?, updated_at = ?
           WHERE event_id = ?;`,
-    args: [usuario, nowUtc, nowUtc, nowUtc, eventId],
+    args: [usuario, nowUtc, nowUtc, eventId],
   });
+  const st = await obtenerBridgeStatusWorker(client);
   return {
     event_id: eventId,
-    status: "PUBLISHED",
+    status: "PENDING",
     tesoreria_movement_id: null,
     error_message: null,
     authorized_by: usuario,
     reprocessed_at: nowUtc,
-    drain_stats: { published: 1, failed: 0, dead_letter: 0 },
+    drain_stats: { published: st.published, failed: st.failed, dead_letter: st.dead_letter, pending: st.pending },
   };
 }
 

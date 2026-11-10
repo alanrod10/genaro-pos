@@ -1,0 +1,53 @@
+# MATRIZ DE TRAZABILIDAD ECONÓMICA — GENAROPOS V4
+## Mapeo Integral: Reglas del Propietario vs. Implementación en Código
+
+**Fecha:** 06/11/2026  
+**Rama:** `feature/staging-central-accounting`  
+**Commit:** [`0cafea8`](file:///home/alanrod10/workspace/genaro-pos-turso-lab)  
+**Objetivo:** Contrastar cada regla económica confirmada por el propietario con su implementación técnica, función de origen, evento Outbox, movimiento contable y prueba verificable.
+
+---
+
+## 1. MATRIZ DE RECARGAS Y PLATAFORMAS (CAPITAL VS. ADICIONAL)
+
+| # | Regla Económica (Propietario) | Canal / Medio de Pago | Función Comercial | Evento Outbox | Movimiento Contable en Tesorería | Fondos / Cuentas Afectadas | Estado de Cumplimiento Técnico | Referencia en Código |
+|---|---|---|---|---|---|---|---|---|
+| **1.1** | **PREPAY / Efectivo:** Capital ingresa a PREPAY Diario (`1160`/`1130`), Adicional va a Adicionales (`1140`). | Efectivo | `registrarCargaIdempotente` / `guardar_cargas_turso` | `SERVICE_CONFIRMED` | 1. `registerEntry` (Capital en 1160)<br>2. `registerEntry` (Adicional en 1140) | Crédito `1160` (Capital)<br>Crédito `1140` (Ganancia Adicional) | ⚠️ **PARCIAL:** Con pre-reserva (`prepay_coordinator`) se desglosa; en el puente directo se agrupa la cobranza completa en `1130` sin separar `1140`. | [`prepay_coordinator.py:891-922`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/tesoreria/prepay_coordinator.py#L891-L922) vs [`commercial_bridge_worker.py:521-534`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/tesoreria/commercial_bridge_worker.py#L521-L534) |
+| **1.2** | **PREPAY / Transferencia:** Transferencia entra a MP (`1210`). Traslado físico Drugstore (`1120`) → PREPAY (`1130`). Adicional a `1140`. | Transferencia | `registrarCargaIdempotente` / `guardar_cargas_turso` | `SERVICE_CONFIRMED` | 1. `registerEntry` (Cobro MP en 1210)<br>2. `transferFunds` (Compensación 1120→1130)<br>3. `confirmTransferReceipt` | Crédito `1210`<br>Débito `1120`<br>Crédito `1130` | ✅ **IMPLEMENTADO (Fase 2):** Se ejecuta en `prepay_coordinator.py` con compensación física neutral. | [`prepay_coordinator.py:924-960`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/tesoreria/prepay_coordinator.py#L924-L960) |
+| **1.3** | **CLARO COMERCIOS / Efectivo:** Capital ingresa a CLARO Físico (`1150`) bajo custodia para Ezequiel. Adicional a Adicionales (`1140`). | Efectivo | `registrarCargaIdempotente` / `guardar_cargas_turso` | `SERVICE_CONFIRMED` | 1. `registerEntry` (Custodia Claro en 1150)<br>2. `registerEntry` (Adicional en 1140) | Crédito `1150`<br>Crédito `1140` | ⚠️ **DEFICITARIO:** El código actual envía el total cobrado a `1150` sin separar el adicional hacia `1140`. | [`commercial_bridge_worker.py:620-633`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/tesoreria/commercial_bridge_worker.py#L620-L633) |
+| **1.4** | **CLARO COMERCIOS / Transferencia:** Transferencia entra a MP (`1210`). Traslado Drugstore → CLARO Físico (`1150`). Adicional a `1140`. | Transferencia | `registrarCargaIdempotente` / `guardar_cargas_turso` | `SERVICE_CONFIRMED` | 1. `registerEntry` (Cobro MP en 1210)<br>2. `transferFunds` (1120→1150 compensación) | Crédito `1210`<br>Débito `1120`<br>Crédito `1150` | ❌ **NO IMPLEMENTADO:** Solo se acredita `1210`; se omite el traslado físico y el desglose de adicional. | [`commercial_bridge_worker.py:635-648`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/tesoreria/commercial_bridge_worker.py#L635-L648) |
+| **1.5** | **MERCADO PAGO Directo / Efectivo:** Consume saldo digital de MP (`1210`). Efectivo entra a Drugstore Diario (`1110`). Adicional a `1140`. No afecta David ni Ezequiel. | Efectivo | `registrarCargaIdempotente` (Plat: MERCADO PAGO, Dest: SUBE) | `SERVICE_CONFIRMED` | 1. `registerExit` (Consumo MP 1210)<br>2. `registerEntry` (Efectivo en 1110) | Débito `1210`<br>Crédito `1110` | ⚠️ **PARCIAL:** Debita `1210` y acredita `1110`, pero no desglosa el adicional cobrado hacia `1140`. | [`commercial_bridge_worker.py:366-394`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/tesoreria/commercial_bridge_worker.py#L366-L394) |
+
+---
+
+## 2. MATRIZ DE COSTO OPERATIVO Y REGLAS DE NEGOCIO
+
+| # | Regla Económica | Frecuencia y Momento | Cuenta / Fondo Afectado | Clave de Idempotencia | Invariante Financiera | Estado Técnico | Referencia en Código |
+|---|---|---|---|---|---|---|---|
+| **2.1** | **Cargo diario PREPAY de $350:** $350 (35.000 centavos) debitados exclusivamente de PREPAY Digital (`1220`). | Exactamente 1 vez por jornada, en la primera recarga PREPAY del día. | `1220` (Prepay Digital Saldo) | `FEE_JORNADA_{jornada_id}` | Costo operativo propio; NO es deuda con David; NO afecta fondos físicos ni adicionales. | ✅ **IMPLEMENTADO Y OPERATIVO** | [`prepay_coordinator.py:850-879`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/tesoreria/prepay_coordinator.py#L850-L879) y [`tesoreria_worker.js:2987-3005`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/experiments/cloudflare-worker-prototype/src/db/tesoreria_worker.js#L2987-L3005) |
+| **2.2** | **Reducción de ventas con pagos mixtos:** Retención segura sin asunciones arbitrarias de descuento. | Al editar ítem de venta mixta reduciendo total. | `commercial_events_outbox` | `COMM_SALE_{id}_ADJUST_{ts}` | No alterar saldos de efectivo (`1110`) ni MP (`1210`) hasta definición de prioridad. | ✅ **VERIFICADO Y RETENIDO** | [`sales.py:1216`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/db/sales.py#L1216) y [`commercial_bridge_worker.py:928-934`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/tesoreria/commercial_bridge_worker.py#L928-L934) |
+
+---
+
+## 3. MATRIZ DE LIQUIDACIONES, OBLIGACIONES Y CIERRES
+
+| # | Circuito Económico | Origen de Fondos | Destino de la Liquidación | Registro de Obligación | Regla de Salvaguarda | Estado Técnico | Referencia en Código |
+|---|---|---|---|---|---|---|---|
+| **3.1** | **Liquidación a David:** Se cancela exclusivamente con efectivo de PREPAY Acumulado (`1130`). | `1130` (Prepay Acumulado) | Pago a David | `tesoreria_cuenta_corriente_david` | Prohibido pagar con fondos de Drugstore (`1110`/`1120`). Valida disponibilidad y deuda. | ✅ **100% IMPLEMENTADO** | [`cuenta_corriente_david.py:218-330`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/tesoreria/cuenta_corriente_david.py#L218-L330) |
+| **3.2** | **Liquidación a Ezequiel:** Se cancela con CLARO Físico (`1150`); si falta, se completa con transferencia desde MP (`1210`) o Drugstore (`1120`). | `1150` (Claro Físico) + MP/Drugstore | Pago a Ezequiel | Sin libro mayor formal | Pagos parciales con trazabilidad de remanente. | ❌ **NO IMPLEMENTADO (Falta Módulo)** | [`tesoreria_aperturas_configuracion: 'CLARO'`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/tesoreria/migrations/006_saldos_iniciales_y_apertura_auditoria.sql#L30) |
+| **3.3** | **Préstamo PREPAY para Preventistas:** Se utiliza temporalmente `1130` y se repone obligatoriamente con Drugstore. | `1130` (Salida temporal) | Preventista / Pedido | `tesoreria_anticipos_preventistas` | Orden obligatorio de reposición: 1° `1120`, 2° `1110`. No reduce deuda de David. | ✅ **100% IMPLEMENTADO** | [`anticipos_preventistas.py:85-450`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/tesoreria/anticipos_preventistas.py#L85-L450) |
+| **3.4** | **Cierre Diario Drugstore:** Gaveta diaria se traslada a caja fuerte acumulada. | `1110` (Drugstore Diario) | `1120` (Drugstore Acumulado) | `tesoreria_cierres` / `tesoreria_traslados` | `1110` comienza la jornada en cero; movimiento neutro (cero ganancias/pérdidas). | ✅ **100% IMPLEMENTADO** | [`closures.py:316-652`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/tesoreria/closures.py#L316-L652) |
+| **3.5** | **Cierre Diario PREPAY:** Gaveta diaria de PREPAY se traslada al fondo acumulado para David. | `1160` (Prepay Diario) | `1130` (Prepay Acumulado) | `tesoreria_cierres` / `tesoreria_traslados` | `1160` comienza la jornada en cero; exige arqueo verificado previo. | ✅ **100% IMPLEMENTADO** | [`closures.py:655-750`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/tesoreria/closures.py#L655-L750) |
+
+---
+
+## 4. MATRIZ DE VENTAS Y GASTOS ORDINARIOS
+
+| # | Operación | Medio de Pago | Fondo Débito | Fondo Crédito | Contrapartida Contable | Estado de Atomicidad | Referencia en Código |
+|---|---|---|---|---|---|---|---|
+| **4.1** | Venta Mostrador | Efectivo | N/A | `1110` | `VENTA_MOSTRADOR_EFECTIVO` | ✅ Atómica (Batch / Python) | [`sales.py:456-477`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/db/sales.py#L456-L477) / [`adapter.js:524-545`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/experiments/cloudflare-worker-prototype/src/db/adapter.js#L524-L545) |
+| **4.2** | Venta Mostrador | Digital / Transferencia | N/A | `1210` | `VENTA_MOSTRADOR_TRANSFERENCIA` | ✅ Atómica (Batch / Python) | [`sales.py:456-477`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/db/sales.py#L456-L477) / [`adapter.js:524-545`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/experiments/cloudflare-worker-prototype/src/db/adapter.js#L524-L545) |
+| **4.3** | Gasto Operativo | Efectivo | `1110` | N/A | `GASTO_OPERATIVO_COMERCIAL` | 🚨 No atómica en Worker JS (`AUD-001`); Atómica en Python | [`adapter.js:1531-1563`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/experiments/cloudflare-worker-prototype/src/db/adapter.js#L1531-L1563) vs [`expenses.py:375-415`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/db/expenses.py#L375-L415) |
+| **4.4** | Gasto Operativo | Digital / MP | `1210` | N/A | `GASTO_OPERATIVO_COMERCIAL` | 🚨 No atómica en Worker JS (`AUD-001`); Atómica en Python | [`adapter.js:1531-1563`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/experiments/cloudflare-worker-prototype/src/db/adapter.js#L1531-L1563) vs [`expenses.py:375-415`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/db/expenses.py#L375-L415) |
+| **4.5** | Anulación Venta | Inverso al cobro | `1110` / `1210` | N/A | `REVERSAL` con contra-asiento | ✅ Atómica en ambos canales | [`sales.py:1033-1073`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/db/sales.py#L1033-L1073) / [`adapter.js:695-706`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/experiments/cloudflare-worker-prototype/src/db/adapter.js#L695-L706) |
+| **4.6** | Anulación Gasto | Inverso al egreso | N/A | `1110` / `1210` | `REVERSAL` con contra-asiento | ✅ Atómica en ambos canales | [`expenses.py:650-692`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/db/expenses.py#L650-L692) / [`adapter.js:1755-1766`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/experiments/cloudflare-worker-prototype/src/db/adapter.js#L1755-L1766) |

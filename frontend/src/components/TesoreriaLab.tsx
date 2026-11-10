@@ -22,6 +22,8 @@ import {
   CommercialBridgeStatus,
   EventoComercialOutbox,
   EstadoCuentaDavidResponse,
+  EstadoCuentaEzequielResponse,
+  FondeoPendienteItem,
   AnticipoPreventistaItem,
   ReposicionPreventistaItem,
   ResumenPreventistasResponse,
@@ -47,6 +49,8 @@ type TabActiva =
   | "auditoria"
   | "outbox"
   | "cuenta_corriente_david"
+  | "cuenta_corriente_ezequiel"
+  | "fondeos_pendientes"
   | "anticipos_preventistas"
   | "aperturas";
 
@@ -62,12 +66,18 @@ const TRANSFERENCIAS_PERMITIDAS_SET = new Set([
   "1110->1210",
   "1310->1110",
   "1310->1120",
+  "1110->1150",
 ]);
 
 function getTransferPolicyWarning(origen: string, destino: string): string | null {
   if (origen === destino) return "El fondo de origen y destino deben ser diferentes.";
   const key = `${origen}->${destino}`;
-  if (TRANSFERENCIAS_PERMITIDAS_SET.has(key)) return null;
+  if (TRANSFERENCIAS_PERMITIDAS_SET.has(key)) {
+    if (key === "1110->1150") {
+      return "Fondo 1150 (Claro Efectivo) admite exclusivamente Fondeo de Custodia Claro (DEC-02) con referencia a recarga comercial.";
+    }
+    return null;
+  }
 
   if (origen === "1150" || destino === "1150") {
     return "Fondo 1150 (Claro Efectivo) es custodia de terceros; no admite traslados internos comerciales.";
@@ -265,6 +275,48 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
 
   const [errorCCDavid, setErrorCCDavid] = useState<string | null>(null);
   const [submittingCCDavid, setSubmittingCCDavid] = useState<boolean>(false);
+
+  // =====================================================================
+  // ESTADO: CUENTA CORRIENTE CLARO COMERCIOS / EZEQUIEL
+  // =====================================================================
+  const [estadoCCEzequiel, setEstadoCCEzequiel] = useState<EstadoCuentaEzequielResponse | null>(null);
+  const [cargandoCCEzequiel, setCargandoCCEzequiel] = useState<boolean>(false);
+  const [filtroFechaCorteEzequiel, setFiltroFechaCorteEzequiel] = useState<string>("");
+  const [modalCCEzequiel, setModalCCEzequiel] = useState<"ACREDITACION" | "LIQUIDACION" | "HISTORICO" | null>(null);
+
+  // Formulario Acreditación Ezequiel
+  const [formAcrEzMonto, setFormAcrEzMonto] = useState<string>("");
+  const [formAcrEzRef, setFormAcrEzRef] = useState<string>("");
+  const [formAcrEzMotivo, setFormAcrEzMotivo] = useState<string>("");
+  const [formAcrEzFecha, setFormAcrEzFecha] = useState<string>("");
+
+  // Formulario Liquidación Mixta Ezequiel
+  const [formLiqEzMonto1150, setFormLiqEzMonto1150] = useState<string>("");
+  const [formLiqEzMontoDs, setFormLiqEzMontoDs] = useState<string>("");
+  const [formLiqEzFondoDs, setFormLiqEzFondoDs] = useState<string>("1110");
+  const [formLiqEzMontoTrf, setFormLiqEzMontoTrf] = useState<string>("");
+  const [formLiqEzRef, setFormLiqEzRef] = useState<string>("");
+  const [formLiqEzMotivo, setFormLiqEzMotivo] = useState<string>("");
+  const [formLiqEzFecha, setFormLiqEzFecha] = useState<string>("");
+
+  // Formulario Reconocimiento Deuda Histórica Ezequiel
+  const [formHisEzMonto, setFormHisEzMonto] = useState<string>("");
+  const [formHisEzFecha, setFormHisEzFecha] = useState<string>("");
+  const [formHisEzMotivo, setFormHisEzMotivo] = useState<string>("");
+  const [formHisEzRef, setFormHisEzRef] = useState<string>("");
+  const [formHisEzConfirmacion, setFormHisEzConfirmacion] = useState<boolean>(false);
+
+  const [errorCCEzequiel, setErrorCCEzequiel] = useState<string | null>(null);
+  const [submittingCCEzequiel, setSubmittingCCEzequiel] = useState<boolean>(false);
+
+  // =====================================================================
+  // ESTADO: FONDEOS FÍSICOS PENDIENTES DE CUSTODIA (DEC-02)
+  // =====================================================================
+  const [fondeosPendientes, setFondeosPendientes] = useState<FondeoPendienteItem[]>([]);
+  const [cargandoFondeos, setCargandoFondeos] = useState<boolean>(false);
+  const [filtroCircuitoFondeo, setFiltroCircuitoFondeo] = useState<string>("");
+  const [ejecutandoFondeoId, setEjecutandoFondeoId] = useState<number | null>(null);
+  const [errorFondeos, setErrorFondeos] = useState<string | null>(null);
 
   // =====================================================================
   // ESTADO: ANTICIPOS Y REPOSICIONES DE PREVENTISTAS (1130 -> 1120 / 1110)
@@ -1128,6 +1180,201 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
   };
 
   // =====================================================================
+  // HANDLERS: CUENTA CORRIENTE CLARO COMERCIOS / EZEQUIEL
+  // =====================================================================
+  const cargarCCEzequiel = useCallback(async (fechaCorte?: string) => {
+    setCargandoCCEzequiel(true);
+    setErrorCCEzequiel(null);
+    try {
+      const data = await TesoreriaService.getCuentaCorrienteEzequiel(fechaCorte);
+      setEstadoCCEzequiel(data);
+    } catch (err: any) {
+      console.warn("Fallo al consultar Cuenta Corriente Ezequiel:", err);
+      setEstadoCCEzequiel({
+        obligacion_pendiente_cents: 0,
+        obligacion_pendiente_formatted: "$0,00",
+        total_acreditaciones_cents: 0,
+        total_acreditaciones_formatted: "$0,00",
+        total_pagos_cents: 0,
+        total_pagos_formatted: "$0,00",
+        total_deuda_historica_cents: 0,
+        total_deuda_historica_formatted: "$0,00",
+        saldo_disponible_1150_cents: 0,
+        saldo_disponible_1150_formatted: "$0,00",
+        saldo_disponible_1230_cents: 0,
+        saldo_disponible_1230_formatted: "$0,00",
+        saldo_disponible_1110_cents: 0,
+        saldo_disponible_1110_formatted: "$0,00",
+        saldo_disponible_1120_cents: 0,
+        saldo_disponible_1120_formatted: "$0,00",
+        cantidad_movimientos: 0,
+        movimientos: [],
+      });
+    } finally {
+      setCargandoCCEzequiel(false);
+    }
+  }, []);
+
+  const cargarFondeosPendientes = useCallback(async (circuito?: string) => {
+    setCargandoFondeos(true);
+    setErrorFondeos(null);
+    try {
+      const data = await TesoreriaService.getFondeosPendientes("PENDIENTE", circuito || undefined);
+      setFondeosPendientes(data);
+    } catch (err: any) {
+      console.warn("Fallo al consultar Fondeos Pendientes:", err);
+      setFondeosPendientes([]);
+    } finally {
+      setCargandoFondeos(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tabActiva === "cuenta_corriente_ezequiel") {
+      cargarCCEzequiel(filtroFechaCorteEzequiel);
+    } else if (tabActiva === "fondeos_pendientes") {
+      cargarFondeosPendientes(filtroCircuitoFondeo);
+    }
+  }, [tabActiva, filtroFechaCorteEzequiel, cargarCCEzequiel, filtroCircuitoFondeo, cargarFondeosPendientes]);
+
+  const handleAcreditacionEzequielSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsed = parseMoney(formAcrEzMonto);
+    if (parsed <= 0) {
+      alert("El monto de la acreditación debe ser mayor a 0.");
+      return;
+    }
+    if (!formAcrEzRef.trim()) {
+      alert("La referencia o comprobante de acreditación de Ezequiel es obligatoria.");
+      return;
+    }
+    setSubmittingCCEzequiel(true);
+    setErrorCCEzequiel(null);
+    try {
+      await TesoreriaService.registrarAcreditacionEzequiel({
+        monto_centavos: parsed,
+        referencia: formAcrEzRef.trim(),
+        motivo: formAcrEzMotivo.trim() || undefined,
+        fecha_referencia: formAcrEzFecha || undefined,
+      });
+      setModalCCEzequiel(null);
+      setFormAcrEzMonto("");
+      setFormAcrEzRef("");
+      setFormAcrEzMotivo("");
+      setFormAcrEzFecha("");
+      await Promise.all([cargarCCEzequiel(filtroFechaCorteEzequiel), cargarDatos()]);
+    } catch (err: any) {
+      setErrorCCEzequiel(err.message || "Error al registrar la acreditación de Ezequiel.");
+      alert(err.message || "Error al registrar la acreditación de Ezequiel.");
+    } finally {
+      setSubmittingCCEzequiel(false);
+    }
+  };
+
+  const handleLiquidacionEzequielSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const m1150 = formLiqEzMonto1150 ? parseMoney(formLiqEzMonto1150) : 0;
+    const mDs = formLiqEzMontoDs ? parseMoney(formLiqEzMontoDs) : 0;
+    const mTrf = formLiqEzMontoTrf ? parseMoney(formLiqEzMontoTrf) : 0;
+    const total = m1150 + mDs + mTrf;
+
+    if (total <= 0) {
+      alert("Debe ingresar al menos un importe mayor a 0 para la liquidación.");
+      return;
+    }
+    if (!formLiqEzRef.trim()) {
+      alert("El número de recibo o comprobante del cobrador/Ezequiel es obligatorio.");
+      return;
+    }
+    setSubmittingCCEzequiel(true);
+    setErrorCCEzequiel(null);
+    try {
+      await TesoreriaService.registrarLiquidacionEzequiel({
+        monto_1150_cents: m1150,
+        monto_drugstore_cents: mDs,
+        fondo_drugstore: formLiqEzFondoDs,
+        monto_transferencia_cents: mTrf,
+        referencia: formLiqEzRef.trim(),
+        motivo: formLiqEzMotivo.trim() || undefined,
+        fecha_referencia: formLiqEzFecha || undefined,
+      });
+      setModalCCEzequiel(null);
+      setFormLiqEzMonto1150("");
+      setFormLiqEzMontoDs("");
+      setFormLiqEzMontoTrf("");
+      setFormLiqEzRef("");
+      setFormLiqEzMotivo("");
+      setFormLiqEzFecha("");
+      await Promise.all([cargarCCEzequiel(filtroFechaCorteEzequiel), cargarDatos()]);
+    } catch (err: any) {
+      setErrorCCEzequiel(err.message || "Error al registrar la liquidación a Ezequiel.");
+      alert(err.message || "Error al registrar la liquidación a Ezequiel.");
+    } finally {
+      setSubmittingCCEzequiel(false);
+    }
+  };
+
+  const handleHistoricoEzequielSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsed = parseMoney(formHisEzMonto);
+    if (parsed <= 0) {
+      alert("El monto de la deuda histórica debe ser mayor a 0.");
+      return;
+    }
+    if (!formHisEzFecha.trim()) {
+      alert("La fecha de origen de la deuda histórica es obligatoria.");
+      return;
+    }
+    if (!formHisEzMotivo.trim()) {
+      alert("El motivo u observación del reconocimiento histórico es obligatorio.");
+      return;
+    }
+    if (!formHisEzConfirmacion) {
+      alert("Debe confirmar explícitamente el reconocimiento de deuda histórica.");
+      return;
+    }
+    setSubmittingCCEzequiel(true);
+    setErrorCCEzequiel(null);
+    try {
+      await TesoreriaService.registrarReconocimientoDeudaHistoricaEzequiel({
+        monto_centavos: parsed,
+        fecha_referencia: formHisEzFecha.trim(),
+        motivo: formHisEzMotivo.trim(),
+        referencia_externa: formHisEzRef.trim() || undefined,
+        confirmacion_explicita: true,
+      });
+      setModalCCEzequiel(null);
+      setFormHisEzMonto("");
+      setFormHisEzFecha("");
+      setFormHisEzMotivo("");
+      setFormHisEzRef("");
+      setFormHisEzConfirmacion(false);
+      await Promise.all([cargarCCEzequiel(filtroFechaCorteEzequiel), cargarDatos()]);
+    } catch (err: any) {
+      setErrorCCEzequiel(err.message || "Error al registrar el reconocimiento histórico.");
+      alert(err.message || "Error al registrar el reconocimiento histórico.");
+    } finally {
+      setSubmittingCCEzequiel(false);
+    }
+  };
+
+  const handleEjecutarFondeo = async (fondeo: FondeoPendienteItem, fondoOrigen?: string) => {
+    const origenElegido = fondoOrigen || fondeo.fondo_origen_esperado || "1110";
+    if (!window.confirm(`¿Confirmar fondeo físico de ${fondeo.monto_capital_formatted} desde ${origenElegido} hacia ${fondeo.fondo_destino_custodia}?`)) {
+      return;
+    }
+    setEjecutandoFondeoId(fondeo.id);
+    try {
+      await TesoreriaService.ejecutarFondeoPendiente(fondeo.id, origenElegido);
+      await Promise.all([cargarFondeosPendientes(filtroCircuitoFondeo), cargarDatos()]);
+    } catch (err: any) {
+      alert(err.message || "Error al ejecutar fondeo físico pendiente.");
+    } finally {
+      setEjecutandoFondeoId(null);
+    }
+  };
+
+  // =====================================================================
   // ANTICIPOS PREVENTISTAS — HANDLERS Y EFECTOS
   // =====================================================================
   const cargarAnticipos = useCallback(async (estado?: string, prov?: string) => {
@@ -1262,8 +1509,32 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
   const [nuevoSaldoAperturaInput, setNuevoSaldoAperturaInput] = useState("");
   const [motivoAperturaInput, setMotivoAperturaInput] = useState("");
   const [referenciaAperturaInput, setReferenciaAperturaInput] = useState("");
+  const [fechaCorteInput, setFechaCorteInput] = useState("");
+  const [naturalezaSaldoInput, setNaturalezaSaldoInput] = useState("EFECTIVO_CONTADO");
+  const [tipoOperacionInput, setTipoOperacionInput] = useState<"APERTURA_INICIAL" | "AJUSTE_COMPENSATORIO">("APERTURA_INICIAL");
+  const [idempotencyKeyInput, setIdempotencyKeyInput] = useState("");
   const [guardandoApertura, setGuardandoApertura] = useState(false);
   const [confirmandoApertura, setConfirmandoApertura] = useState(false);
+
+  const abrirModalApertura = (item: SaldoInicialItem, esAjuste: boolean = false) => {
+    setModalEditarApertura(item);
+    setTipoOperacionInput(esAjuste ? "AJUSTE_COMPENSATORIO" : "APERTURA_INICIAL");
+    setNuevoSaldoAperturaInput(item.saldo_inicial_cents > 0 ? (item.saldo_inicial_cents / 100).toFixed(2) : "");
+    setMotivoAperturaInput("");
+    setReferenciaAperturaInput("");
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    setFechaCorteInput(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`);
+    setNaturalezaSaldoInput(
+      item.categoria === "FONDO_FISICO"
+        ? "EFECTIVO_CONTADO"
+        : item.categoria === "OBLIGACION"
+        ? "OBLIGACION_EXIGIBLE"
+        : "SALDO_PLATAFORMA"
+    );
+    setIdempotencyKeyInput(`IDEM_OPEN_${item.codigo}_${Date.now()}`);
+    setConfirmandoApertura(false);
+  };
 
   const cargarSaldosApertura = useCallback(async () => {
     setCargandoAperturas(true);
@@ -1312,6 +1583,10 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
         saldo_nuevo_cents: nuevoCents,
         motivo: motivoAperturaInput.trim(),
         referencia_autorizacion: referenciaAperturaInput.trim() || undefined,
+        fecha_corte: fechaCorteInput || undefined,
+        naturaleza_saldo: naturalezaSaldoInput || undefined,
+        tipo_operacion: tipoOperacionInput,
+        idempotency_key: idempotencyKeyInput || undefined,
       });
       setModalEditarApertura(null);
       setNuevoSaldoAperturaInput("");
@@ -1319,9 +1594,11 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
       setReferenciaAperturaInput("");
       setConfirmandoApertura(false);
       await Promise.all([cargarSaldosApertura(), cargarDatos()]);
-      alert("Saldo inicial configurado correctamente con trazabilidad y auditoría.");
+      alert(tipoOperacionInput === "AJUSTE_COMPENSATORIO"
+        ? "Ajuste compensatorio registrado exitosamente con trazabilidad inmutable."
+        : "Saldo inicial de apertura registrado y confirmado correctamente.");
     } catch (err: any) {
-      alert(`Error al configurar saldo inicial: ${err.message}`);
+      alert(`Error al registrar apertura/ajuste: ${err.message}`);
     } finally {
       setGuardandoApertura(false);
     }
@@ -1497,6 +1774,30 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
           }`}
         >
           🤝 Cuenta Corriente PREPAY / David
+        </button>
+        <button
+          type="button"
+          onClick={() => setTabActiva("cuenta_corriente_ezequiel")}
+          data-testid="tab-cuenta-corriente-ezequiel"
+          className={`px-3 py-1.5 text-xs font-bold rounded-lg transition whitespace-nowrap flex-shrink-0 ${
+            tabActiva === "cuenta_corriente_ezequiel"
+              ? "bg-[#C97B5A] text-white shadow-sm"
+              : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200"
+          }`}
+        >
+          📱 Cuenta Corriente Claro / Ezequiel
+        </button>
+        <button
+          type="button"
+          onClick={() => setTabActiva("fondeos_pendientes")}
+          data-testid="tab-fondeos-pendientes"
+          className={`px-3 py-1.5 text-xs font-bold rounded-lg transition whitespace-nowrap flex-shrink-0 ${
+            tabActiva === "fondeos_pendientes"
+              ? "bg-[#C97B5A] text-white shadow-sm"
+              : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200"
+          }`}
+        >
+          📦 Fondeos Físicos Pendientes {fondeosPendientes.length > 0 ? `(${fondeosPendientes.length})` : ""}
         </button>
         <button
           type="button"
@@ -4102,8 +4403,8 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
             </div>
           )}
 
-          {/* Grilla de 5 Indicadores Contables Obligatorios */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
+          {/* Grilla de Indicadores Contables David (5 Obligatorios + 2 Desglose Digital 1220) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-3.5">
             {/* KPI 1: Obligación Pendiente */}
             <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border-2 border-[#C97B5A] shadow-sm">
               <span className="text-[10px] font-bold uppercase tracking-wider text-[#C97B5A] block">
@@ -4181,6 +4482,38 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
               </span>
               <span className="text-[10px] text-gray-400 mt-0.5 block">
                 Efectivo Prepay Acumulado
+              </span>
+            </div>
+
+            {/* KPI 6: Saldo Digital Disponible en 1220 */}
+            <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-600 dark:text-cyan-400 block">
+                Digital Disp. 1220
+              </span>
+              <span
+                className="text-2xl font-black text-gray-900 dark:text-gray-100 font-mono mt-1 block"
+                data-testid="kpi-disponible-1220"
+              >
+                {estadoCCDavid?.saldo_disponible_1220_formatted || "$0,00"}
+              </span>
+              <span className="text-[10px] text-gray-400 mt-0.5 block">
+                Saldo Digital Prepay
+              </span>
+            </div>
+
+            {/* KPI 7: Capital Consumido en Recargas */}
+            <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 block">
+                Capital Consumido
+              </span>
+              <span
+                className="text-2xl font-black text-gray-900 dark:text-gray-100 font-mono mt-1 block"
+                data-testid="kpi-capital-consumido"
+              >
+                {estadoCCDavid?.capital_consumido_recargas_formatted || "$0,00"}
+              </span>
+              <span className="text-[10px] text-gray-400 mt-0.5 block">
+                Recargas Prepay
               </span>
             </div>
           </div>
@@ -4321,6 +4654,423 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
                         </td>
                         <td className="py-2.5 px-3 text-right font-mono font-extrabold text-gray-900 dark:text-gray-100 whitespace-nowrap">
                           {m.saldo_obligacion_resultante_formatted}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: CUENTA CORRIENTE CLARO COMERCIOS / EZEQUIEL */}
+      {tabActiva === "cuenta_corriente_ezequiel" && (
+        <div className="space-y-6" data-testid="seccion-cuenta-corriente-ezequiel">
+          {/* Banner Informativo Reglas Económicas */}
+          <div className="p-4 rounded-xl bg-orange-50 dark:bg-orange-950/40 border border-orange-200 dark:border-orange-800 text-orange-950 dark:text-orange-200 text-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-sm">
+            <div className="flex items-center gap-2.5">
+              <span className="text-xl">📱</span>
+              <div>
+                <p className="font-bold text-sm">Cuenta Corriente Proveedor Claro Comercios — Ezequiel</p>
+                <p className="text-[11px] text-orange-800 dark:text-orange-300">
+                  Ezequiel acredita saldo digital en Plataforma Claro (Fondo 1230), lo cual reconoce la obligación exigible. Las recargas comerciales descuentan 1230 y recaudan efectivo en Custodia Claro (1150) o transferencia en 1210. La liquidación a Ezequiel se realiza en efectivo (1150 / 1110 / 1120) o transferencia (1210) sin sobregiros.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => cargarCCEzequiel(filtroFechaCorteEzequiel)}
+                disabled={cargandoCCEzequiel}
+                className="px-3 py-1.5 bg-orange-700 hover:bg-orange-800 text-white font-bold rounded-lg text-xs transition shadow-sm whitespace-nowrap disabled:opacity-50"
+              >
+                {cargandoCCEzequiel ? "Actualizando..." : "🔄 Actualizar Posición"}
+              </button>
+            </div>
+          </div>
+
+          {errorCCEzequiel && (
+            <div className="p-3 bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-800 rounded-xl text-red-800 dark:text-red-300 text-xs font-semibold">
+              ⚠️ {errorCCEzequiel}
+            </div>
+          )}
+
+          {/* Tarjetas KPI de Estado */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+            <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-red-600 dark:text-red-400 block">
+                Deuda Exigible Ezequiel
+              </span>
+              <span
+                className="text-2xl font-black text-gray-900 dark:text-gray-100 font-mono mt-1 block"
+                data-testid="kpi-ezequiel-obligacion"
+              >
+                {estadoCCEzequiel ? estadoCCEzequiel.obligacion_pendiente_formatted : "$0,00"}
+              </span>
+              <span className="text-[10px] text-gray-400 mt-0.5 block">
+                Obligación Contable Neta
+              </span>
+            </div>
+
+            <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 block">
+                Total Acreditado (1230)
+              </span>
+              <span
+                className="text-2xl font-black text-gray-900 dark:text-gray-100 font-mono mt-1 block"
+                data-testid="kpi-ezequiel-acreditaciones"
+              >
+                {estadoCCEzequiel ? estadoCCEzequiel.total_acreditaciones_formatted : "$0,00"}
+              </span>
+              <span className="text-[10px] text-gray-400 mt-0.5 block">
+                Saldo recibido de Ezequiel
+              </span>
+            </div>
+
+            <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 block">
+                Total Liquidado
+              </span>
+              <span
+                className="text-2xl font-black text-gray-900 dark:text-gray-100 font-mono mt-1 block"
+                data-testid="kpi-ezequiel-pagos"
+              >
+                {estadoCCEzequiel ? estadoCCEzequiel.total_pagos_formatted : "$0,00"}
+              </span>
+              <span className="text-[10px] text-gray-400 mt-0.5 block">
+                Entregas a Ezequiel
+              </span>
+            </div>
+
+            <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400 block">
+                Deuda Histórica
+              </span>
+              <span
+                className="text-2xl font-black text-gray-900 dark:text-gray-100 font-mono mt-1 block"
+                data-testid="kpi-ezequiel-historica"
+              >
+                {estadoCCEzequiel ? estadoCCEzequiel.total_deuda_historica_formatted : "$0,00"}
+              </span>
+              <span className="text-[10px] text-gray-400 mt-0.5 block">
+                Reconocida sin fondo
+              </span>
+            </div>
+
+            <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 block">
+                Disponible 1150 (Custodia)
+              </span>
+              <span
+                className="text-2xl font-black text-gray-900 dark:text-gray-100 font-mono mt-1 block"
+                data-testid="kpi-ezequiel-1150"
+              >
+                {estadoCCEzequiel ? estadoCCEzequiel.saldo_disponible_1150_formatted : "$0,00"}
+              </span>
+              <span className="text-[10px] text-gray-400 mt-0.5 block">
+                Efectivo Claro acumulado
+              </span>
+            </div>
+
+            <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 block">
+                Saldo Plataforma 1230
+              </span>
+              <span
+                className="text-2xl font-black text-gray-900 dark:text-gray-100 font-mono mt-1 block"
+                data-testid="kpi-ezequiel-1230"
+              >
+                {estadoCCEzequiel ? estadoCCEzequiel.saldo_disponible_1230_formatted : "$0,00"}
+              </span>
+              <span className="text-[10px] text-gray-400 mt-0.5 block">
+                Disponible para recargas
+              </span>
+            </div>
+          </div>
+
+          {/* Barra de Acciones y Filtros */}
+          <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setModalCCEzequiel("ACREDITACION")}
+                data-testid="btn-abrir-acreditacion-ezequiel"
+                className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold shadow-sm transition flex items-center gap-1.5"
+              >
+                <span>➕</span> Registrar Acreditación de Saldo (1230)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setModalCCEzequiel("LIQUIDACION")}
+                data-testid="btn-abrir-liquidacion-ezequiel"
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-sm transition flex items-center gap-1.5"
+              >
+                <span>💵</span> Registrar Liquidación Mixta a Ezequiel
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setModalCCEzequiel("HISTORICO")}
+                data-testid="btn-abrir-historico-ezequiel"
+                className="px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-bold shadow-sm transition flex items-center gap-1.5"
+              >
+                <span>📜</span> Reconocer Deuda Histórica
+              </button>
+            </div>
+
+            {/* Filtro Fecha de Corte */}
+            <div className="flex items-center gap-2">
+              <label htmlFor="input-fecha-corte-ezequiel" className="text-xs text-gray-500 whitespace-nowrap">
+                Fecha de Corte:
+              </label>
+              <input
+                id="input-fecha-corte-ezequiel"
+                type="date"
+                value={filtroFechaCorteEzequiel}
+                onChange={(e) => setFiltroFechaCorteEzequiel(e.target.value)}
+                className="p-1.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs text-gray-900 dark:text-gray-100"
+                data-testid="input-fecha-corte-ezequiel"
+              />
+              {filtroFechaCorteEzequiel && (
+                <button
+                  type="button"
+                  onClick={() => setFiltroFechaCorteEzequiel("")}
+                  className="text-xs text-gray-400 hover:text-gray-600 px-1"
+                  title="Limpiar fecha de corte"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Tabla de Historial Cronológico de Movimientos */}
+          <div className="bg-white dark:bg-gray-900 p-5 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                Historial Cronológico de Cuenta Corriente Ezequiel ({estadoCCEzequiel ? estadoCCEzequiel.cantidad_movimientos : 0})
+              </h3>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs" data-testid="tabla-movimientos-ezequiel">
+                <thead className="bg-gray-50 dark:bg-gray-800 text-gray-500 font-semibold border-b border-gray-200 dark:border-gray-700">
+                  <tr>
+                    <th className="py-2.5 px-3">Fecha</th>
+                    <th className="py-2.5 px-3">Tipo de Movimiento</th>
+                    <th className="py-2.5 px-3">Monto</th>
+                    <th className="py-2.5 px-3">Referencia / Detalle</th>
+                    <th className="py-2.5 px-3">Fondo Afectado</th>
+                    <th className="py-2.5 px-3">Operador</th>
+                    <th className="py-2.5 px-3">ID Movimiento</th>
+                    <th className="py-2.5 px-3 text-right">Obligación Resultante</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                  {!estadoCCEzequiel || estadoCCEzequiel.movimientos.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-8 text-center text-gray-400">
+                        No hay movimientos registrados en la cuenta corriente de Ezequiel.
+                      </td>
+                    </tr>
+                  ) : (
+                    estadoCCEzequiel.movimientos.map((m) => (
+                      <tr key={m.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/50">
+                        <td className="py-2.5 px-3 whitespace-nowrap font-mono text-[11px]">
+                          {m.fecha_referencia}
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          {m.tipo_movimiento === "ACREDITACION_SALDO" && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300">
+                              ➕ ACREDITACIÓN SALDO
+                            </span>
+                          )}
+                          {m.tipo_movimiento === "PAGO_LIQUIDACION" && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                              💵 LIQUIDACIÓN / PAGO
+                            </span>
+                          )}
+                          {m.tipo_movimiento === "RECONOCIMIENTO_DEUDA_HISTORICA" && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300">
+                              📜 DEUDA HISTÓRICA
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono font-bold text-gray-900 dark:text-gray-100 whitespace-nowrap">
+                          {m.monto_formatted}
+                        </td>
+                        <td className="py-2.5 px-3 text-gray-600 dark:text-gray-300 max-w-[200px] truncate" title={m.referencia_externa || m.motivo}>
+                          <span className="font-semibold block">{m.referencia_externa || "—"}</span>
+                          <span className="text-[10px] text-gray-400 block truncate">{m.motivo}</span>
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap font-mono">
+                          {m.fondo_afectado ? (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300">
+                              {m.fondo_afectado}
+                            </span>
+                          ) : (
+                            <span className="text-gray-400 text-[10px]">Sin impacto en fondos</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap text-gray-500 font-sans">
+                          {m.actor}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-[10px] text-gray-400 max-w-[130px] truncate" title={m.movement_id || m.operation_id}>
+                          {m.movement_id ? `mov: ${m.movement_id.substring(0, 8)}...` : m.operation_id}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono font-extrabold text-gray-900 dark:text-gray-100 whitespace-nowrap">
+                          {m.saldo_obligacion_resultante_formatted}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: FONDEOS FÍSICOS PENDIENTES DE CUSTODIA (DEC-02) */}
+      {tabActiva === "fondeos_pendientes" && (
+        <div className="space-y-6" data-testid="seccion-fondeos-pendientes">
+          {/* Banner Informativo DEC-02 */}
+          <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-950 dark:text-amber-200 text-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-sm">
+            <div className="flex items-center gap-2.5">
+              <span className="text-xl">📦</span>
+              <div>
+                <p className="font-bold text-sm">Control de Fondeos Físicos de Custodia — DEC-02 Alternativa 1</p>
+                <p className="text-[11px] text-amber-800 dark:text-amber-300">
+                  Cuando una recarga Claro se cobra por transferencia bancaria (Fondo 1210 Mercado Pago), el capital de Claro debe fondearse físicamente hacia Fondo 1150 (Custodia Efectivo) desde Fondo 1110 (Mostrador) únicamente cuando hay efectivo disponible. Si el fondo 1110 no dispone del saldo en ese instante, el compromiso queda registrado aquí con estado PENDIENTE, garantizando cero sobregiro y trazabilidad contable estricta.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => cargarFondeosPendientes(filtroCircuitoFondeo)}
+                disabled={cargandoFondeos}
+                className="px-3 py-1.5 bg-amber-700 hover:bg-amber-800 text-white font-bold rounded-lg text-xs transition shadow-sm whitespace-nowrap disabled:opacity-50"
+              >
+                {cargandoFondeos ? "Actualizando..." : "🔄 Actualizar Fondeos"}
+              </button>
+            </div>
+          </div>
+
+          {errorFondeos && (
+            <div className="p-3 bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-800 rounded-xl text-red-800 dark:text-red-300 text-xs font-semibold">
+              ⚠️ {errorFondeos}
+            </div>
+          )}
+
+          {/* Tabla de Fondeos Pendientes */}
+          <div className="bg-white dark:bg-gray-900 p-5 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                Fondeos Físicos Registrados ({fondeosPendientes.length})
+              </h3>
+              <div className="flex items-center gap-2">
+                <label htmlFor="select-circuito-fondeo" className="text-xs text-gray-500 whitespace-nowrap">Circuito:</label>
+                <select
+                  id="select-circuito-fondeo"
+                  value={filtroCircuitoFondeo}
+                  onChange={(e) => setFiltroCircuitoFondeo(e.target.value)}
+                  className="p-1 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs text-gray-900 dark:text-gray-100"
+                >
+                  <option value="">Todos los circuitos</option>
+                  <option value="CLARO COMERCIOS">Claro Comercios</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs" data-testid="tabla-fondeos-pendientes">
+                <thead className="bg-gray-50 dark:bg-gray-800 text-gray-500 font-semibold border-b border-gray-200 dark:border-gray-700">
+                  <tr>
+                    <th className="py-2.5 px-3">ID</th>
+                    <th className="py-2.5 px-3">Circuito / Servicio</th>
+                    <th className="py-2.5 px-3">Capital a Fondear</th>
+                    <th className="py-2.5 px-3">Origen ➜ Destino</th>
+                    <th className="py-2.5 px-3">Estado</th>
+                    <th className="py-2.5 px-3">Observaciones</th>
+                    <th className="py-2.5 px-3">Fecha Registro</th>
+                    <th className="py-2.5 px-3 text-right">Acción</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                  {fondeosPendientes.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-8 text-center text-gray-400">
+                        No hay compromisos de fondeo físico pendientes. Toda la custodia física está regularizada.
+                      </td>
+                    </tr>
+                  ) : (
+                    fondeosPendientes.map((f) => (
+                      <tr key={f.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/50">
+                        <td className="py-2.5 px-3 font-mono font-bold text-gray-900 dark:text-gray-100">
+                          #{f.id}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-[11px] text-gray-600 dark:text-gray-300 max-w-[150px] truncate">
+                          <span className="font-semibold block">{f.tipo_circuito}</span>
+                          <span className="text-[10px] text-gray-400">Servicio #{f.servicio_id}</span>
+                        </td>
+                        <td className="py-2.5 px-3 font-mono font-bold text-amber-700 dark:text-amber-400 whitespace-nowrap">
+                          {f.monto_capital_formatted}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-[11px] whitespace-nowrap">
+                          <span className="text-purple-600 dark:text-purple-400 font-semibold">{f.fondo_origen_esperado}</span>
+                          {" ➔ "}
+                          <span className="text-amber-600 dark:text-amber-400 font-semibold">{f.fondo_destino_custodia}</span>
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          {f.estado === "PENDIENTE" ? (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                              ⏳ PENDIENTE
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                              ✅ {f.estado}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-gray-500 max-w-[200px] truncate text-[11px]" title={f.observaciones || ""}>
+                          {f.observaciones || "—"}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-[10px] text-gray-400 whitespace-nowrap">
+                          {new Date(f.created_at_utc).toLocaleString("es-AR")}
+                        </td>
+                        <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                          {f.estado === "PENDIENTE" ? (
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleEjecutarFondeo(f, f.fondo_origen_esperado || "1110")}
+                                disabled={ejecutandoFondeoId === f.id}
+                                data-testid={`btn-ejecutar-fondeo-${f.id}`}
+                                className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg text-[11px] transition shadow-sm disabled:opacity-50"
+                                title={`Regularizar fondeo desde ${f.fondo_origen_esperado || "1110"}`}
+                              >
+                                {ejecutandoFondeoId === f.id ? "Ejecutando..." : `⚡ Desde ${f.fondo_origen_esperado || "1110"}`}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleEjecutarFondeo(f, "1120")}
+                                disabled={ejecutandoFondeoId === f.id}
+                                data-testid={`btn-ejecutar-fondeo-1120-${f.id}`}
+                                className="px-2 py-1 bg-slate-600 hover:bg-slate-700 text-white font-bold rounded-lg text-[11px] transition shadow-sm disabled:opacity-50"
+                                title="Regularizar fondeo desde 1120 (Drugstore Acumulado)"
+                              >
+                                {ejecutandoFondeoId === f.id ? "..." : "Desde 1120"}
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-gray-400 font-mono" title={f.movement_id_traslado || ""}>
+                              {f.movement_id_traslado ? `mov: ${f.movement_id_traslado.substring(0, 8)}...` : "Regularizado"}
+                            </span>
+                          )}
                         </td>
                       </tr>
                     ))
@@ -4582,17 +5332,28 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
         </div>
       )}
 
-      {/* TAB: SALDOS INICIALES / APERTURA DE TESORERÍA (MEGA SYSTEM PROMPT DIRECTIVAS 2 Y 3) */}
+      {/* TAB: APERTURA ECONÓMICA MANUAL DIFERIDA / SALDOS INICIALES (ETAPA V) */}
       {tabActiva === "aperturas" && (
         <div className="space-y-6" data-testid="seccion-aperturas-tesoreria">
           {/* Banner Informativo Directiva de Apertura */}
           <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 text-blue-900 dark:text-blue-200 text-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-3 shadow-sm">
             <div className="flex items-center gap-2.5">
-              <span className="text-xl">⚙️</span>
+              <span className="text-xl">📋</span>
               <div>
-                <p className="font-bold text-sm">Configuración de Saldos Iniciales / Apertura Oficial en $0</p>
-                <p className="text-[11px] text-blue-700 dark:text-blue-300">
-                  Todos los saldos abren estrictamente en $0 (fondos físicos, digitales y obligaciones). Toda modificación de apertura genera auditoría append-only inmutable con motivo obligatorio. Si el fondo ya posee movimientos, la alteración silenciosa queda bloqueada.
+                <div className="flex items-center gap-2">
+                  <p className="font-bold text-sm">APERTURA ECONÓMICA / SALDOS INICIALES</p>
+                  {saldosApertura?.apertura_completa ? (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                      ✅ APERTURA COMPLETA ({saldosApertura?.conteo_abiertos ?? 0}/10)
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                      ⏳ APERTURA DIFERIDA ({saldosApertura?.conteo_pendientes ?? 10} pendientes)
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-blue-700 dark:text-blue-300 mt-0.5">
+                  Directiva del Propietario: Los fondos sin saldo inicial confirmado permanecen en estado explícito <strong>PENDIENTE DE APERTURA</strong> (sin saldos ficticios ni ceros arbitrarios). Toda carga o ajuste genera auditoría inmutable append-only.
                 </p>
                 {errorAperturas && <p className="text-red-600 font-bold mt-1">{errorAperturas}</p>}
               </div>
@@ -4636,9 +5397,9 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
           <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <span>💵</span> 2.1. Fondos Físicos de Tesorería
+                <span>💵</span> 1. Fondos Físicos de Mostrador y Bóveda
               </h3>
-              <span className="text-xs text-gray-400 font-mono">Total: {formatMoney(saldosApertura?.total_fondos_fisicos_cents ?? 0)}</span>
+              <span className="text-xs text-gray-400 font-mono">Total Apertura: {formatMoney(saldosApertura?.total_fondos_fisicos_cents ?? 0)}</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left" data-testid="tabla-apertura-fisicos">
@@ -4648,50 +5409,56 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
                     <th className="py-2 px-3">Fondo Físico</th>
                     <th className="py-2 px-3 text-right">Saldo Inicial Apertura</th>
                     <th className="py-2 px-3 text-right">Saldo Actual Libros</th>
-                    <th className="py-2 px-3 text-center">Estado Configuración</th>
+                    <th className="py-2 px-3 text-center">Estado de Apertura</th>
                     <th className="py-2 px-3 text-right">Acción</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                  {saldosApertura?.fondos_fisicos.map((f) => (
-                    <tr key={f.codigo} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition">
-                      <td className="py-2.5 px-3 font-mono font-bold text-gray-900 dark:text-gray-100">{f.codigo}</td>
-                      <td className="py-2.5 px-3 font-semibold text-gray-800 dark:text-gray-200">{f.nombre}</td>
-                      <td className="py-2.5 px-3 text-right font-mono font-bold text-gray-900 dark:text-gray-100">
-                        {formatMoney(f.saldo_inicial_cents)}
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-mono text-gray-500">
-                        {formatMoney(f.saldo_actual_cents)}
-                      </td>
-                      <td className="py-2.5 px-3 text-center">
-                        {f.estado_configuracion === "CONFIGURADO" ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-                            CONFIGURADO {f.configurado_por ? `(${f.configurado_por})` : ""}
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
-                            $0 PREDETERMINADO
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setModalEditarApertura(f);
-                            setNuevoSaldoAperturaInput((f.saldo_inicial_cents / 100).toFixed(2));
-                            setMotivoAperturaInput("");
-                            setReferenciaAperturaInput("");
-                            setConfirmandoApertura(false);
-                          }}
-                          data-testid={`btn-configurar-apertura-${f.codigo}`}
-                          className="px-2.5 py-1 text-xs font-semibold rounded bg-[#C97B5A] hover:bg-[#b06748] text-white shadow-sm transition"
-                        >
-                          Configurar
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {saldosApertura?.fondos_fisicos.map((f) => {
+                    const isOpened = f.estado_apertura === "OPENED" || f.estado_configuracion === "CONFIGURADO";
+                    return (
+                      <tr key={f.codigo} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition">
+                        <td className="py-2.5 px-3 font-mono font-bold text-gray-900 dark:text-gray-100">{f.codigo}</td>
+                        <td className="py-2.5 px-3 font-semibold text-gray-800 dark:text-gray-200">
+                          {f.nombre}
+                          {f.naturaleza && <span className="block text-[10px] text-gray-400 font-normal">{f.naturaleza}</span>}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono font-bold text-gray-900 dark:text-gray-100">
+                          {isOpened ? formatMoney(f.saldo_inicial_cents) : <span className="text-amber-600 dark:text-amber-400 font-normal text-[11px]">PENDIENTE</span>}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono text-gray-500">
+                          {formatMoney(f.saldo_actual_cents)}
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          {isOpened ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                              ABIERTO {f.configurado_por ? `(${f.configurado_por})` : ""}
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                              {f.subestado_apertura === "MOVIMIENTOS_POSTERIORES_REGISTRADOS"
+                                ? "SALDO INICIAL PENDIENTE — MOVIMIENTOS POSTERIORES"
+                                : "PENDIENTE DE APERTURA"}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => abrirModalApertura(f, isOpened)}
+                            data-testid={`btn-configurar-apertura-${f.codigo}`}
+                            className={`px-2.5 py-1 text-xs font-semibold rounded text-white shadow-sm transition ${
+                              isOpened
+                                ? "bg-indigo-600 hover:bg-indigo-700"
+                                : "bg-[#C97B5A] hover:bg-[#b06748]"
+                            }`}
+                          >
+                            {isOpened ? "✏️ Ajuste" : "Configurar"}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -4701,9 +5468,9 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
           <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <span>💳</span> 2.2. Cuentas Digitales y Tránsito
+                <span>💳</span> 2. Cuentas Digitales y Plataformas
               </h3>
-              <span className="text-xs text-gray-400 font-mono">Total: {formatMoney(saldosApertura?.total_cuentas_digitales_cents ?? 0)}</span>
+              <span className="text-xs text-gray-400 font-mono">Total Apertura: {formatMoney(saldosApertura?.total_cuentas_digitales_cents ?? 0)}</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left" data-testid="tabla-apertura-digitales">
@@ -4713,50 +5480,56 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
                     <th className="py-2 px-3">Cuenta Digital</th>
                     <th className="py-2 px-3 text-right">Saldo Inicial Apertura</th>
                     <th className="py-2 px-3 text-right">Saldo Actual Libros</th>
-                    <th className="py-2 px-3 text-center">Estado Configuración</th>
+                    <th className="py-2 px-3 text-center">Estado de Apertura</th>
                     <th className="py-2 px-3 text-right">Acción</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                  {saldosApertura?.cuentas_digitales.map((c) => (
-                    <tr key={c.codigo} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition">
-                      <td className="py-2.5 px-3 font-mono font-bold text-gray-900 dark:text-gray-100">{c.codigo}</td>
-                      <td className="py-2.5 px-3 font-semibold text-gray-800 dark:text-gray-200">{c.nombre}</td>
-                      <td className="py-2.5 px-3 text-right font-mono font-bold text-gray-900 dark:text-gray-100">
-                        {formatMoney(c.saldo_inicial_cents)}
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-mono text-gray-500">
-                        {formatMoney(c.saldo_actual_cents)}
-                      </td>
-                      <td className="py-2.5 px-3 text-center">
-                        {c.estado_configuracion === "CONFIGURADO" ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-                            CONFIGURADO {c.configurado_por ? `(${c.configurado_por})` : ""}
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
-                            $0 PREDETERMINADO
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setModalEditarApertura(c);
-                            setNuevoSaldoAperturaInput((c.saldo_inicial_cents / 100).toFixed(2));
-                            setMotivoAperturaInput("");
-                            setReferenciaAperturaInput("");
-                            setConfirmandoApertura(false);
-                          }}
-                          data-testid={`btn-configurar-apertura-${c.codigo}`}
-                          className="px-2.5 py-1 text-xs font-semibold rounded bg-[#C97B5A] hover:bg-[#b06748] text-white shadow-sm transition"
-                        >
-                          Configurar
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {saldosApertura?.cuentas_digitales.map((c) => {
+                    const isOpened = c.estado_apertura === "OPENED" || c.estado_configuracion === "CONFIGURADO";
+                    return (
+                      <tr key={c.codigo} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition">
+                        <td className="py-2.5 px-3 font-mono font-bold text-gray-900 dark:text-gray-100">{c.codigo}</td>
+                        <td className="py-2.5 px-3 font-semibold text-gray-800 dark:text-gray-200">
+                          {c.nombre}
+                          {c.naturaleza && <span className="block text-[10px] text-gray-400 font-normal">{c.naturaleza}</span>}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono font-bold text-gray-900 dark:text-gray-100">
+                          {isOpened ? formatMoney(c.saldo_inicial_cents) : <span className="text-amber-600 dark:text-amber-400 font-normal text-[11px]">PENDIENTE</span>}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono text-gray-500">
+                          {formatMoney(c.saldo_actual_cents)}
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          {isOpened ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                              ABIERTO {c.configurado_por ? `(${c.configurado_por})` : ""}
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                              {c.subestado_apertura === "MOVIMIENTOS_POSTERIORES_REGISTRADOS"
+                                ? "SALDO INICIAL PENDIENTE — MOVIMIENTOS POSTERIORES"
+                                : "PENDIENTE DE APERTURA"}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => abrirModalApertura(c, isOpened)}
+                            data-testid={`btn-configurar-apertura-${c.codigo}`}
+                            className={`px-2.5 py-1 text-xs font-semibold rounded text-white shadow-sm transition ${
+                              isOpened
+                                ? "bg-indigo-600 hover:bg-indigo-700"
+                                : "bg-[#C97B5A] hover:bg-[#b06748]"
+                            }`}
+                          >
+                            {isOpened ? "✏️ Ajuste" : "Configurar"}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -4766,9 +5539,9 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
           <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <span>📋</span> 2.3. Obligaciones y Cuentas Corrientes
+                <span>📋</span> 3. Obligaciones Iniciales con Proveedores
               </h3>
-              <span className="text-xs text-amber-500 font-mono font-bold">Total: {formatMoney(saldosApertura?.total_obligaciones_cents ?? 0)}</span>
+              <span className="text-xs text-amber-500 font-mono font-bold">Total Deuda Inicial: {formatMoney(saldosApertura?.total_obligaciones_cents ?? 0)}</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left" data-testid="tabla-apertura-obligaciones">
@@ -4777,47 +5550,48 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
                     <th className="py-2 px-3">Código</th>
                     <th className="py-2 px-3">Obligación / Contraparte</th>
                     <th className="py-2 px-3 text-right">Deuda Inicial Apertura</th>
-                    <th className="py-2 px-3 text-center">Estado Configuración</th>
+                    <th className="py-2 px-3 text-center">Estado de Apertura</th>
                     <th className="py-2 px-3 text-right">Acción</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                  {saldosApertura?.obligaciones.map((ob) => (
-                    <tr key={ob.codigo} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition">
-                      <td className="py-2.5 px-3 font-mono font-bold text-gray-900 dark:text-gray-100">{ob.codigo}</td>
-                      <td className="py-2.5 px-3 font-semibold text-gray-800 dark:text-gray-200">{ob.nombre}</td>
-                      <td className="py-2.5 px-3 text-right font-mono font-bold text-amber-600 dark:text-amber-400">
-                        {formatMoney(ob.saldo_inicial_cents)}
-                      </td>
-                      <td className="py-2.5 px-3 text-center">
-                        {ob.estado_configuracion === "CONFIGURADO" ? (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-                            CONFIGURADO {ob.configurado_por ? `(${ob.configurado_por})` : ""}
-                          </span>
-                        ) : (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
-                            $0 PREDETERMINADO
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setModalEditarApertura(ob);
-                            setNuevoSaldoAperturaInput((ob.saldo_inicial_cents / 100).toFixed(2));
-                            setMotivoAperturaInput("");
-                            setReferenciaAperturaInput("");
-                            setConfirmandoApertura(false);
-                          }}
-                          data-testid={`btn-configurar-apertura-${ob.codigo}`}
-                          className="px-2.5 py-1 text-xs font-semibold rounded bg-[#C97B5A] hover:bg-[#b06748] text-white shadow-sm transition"
-                        >
-                          Configurar
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {saldosApertura?.obligaciones.map((ob) => {
+                    const isOpened = ob.estado_apertura === "OPENED" || ob.estado_configuracion === "CONFIGURADO";
+                    return (
+                      <tr key={ob.codigo} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition">
+                        <td className="py-2.5 px-3 font-mono font-bold text-gray-900 dark:text-gray-100">{ob.codigo}</td>
+                        <td className="py-2.5 px-3 font-semibold text-gray-800 dark:text-gray-200">{ob.nombre}</td>
+                        <td className="py-2.5 px-3 text-right font-mono font-bold text-amber-600 dark:text-amber-400">
+                          {isOpened ? formatMoney(ob.saldo_inicial_cents) : <span className="text-amber-600 dark:text-amber-400 font-normal text-[11px]">PENDIENTE</span>}
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          {isOpened ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                              ABIERTO {ob.configurado_por ? `(${ob.configurado_por})` : ""}
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                              PENDIENTE DE CARGA
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => abrirModalApertura(ob, isOpened)}
+                            data-testid={`btn-configurar-apertura-${ob.codigo}`}
+                            className={`px-2.5 py-1 text-xs font-semibold rounded text-white shadow-sm transition ${
+                              isOpened
+                                ? "bg-indigo-600 hover:bg-indigo-700"
+                                : "bg-[#C97B5A] hover:bg-[#b06748]"
+                            }`}
+                          >
+                            {isOpened ? "✏️ Ajuste" : "Configurar"}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -4827,22 +5601,22 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
           <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-5 shadow-sm space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <span>📜</span> 3.4. Pista de Auditoría de Aperturas y Saldos Iniciales (Append-Only)
+                <span>📜</span> 4. Pista de Auditoría de Aperturas y Ajustes Compensatorios (Append-Only)
               </h3>
-              <span className="text-xs text-gray-400 font-mono">{historialAperturas.length} registros</span>
+              <span className="text-xs text-gray-400 font-mono">{historialAperturas.length} registros auditados</span>
             </div>
             <div className="overflow-x-auto max-h-96">
               <table className="w-full text-xs text-left" data-testid="tabla-historial-aperturas">
                 <thead className="text-[11px] text-gray-500 bg-gray-50 dark:bg-gray-800/50 uppercase border-y border-gray-100 dark:border-gray-800 sticky top-0">
                   <tr>
                     <th className="py-2 px-3">Fecha y Hora</th>
+                    <th className="py-2 px-3">Operación</th>
                     <th className="py-2 px-3">Ítem</th>
-                    <th className="py-2 px-3">Categoría</th>
                     <th className="py-2 px-3 text-right">Saldo Anterior</th>
                     <th className="py-2 px-3 text-right">Saldo Nuevo</th>
                     <th className="py-2 px-3">Responsable</th>
                     <th className="py-2 px-3">Motivo Obligatorio</th>
-                    <th className="py-2 px-3">Referencia</th>
+                    <th className="py-2 px-3">Comprobante / Ref</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -4858,14 +5632,18 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
                           second: "2-digit",
                         })}
                       </td>
+                      <td className="py-2 px-3 whitespace-nowrap">
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                          h.tipo_operacion === "AJUSTE_COMPENSATORIO"
+                            ? "bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300"
+                            : "bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300"
+                        }`}>
+                          {h.tipo_operacion || (h.es_apertura_inicial ? "APERTURA_INICIAL" : "AJUSTE")}
+                        </span>
+                      </td>
                       <td className="py-2 px-3 font-semibold text-gray-900 dark:text-gray-100 whitespace-nowrap">
                         <span className="font-mono text-gray-500 mr-1.5">{h.item_codigo}</span>
                         {h.item_nombre}
-                      </td>
-                      <td className="py-2 px-3 whitespace-nowrap">
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
-                          {h.categoria}
-                        </span>
                       </td>
                       <td className="py-2 px-3 text-right font-mono text-gray-500 whitespace-nowrap">
                         {formatMoney(h.saldo_anterior_cents)}
@@ -4891,13 +5669,16 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
         </div>
       )}
 
-      {/* MODAL: CONFIGURAR SALDO INICIAL CON CONFIRMACIÓN OBLIGATORIA */}
+      {/* MODAL: ASISTENTE DE APERTURA MANUAL / AJUSTE COMPENSATORIO */}
       {modalEditarApertura && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" data-testid="modal-configurar-apertura">
-          <div className="bg-white dark:bg-gray-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-800 space-y-4">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-800 space-y-4 max-h-[90vh] overflow-y-auto">
             <div>
               <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 flex items-center gap-2">
-                <span>⚙️</span> Configurar Saldo Inicial
+                <span>{tipoOperacionInput === "AJUSTE_COMPENSATORIO" ? "✏️" : "🟢"}</span>
+                {tipoOperacionInput === "AJUSTE_COMPENSATORIO"
+                  ? "Registrar Ajuste Compensatorio Auditado"
+                  : "Asistente de Apertura Económica Inicial"}
               </h3>
               <p className="text-xs text-gray-500 mt-0.5">
                 {modalEditarApertura.codigo} — {modalEditarApertura.nombre} ({modalEditarApertura.categoria})
@@ -4905,31 +5686,39 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
             </div>
 
             <div className="bg-amber-50 dark:bg-amber-950/40 p-3 rounded-lg border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-200 space-y-1">
-              <p className="font-semibold">⚠️ Regla de Inmutabilidad Económica:</p>
+              <p className="font-semibold">⚠️ Regla Económica de Inmutabilidad:</p>
               <p>
-                Esta modificación se registrará inmutablemente en la pista de auditoría. Si el fondo u obligación ya registra movimientos, el sistema bloqueará la alteración silenciosa.
+                {tipoOperacionInput === "AJUSTE_COMPENSATORIO"
+                  ? "Esta operación generará un ajuste compensatorio sin sobrescribir la apertura original ni reescribir la historia contable."
+                  : "Esta carga confirmará el saldo real inicial del fondo. Para efectivo físico, debe corresponder al conteo presencial. Para plataformas, al saldo oficial en pantalla."}
               </p>
             </div>
 
             <form onSubmit={handleGuardarSaldoInicial} className="space-y-3.5 text-xs">
               <div className="grid grid-cols-2 gap-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800">
                 <div>
-                  <span className="text-gray-500 block text-[10px] uppercase font-bold">Valor Anterior</span>
+                  <span className="text-gray-500 block text-[10px] uppercase font-bold">Saldo Inicial Previo</span>
                   <span className="text-base font-bold font-mono text-gray-700 dark:text-gray-300">
                     {formatMoney(modalEditarApertura.saldo_inicial_cents)}
                   </span>
                 </div>
                 <div>
-                  <span className="text-gray-500 block text-[10px] uppercase font-bold">Valor Nuevo</span>
+                  <span className="text-gray-500 block text-[10px] uppercase font-bold">Nuevo Saldo Confirmado</span>
                   <span className="text-base font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                    {formatMoney(parseMoney(nuevoSaldoAperturaInput))}
+                    {formatMoney((() => {
+                      try {
+                        return nuevoSaldoAperturaInput && nuevoSaldoAperturaInput.trim() ? parseMoney(nuevoSaldoAperturaInput) : 0;
+                      } catch {
+                        return 0;
+                      }
+                    })())}
                   </span>
                 </div>
               </div>
 
               <div>
                 <label className="block text-gray-700 dark:text-gray-300 font-semibold mb-1">
-                  Nuevo Saldo Inicial ($ ARS) *
+                  Importe Real Confirmado ($ ARS) *
                 </label>
                 <input
                   type="text"
@@ -4946,14 +5735,46 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
                 />
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-gray-700 dark:text-gray-300 font-semibold mb-1">
+                    Fecha y Hora de Corte *
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={fechaCorteInput}
+                    onChange={(e) => setFechaCorteInput(e.target.value)}
+                    disabled={confirmandoApertura || guardandoApertura}
+                    className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-gray-900 dark:text-gray-100 text-xs"
+                    data-testid="input-fecha-corte-apertura"
+                  />
+                </div>
+                <div>
+                  <label className="block text-gray-700 dark:text-gray-300 font-semibold mb-1">
+                    Naturaleza del Saldo *
+                  </label>
+                  <select
+                    value={naturalezaSaldoInput}
+                    onChange={(e) => setNaturalezaSaldoInput(e.target.value)}
+                    disabled={confirmandoApertura || guardandoApertura}
+                    className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-xs"
+                    data-testid="select-naturaleza-apertura"
+                  >
+                    <option value="EFECTIVO_CONTADO">💵 Efectivo Contado (Arqueo Físico)</option>
+                    <option value="SALDO_PLATAFORMA">📱 Saldo Digital en Plataforma</option>
+                    <option value="OBLIGACION_EXIGIBLE">📋 Obligación Exigible con Proveedor</option>
+                  </select>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-gray-700 dark:text-gray-300 font-semibold mb-1">
-                  Motivo de la Modificación * (Obligatorio para Auditoría)
+                  Motivo / Observación Obligatoria * (Mínimo 3 caracteres)
                 </label>
                 <textarea
                   required
                   rows={2}
-                  placeholder="Motivo formal de la apertura / regularización..."
+                  placeholder="Detalle del conteo físico, extracto bancario o justificación de apertura..."
                   value={motivoAperturaInput}
                   onChange={(e) => {
                     setMotivoAperturaInput(e.target.value);
@@ -4967,11 +5788,11 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
 
               <div>
                 <label className="block text-gray-700 dark:text-gray-300 font-semibold mb-1">
-                  Referencia de Autorización (Opcional)
+                  Comprobante o Referencia de Autorización
                 </label>
                 <input
                   type="text"
-                  placeholder="Ej: Acta Arqueo Conjunto, Firma Alan/Yilda"
+                  placeholder="Ej: Acta Arqueo Día D, Extracto MP #1234, Firma Alan/Yilda"
                   value={referenciaAperturaInput}
                   onChange={(e) => setReferenciaAperturaInput(e.target.value)}
                   disabled={confirmandoApertura || guardandoApertura}
@@ -4982,11 +5803,18 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
 
               {confirmandoApertura && (
                 <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-lg text-red-900 dark:text-red-200 space-y-1">
-                  <p className="font-bold text-xs">⚠️ ¿Confirmás guardar esta apertura?</p>
+                  <p className="font-bold text-xs">⚠️ ¿Confirmás asentar esta operación?</p>
                   <p className="text-[11px]">
                     El saldo inicial de <strong>{modalEditarApertura.codigo}</strong> cambiará de{" "}
                     <strong>{formatMoney(modalEditarApertura.saldo_inicial_cents)}</strong> a{" "}
-                    <strong>{formatMoney(parseMoney(nuevoSaldoAperturaInput))}</strong>.
+                    <strong>{formatMoney((() => {
+                      try {
+                        return nuevoSaldoAperturaInput && nuevoSaldoAperturaInput.trim() ? parseMoney(nuevoSaldoAperturaInput) : 0;
+                      } catch {
+                        return 0;
+                      }
+                    })())}</strong> mediante{" "}
+                    <span className="font-bold">{tipoOperacionInput}</span>.
                   </p>
                 </div>
               )}
@@ -7102,6 +7930,382 @@ export const TesoreriaLab: React.FC<TesoreriaLabProps> = ({ currentUser }) => {
                 Cerrar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ACREDITACIÓN DE SALDO EZEQUIEL (FONDO 1230) */}
+      {modalCCEzequiel === "ACREDITACION" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" data-testid="modal-acreditacion-ezequiel">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-800">
+            <div className="flex justify-between items-center pb-3 border-b border-gray-100 dark:border-gray-800">
+              <h3 className="text-base font-bold text-gray-900 dark:text-gray-100">
+                Acreditación de Saldo — Ezequiel (1230)
+              </h3>
+              <button
+                type="button"
+                onClick={() => setModalCCEzequiel(null)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleAcreditacionEzequielSubmit} className="space-y-4 mt-4 text-xs">
+              <div className="p-3 bg-blue-50 dark:bg-blue-950/40 rounded-xl text-blue-800 dark:text-blue-300">
+                <p className="font-semibold">Regla Económica:</p>
+                <p className="mt-0.5 text-[11px]">
+                  Incrementa el saldo en <strong>Fondo 1230 (Claro Comercios)</strong> y genera una obligación exigible con Ezequiel por idéntico valor.
+                </p>
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-gray-700 dark:text-gray-300">
+                  Monto a Acreditar (ARS) *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej: 50.000,00"
+                  value={formAcrEzMonto}
+                  onChange={(e) => setFormAcrEzMonto(e.target.value)}
+                  className="w-full p-2.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-sm font-mono font-bold"
+                  data-testid="input-acreditacion-ezequiel-monto"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-gray-700 dark:text-gray-300">
+                  Referencia / N° Operación *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej: ACR-CLARO-20261106-01"
+                  value={formAcrEzRef}
+                  onChange={(e) => setFormAcrEzRef(e.target.value)}
+                  className="w-full p-2.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs"
+                  data-testid="input-acreditacion-ezequiel-ref"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-gray-700 dark:text-gray-300">
+                  Fecha de Acreditación (Opcional)
+                </label>
+                <input
+                  type="date"
+                  value={formAcrEzFecha}
+                  onChange={(e) => setFormAcrEzFecha(e.target.value)}
+                  className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-gray-700 dark:text-gray-300">
+                  Observaciones / Motivo (Opcional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: Carga semanal saldo Claro"
+                  value={formAcrEzMotivo}
+                  onChange={(e) => setFormAcrEzMotivo(e.target.value)}
+                  className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-gray-100 dark:border-gray-800">
+                <button
+                  type="button"
+                  onClick={() => setModalCCEzequiel(null)}
+                  className="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 text-gray-700 dark:text-gray-300 rounded-lg font-semibold"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingCCEzequiel}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold disabled:opacity-50"
+                  data-testid="btn-confirmar-acreditacion-ezequiel"
+                >
+                  {submittingCCEzequiel ? "Registrando..." : "Confirmar Acreditación"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: LIQUIDACIÓN MIXTA A EZEQUIEL */}
+      {modalCCEzequiel === "LIQUIDACION" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" data-testid="modal-liquidacion-ezequiel">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-800 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center pb-3 border-b border-gray-100 dark:border-gray-800">
+              <h3 className="text-base font-bold text-gray-900 dark:text-gray-100">
+                Liquidación / Pago a Ezequiel (Multifondo)
+              </h3>
+              <button
+                type="button"
+                onClick={() => setModalCCEzequiel(null)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleLiquidacionEzequielSubmit} className="space-y-4 mt-4 text-xs">
+              <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl text-emerald-900 dark:text-emerald-200 space-y-1">
+                <div className="flex justify-between items-center">
+                  <span className="font-semibold">Obligación Exigible Actual:</span>
+                  <span className="font-mono font-bold text-sm text-red-600 dark:text-red-400">
+                    {estadoCCEzequiel?.obligacion_pendiente_formatted || "$0,00"}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[11px] pt-1 border-t border-emerald-200/50">
+                  <div>1150 Custodia: <span className="font-mono font-bold">{estadoCCEzequiel?.saldo_disponible_1150_formatted || "$0,00"}</span></div>
+                  <div>1110 Mostrador: <span className="font-mono font-bold">{estadoCCEzequiel?.saldo_disponible_1110_formatted || "$0,00"}</span></div>
+                  <div>1120 Tesoro: <span className="font-mono font-bold">{estadoCCEzequiel?.saldo_disponible_1120_formatted || "$0,00"}</span></div>
+                  <div>1230 Plataforma: <span className="font-mono font-bold">{estadoCCEzequiel?.saldo_disponible_1230_formatted || "$0,00"}</span></div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-gray-700 dark:text-gray-300">
+                  Efectivo desde Custodia Claro (Fondo 1150)
+                </label>
+                <input
+                  type="text"
+                  placeholder="0,00"
+                  value={formLiqEzMonto1150}
+                  onChange={(e) => setFormLiqEzMonto1150(e.target.value)}
+                  className="w-full p-2.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-sm font-mono font-bold"
+                  data-testid="input-liquidacion-ezequiel-1150"
+                />
+                <span className="text-[10px] text-gray-400">Disponible máximo: {estadoCCEzequiel?.saldo_disponible_1150_formatted || "$0,00"}</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-gray-50 dark:bg-gray-800/40 rounded-xl border border-gray-200 dark:border-gray-700">
+                <div>
+                  <label className="block font-semibold mb-1 text-gray-700 dark:text-gray-300">
+                    Efectivo desde Drugstore
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="0,00"
+                    value={formLiqEzMontoDs}
+                    onChange={(e) => setFormLiqEzMontoDs(e.target.value)}
+                    className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-sm font-mono font-bold"
+                    data-testid="input-liquidacion-ezequiel-ds"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1 text-gray-700 dark:text-gray-300">
+                    Fondo Drugstore
+                  </label>
+                  <select
+                    value={formLiqEzFondoDs}
+                    onChange={(e) => setFormLiqEzFondoDs(e.target.value)}
+                    className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs"
+                    data-testid="select-liquidacion-ezequiel-fondo-ds"
+                  >
+                    <option value="1110">1110 - Caja Mostrador</option>
+                    <option value="1120">1120 - Caja Fuerte Tesoro</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-gray-700 dark:text-gray-300">
+                  Transferencia Digital MP (1210 ➔ 1230)
+                </label>
+                <input
+                  type="text"
+                  placeholder="0,00"
+                  value={formLiqEzMontoTrf}
+                  onChange={(e) => setFormLiqEzMontoTrf(e.target.value)}
+                  className="w-full p-2.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-sm font-mono font-bold"
+                  data-testid="input-liquidacion-ezequiel-trf"
+                />
+                <span className="text-[10px] text-gray-400">Transferencia bancaria directa a cuenta de Ezequiel</span>
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-gray-700 dark:text-gray-300">
+                  Referencia / N° Recibo / Comprobante *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej: REC-EZEQUIEL-20261106-01"
+                  value={formLiqEzRef}
+                  onChange={(e) => setFormLiqEzRef(e.target.value)}
+                  className="w-full p-2.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs"
+                  data-testid="input-liquidacion-ezequiel-ref"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold mb-1 text-gray-700 dark:text-gray-300">
+                    Fecha de Entrega (Opcional)
+                  </label>
+                  <input
+                    type="date"
+                    value={formLiqEzFecha}
+                    onChange={(e) => setFormLiqEzFecha(e.target.value)}
+                    className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1 text-gray-700 dark:text-gray-300">
+                    Motivo / Observación (Opcional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ej: Liquidación semanal Ezequiel"
+                    value={formLiqEzMotivo}
+                    onChange={(e) => setFormLiqEzMotivo(e.target.value)}
+                    className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-gray-100 dark:border-gray-800">
+                <button
+                  type="button"
+                  onClick={() => setModalCCEzequiel(null)}
+                  className="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 text-gray-700 dark:text-gray-300 rounded-lg font-semibold"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingCCEzequiel}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold disabled:opacity-50"
+                  data-testid="btn-confirmar-liquidacion-ezequiel"
+                >
+                  {submittingCCEzequiel ? "Registrando Liquidación..." : "Confirmar Liquidación"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: RECONOCIMIENTO DE DEUDA HISTÓRICA EZEQUIEL */}
+      {modalCCEzequiel === "HISTORICO" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" data-testid="modal-historico-ezequiel">
+          <div className="bg-white dark:bg-gray-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-800">
+            <div className="flex justify-between items-center pb-3 border-b border-gray-100 dark:border-gray-800">
+              <h3 className="text-base font-bold text-gray-900 dark:text-gray-100">
+                Reconocimiento de Deuda Histórica — Ezequiel
+              </h3>
+              <button
+                type="button"
+                onClick={() => setModalCCEzequiel(null)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleHistoricoEzequielSubmit} className="space-y-4 mt-4 text-xs">
+              <div className="p-3 bg-purple-50 dark:bg-purple-950/40 rounded-xl text-purple-900 dark:text-purple-200">
+                <p className="font-semibold">Reconocimiento sin impacto en fondos:</p>
+                <p className="mt-0.5 text-[11px]">
+                  Registra un pasivo histórico acumulado con Ezequiel previo a la puesta en marcha. No crea dinero ficticio ni altera el saldo disponible de ninguna cuenta de fondos.
+                </p>
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-gray-700 dark:text-gray-300">
+                  Monto de Deuda Histórica (ARS) *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej: 150.000,00"
+                  value={formHisEzMonto}
+                  onChange={(e) => setFormHisEzMonto(e.target.value)}
+                  className="w-full p-2.5 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-sm font-mono font-bold"
+                  data-testid="input-historico-ezequiel-monto"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-gray-700 dark:text-gray-300">
+                  Fecha de Origen de la Deuda *
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={formHisEzFecha}
+                  onChange={(e) => setFormHisEzFecha(e.target.value)}
+                  className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs"
+                  data-testid="input-historico-ezequiel-fecha"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-gray-700 dark:text-gray-300">
+                  Motivo / Justificación *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ej: Saldo exigible al inicio del período V4"
+                  value={formHisEzMotivo}
+                  onChange={(e) => setFormHisEzMotivo(e.target.value)}
+                  className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs"
+                  data-testid="input-historico-ezequiel-motivo"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold mb-1 text-gray-700 dark:text-gray-300">
+                  Referencia Externa / Comprobante (Opcional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: PLANILLA-OCTUBRE-2026"
+                  value={formHisEzRef}
+                  onChange={(e) => setFormHisEzRef(e.target.value)}
+                  className="w-full p-2 rounded-lg border border-gray-300 dark:border-gray-700 bg-transparent text-xs"
+                />
+              </div>
+
+              <div className="p-3 bg-gray-50 dark:bg-gray-800/40 rounded-xl border border-gray-200 dark:border-gray-700 flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  id="chk-confirmacion-ezequiel-historico"
+                  checked={formHisEzConfirmacion}
+                  onChange={(e) => setFormHisEzConfirmacion(e.target.checked)}
+                  className="mt-0.5 rounded text-purple-600 focus:ring-purple-500"
+                  data-testid="chk-confirmacion-ezequiel-historico"
+                />
+                <label htmlFor="chk-confirmacion-ezequiel-historico" className="text-[11px] text-gray-700 dark:text-gray-300 select-none">
+                  Confirmo expresamente que este monto corresponde a una obligación devengada históricamente con Ezequiel y no a una acreditación actual.
+                </label>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-gray-100 dark:border-gray-800">
+                <button
+                  type="button"
+                  onClick={() => setModalCCEzequiel(null)}
+                  className="px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 text-gray-700 dark:text-gray-300 rounded-lg font-semibold"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={submittingCCEzequiel || !formHisEzConfirmacion}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-semibold disabled:opacity-50"
+                  data-testid="btn-confirmar-historico-ezequiel"
+                >
+                  {submittingCCEzequiel ? "Reconociendo..." : "Confirmar Reconocimiento"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

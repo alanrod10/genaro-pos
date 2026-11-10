@@ -39,6 +39,11 @@ import {
   AcreditacionDavidPayload,
   PagoDavidPayload,
   ReconocimientoDeudaHistoricaPayload,
+  EstadoCuentaEzequielResponse,
+  AcreditacionEzequielPayload,
+  LiquidacionEzequielPayload,
+  ReconocimientoDeudaHistoricaEzequielPayload,
+  FondeoPendienteItem,
   AnticipoPreventistaItem,
   ReposicionPreventistaItem,
   ResumenPreventistasResponse,
@@ -48,7 +53,6 @@ import {
   ModificarSaldoInicialPayload,
   AuditoriaSaldoInicialItem,
 } from "../types/tesoreria";
-import { addMoney, subtractMoney } from "../utils/money";
 
 function getApiBaseUrl(): string {
   const envUrl = (import.meta as any).env?.VITE_API_URL;
@@ -97,232 +101,16 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return await res.json();
 }
 
-// Catálogo canónico de fallback para modo desconectado / pruebas unitarias de UI (Catálogo Aprobado Sprint 4)
-const FONDOS_CANONICOS_FALLBACK: FondoTesoreria[] = [
-  {
-    id: 1,
-    codigo: "1110",
-    nombre: "Drugstore Diario",
-    naturaleza: "EFECTIVO",
-    titularidad: "PROPIA",
-    moneda: "ARS",
-    estado: "ACTIVO",
-    saldo_centavos: 0,
-    saldo_formateado: "$0,00",
-    disponibilidad_inmediata: true,
-    permite_sobregiro: 0,
-    version: 1,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    creado_por: "SISTEMA_LAB",
-    actualizado_por: "SISTEMA_LAB",
-  },
-  {
-    id: 2,
-    codigo: "1120",
-    nombre: "Drugstore Acumulado",
-    naturaleza: "EFECTIVO",
-    titularidad: "PROPIA",
-    moneda: "ARS",
-    estado: "ACTIVO",
-    saldo_centavos: 0,
-    saldo_formateado: "$0,00",
-    disponibilidad_inmediata: true,
-    permite_sobregiro: 0,
-    version: 1,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    creado_por: "SISTEMA_LAB",
-    actualizado_por: "SISTEMA_LAB",
-  },
-  {
-    id: 3,
-    codigo: "1130",
-    nombre: "Prepay Efectivo",
-    naturaleza: "EFECTIVO",
-    titularidad: "PROPIA",
-    moneda: "ARS",
-    estado: "ACTIVO",
-    saldo_centavos: 0,
-    saldo_formateado: "$0,00",
-    disponibilidad_inmediata: true,
-    permite_sobregiro: 0,
-    version: 1,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    creado_por: "SISTEMA_LAB",
-    actualizado_por: "SISTEMA_LAB",
-  },
-  {
-    id: 4,
-    codigo: "1140",
-    nombre: "Adicionales Efectivo",
-    naturaleza: "ADICIONALES_PARTICULARES",
-    titularidad: "PROPIA",
-    moneda: "ARS",
-    estado: "ACTIVO",
-    saldo_centavos: 0,
-    saldo_formateado: "$0,00",
-    disponibilidad_inmediata: true,
-    permite_sobregiro: 0,
-    version: 1,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    creado_por: "SISTEMA_LAB",
-    actualizado_por: "SISTEMA_LAB",
-  },
-  {
-    id: 5,
-    codigo: "1150",
-    nombre: "Claro Efectivo",
-    naturaleza: "RECAUDACION_TERCEROS",
-    titularidad: "CUSTODIA",
-    moneda: "ARS",
-    estado: "ACTIVO",
-    saldo_centavos: 0,
-    saldo_formateado: "$0,00",
-    disponibilidad_inmediata: false,
-    permite_sobregiro: 0,
-    version: 1,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    creado_por: "SISTEMA_LAB",
-    actualizado_por: "SISTEMA_LAB",
-  },
-  {
-    id: 10,
-    codigo: "1160",
-    nombre: "Prepay Diario Efectivo",
-    naturaleza: "EFECTIVO",
-    titularidad: "PROPIA",
-    moneda: "ARS",
-    estado: "ACTIVO",
-    saldo_centavos: 0,
-    saldo_formateado: "$0,00",
-    disponibilidad_inmediata: true,
-    permite_sobregiro: 0,
-    version: 1,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    creado_por: "SISTEMA_LAB",
-    actualizado_por: "SISTEMA_LAB",
-  },
-  {
-    id: 6,
-    codigo: "1210",
-    nombre: "Mercado Pago Propio",
-    naturaleza: "BILLETERA_VIRTUAL",
-    titularidad: "PROPIA",
-    moneda: "ARS",
-    estado: "ACTIVO",
-    saldo_centavos: 0,
-    saldo_formateado: "$0,00",
-    disponibilidad_inmediata: true,
-    permite_sobregiro: 0,
-    version: 1,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    creado_por: "SISTEMA_LAB",
-    actualizado_por: "SISTEMA_LAB",
-  },
-  {
-    id: 7,
-    codigo: "1220",
-    nombre: "Prepay Digital Saldo",
-    naturaleza: "BILLETERA_VIRTUAL",
-    titularidad: "PROPIA",
-    moneda: "ARS",
-    estado: "ACTIVO",
-    saldo_centavos: 0,
-    saldo_formateado: "$0,00",
-    disponibilidad_inmediata: true,
-    permite_sobregiro: 0,
-    version: 1,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    creado_por: "SISTEMA_LAB",
-    actualizado_por: "SISTEMA_LAB",
-  },
-  {
-    id: 8,
-    codigo: "1230",
-    nombre: "Claro Comercios Digital Saldo",
-    naturaleza: "BILLETERA_VIRTUAL",
-    titularidad: "PROPIA",
-    moneda: "ARS",
-    estado: "ACTIVO",
-    saldo_centavos: 0,
-    saldo_formateado: "$0,00",
-    disponibilidad_inmediata: true,
-    permite_sobregiro: 0,
-    version: 1,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    creado_por: "SISTEMA_LAB",
-    actualizado_por: "SISTEMA_LAB",
-  },
-  {
-    id: 9,
-    codigo: "1310",
-    nombre: "Cobranzas en Tránsito Preventistas",
-    naturaleza: "TRANSITO_PREVENTISTAS",
-    titularidad: "TRANSITO",
-    moneda: "ARS",
-    estado: "ACTIVO",
-    saldo_centavos: 0,
-    saldo_formateado: "$0,00",
-    disponibilidad_inmediata: false,
-    permite_sobregiro: 0,
-    version: 1,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    creado_por: "SISTEMA_LAB",
-    actualizado_por: "SISTEMA_LAB",
-  },
-];
-
-let mockJornadaActiva: JornadaTesoreria | null = null;
-let mockNumeroJornada = 1;
-const mockFondos: FondoTesoreria[] = JSON.parse(JSON.stringify(FONDOS_CANONICOS_FALLBACK));
-const mockAuditoria: Record<string, AuditoriaFondoItem[]> = {};
-
-mockFondos.forEach((f) => {
-  mockAuditoria[f.codigo] = [
-    {
-      id: f.id,
-      fondo_id: f.id,
-      codigo: f.codigo,
-      accion: "INSERT",
-      usuario: "SISTEMA_LAB",
-      valores_previos: null,
-      valores_nuevos: { ...f },
-      motivo: "Alta inicial en catálogo",
-      timestamp_utc: f.created_at,
-    },
-  ];
-});
-
 export const TesoreriaService = {
   async obtenerResumen(): Promise<ResumenTesoreria> {
     try {
       const res = await fetch(`${getApiBaseUrl()}/resumen`, {
         headers: getAuthHeaders(),
       });
-      if (res.ok) return await res.json();
-    } catch {
-      // Fallback desconectado / pruebas de interfaz
+      return await handleResponse<ResumenTesoreria>(res);
+    } catch (err: any) {
+      throw new Error(`No se pudo conectar con el servicio de Tesorería. Datos no disponibles: ${err.message}`);
     }
-    return {
-      total_fondos: mockFondos.length,
-      fondos_activos: mockFondos.filter((f) => f.estado === "ACTIVO").length,
-      total_saldo_registrado_centavos: 0,
-      total_saldo_registrado_formateado: "$0,00",
-      total_saldo_disponible_centavos: 0,
-      total_saldo_disponible_formateado: "$0,00",
-      jornada_activa: mockJornadaActiva,
-      aislamiento_confirmado: true,
-      db_path: "db/tesoreria_lab.db",
-    };
   },
 
   async obtenerFondos(): Promise<FondoTesoreria[]> {
@@ -330,37 +118,24 @@ export const TesoreriaService = {
       const res = await fetch(`${getApiBaseUrl()}/fondos`, {
         headers: getAuthHeaders(),
       });
-      if (res.ok) return await res.json();
-    } catch {
-      // Fallback
+      return await handleResponse<FondoTesoreria[]>(res);
+    } catch (err: any) {
+      throw new Error(`No se pudo obtener el catálogo de fondos de Tesorería: ${err.message}`);
     }
-    return mockFondos;
   },
 
   async obtenerFondoDetalle(codigo: string): Promise<FondoTesoreria> {
-    try {
-      const res = await fetch(`${getApiBaseUrl()}/fondos/${codigo}`, {
-        headers: getAuthHeaders(),
-      });
-      if (res.ok) return await res.json();
-    } catch {
-      // Fallback
-    }
-    const found = mockFondos.find((f) => f.codigo === codigo);
-    if (!found) throw new Error(`Fondo ${codigo} no encontrado`);
-    return found;
+    const res = await fetch(`${getApiBaseUrl()}/fondos/${codigo}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<FondoTesoreria>(res);
   },
 
   async obtenerAuditoriaFondo(codigo: string): Promise<AuditoriaFondoItem[]> {
-    try {
-      const res = await fetch(`${getApiBaseUrl()}/fondos/${codigo}/auditoria`, {
-        headers: getAuthHeaders(),
-      });
-      if (res.ok) return await res.json();
-    } catch {
-      // Fallback
-    }
-    return mockAuditoria[codigo] || [];
+    const res = await fetch(`${getApiBaseUrl()}/fondos/${codigo}/auditoria`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<AuditoriaFondoItem[]>(res);
   },
 
   async actualizarEstadoFondo(
@@ -368,44 +143,12 @@ export const TesoreriaService = {
     nuevoEstado: EstadoFondo,
     motivo: string
   ): Promise<FondoTesoreria> {
-    try {
-      const res = await fetch(`${getApiBaseUrl()}/fondos/${codigo}/estado`, {
-        method: "PATCH",
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ nuevo_estado: nuevoEstado, motivo }),
-      });
-      if (res.ok) return await res.json();
-    } catch {
-      // Fallback
-    }
-
-    const idx = mockFondos.findIndex((f) => f.codigo === codigo);
-    if (idx === -1) throw new Error(`Fondo ${codigo} no encontrado`);
-
-    const fAnt = mockFondos[idx];
-    const fAct: FondoTesoreria = {
-      ...fAnt,
-      estado: nuevoEstado,
-      version: fAnt.version + 1,
-      updated_at: new Date().toISOString(),
-      actualizado_por: "alan",
-    };
-    mockFondos[idx] = fAct;
-
-    if (!mockAuditoria[codigo]) mockAuditoria[codigo] = [];
-    mockAuditoria[codigo].unshift({
-      id: Date.now(),
-      fondo_id: fAct.id,
-      codigo,
-      accion: "UPDATE",
-      usuario: "alan",
-      valores_previos: { estado: fAnt.estado, version: fAnt.version },
-      valores_nuevos: { estado: fAct.estado, version: fAct.version },
-      motivo,
-      timestamp_utc: fAct.updated_at,
+    const res = await fetch(`${getApiBaseUrl()}/fondos/${codigo}/estado`, {
+      method: "PATCH",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ nuevo_estado: nuevoEstado, motivo }),
     });
-
-    return fAct;
+    return handleResponse<FondoTesoreria>(res);
   },
 
   async obtenerJornadaActiva(): Promise<JornadaTesoreria | null> {
@@ -413,63 +156,20 @@ export const TesoreriaService = {
       const res = await fetch(`${getApiBaseUrl()}/jornada/actual`, {
         headers: getAuthHeaders(),
       });
-      if (res.ok) return await res.json();
-    } catch {
-      // Fallback
+      if (res.status === 404) return null;
+      return await handleResponse<JornadaTesoreria>(res);
+    } catch (err: any) {
+      throw new Error(`No se pudo consultar la jornada activa de Tesorería: ${err.message}`);
     }
-    return mockJornadaActiva;
   },
 
   async abrirJornada(_usuario?: string, observaciones?: string): Promise<JornadaTesoreria> {
-    try {
-      const res = await fetch(`${getApiBaseUrl()}/jornada/abrir`, {
-        method: "POST",
-        headers: getAuthHeaders(),
-        body: JSON.stringify({ observaciones }),
-      });
-      if (res.ok) return await res.json();
-    } catch {
-      // Fallback
-    }
-
-    if (mockJornadaActiva) {
-      throw new Error("Ya existe una jornada activa");
-    }
-
-    let totalApertura = 0;
-    const detalles = mockFondos.map((f, i) => {
-      totalApertura = addMoney(totalApertura, f.saldo_centavos);
-      return {
-        id: i + 1,
-        jornada_id: mockNumeroJornada,
-        fondo_id: f.id,
-        codigo_fondo: f.codigo,
-        nombre_fondo: f.nombre,
-        naturaleza: f.naturaleza,
-        titularidad: f.titularidad,
-        saldo_apertura_centavos: f.saldo_centavos,
-        saldo_cierre_centavos: null,
-        diferencia_centavos: null,
-      };
+    const res = await fetch(`${getApiBaseUrl()}/jornada/abrir`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ observaciones }),
     });
-
-    mockJornadaActiva = {
-      id: mockNumeroJornada,
-      numero_jornada: mockNumeroJornada,
-      fecha_operativa: new Date().toISOString().slice(0, 10),
-      estado: "ABIERTA",
-      apertura_timestamp_utc: new Date().toISOString(),
-      cierre_timestamp_utc: null,
-      usuario_apertura: _usuario || "alan",
-      usuario_cierre: null,
-      total_apertura_centavos: totalApertura,
-      total_cierre_centavos: null,
-      observaciones: observaciones || null,
-      version: 1,
-      detalles,
-    };
-
-    return mockJornadaActiva;
+    return handleResponse<JornadaTesoreria>(res);
   },
 
   async cerrarJornada(
@@ -477,54 +177,16 @@ export const TesoreriaService = {
     arqueoPorFondo?: Record<string, number>,
     observaciones?: string
   ): Promise<JornadaTesoreria> {
-    try {
-      const res = await fetch(`${getApiBaseUrl()}/jornada/cerrar`, {
-        method: "POST",
-        headers: getAuthHeaders(),
-        body: JSON.stringify({
-          jornada_id: jornadaId,
-          arqueo_centavos_por_fondo: arqueoPorFondo,
-          observaciones,
-        }),
-      });
-      if (res.ok) return await res.json();
-    } catch {
-      // Fallback
-    }
-
-    if (!mockJornadaActiva || mockJornadaActiva.id !== jornadaId) {
-      throw new Error("Jornada no coincide o no está activa");
-    }
-
-    let totalCierre = 0;
-    const detallesCerrados = (mockJornadaActiva.detalles || []).map((d) => {
-      const saldoArqueado =
-        arqueoPorFondo && d.codigo_fondo in arqueoPorFondo
-          ? arqueoPorFondo[d.codigo_fondo]
-          : d.saldo_apertura_centavos;
-      const diferencia = subtractMoney(saldoArqueado, d.saldo_apertura_centavos);
-      totalCierre = addMoney(totalCierre, saldoArqueado);
-      return {
-        ...d,
-        saldo_cierre_centavos: saldoArqueado,
-        diferencia_centavos: diferencia,
-      };
+    const res = await fetch(`${getApiBaseUrl()}/jornada/cerrar`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        jornada_id: jornadaId,
+        arqueo_centavos_por_fondo: arqueoPorFondo,
+        observaciones,
+      }),
     });
-
-    const jCerrada: JornadaTesoreria = {
-      ...mockJornadaActiva,
-      estado: "CERRADA",
-      cierre_timestamp_utc: new Date().toISOString(),
-      usuario_cierre: "alan",
-      total_cierre_centavos: totalCierre,
-      observaciones: observaciones || mockJornadaActiva.observaciones,
-      detalles: detallesCerrados,
-      version: mockJornadaActiva.version + 1,
-    };
-
-    mockJornadaActiva = null;
-    mockNumeroJornada++;
-    return jCerrada;
+    return handleResponse<JornadaTesoreria>(res);
   },
 
   // =====================================================================
@@ -1340,6 +1002,81 @@ export const TesoreriaService = {
   },
 
   // =====================================================================
+  // CUENTA CORRIENTE CLARO COMERCIOS / EZEQUIEL
+  // =====================================================================
+
+  async getCuentaCorrienteEzequiel(fechaCorte?: string): Promise<EstadoCuentaEzequielResponse> {
+    const query = fechaCorte ? `?fecha_corte=${encodeURIComponent(fechaCorte)}` : "";
+    const res = await fetch(`${getApiBaseUrl()}/cuenta-corriente/ezequiel${query}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<EstadoCuentaEzequielResponse>(res);
+  },
+
+  async registrarAcreditacionEzequiel(
+    payload: AcreditacionEzequielPayload,
+    idempotencyKey?: string,
+  ): Promise<any> {
+    const key = idempotencyKey || `acr_ezequiel_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const res = await fetch(`${getApiBaseUrl()}/cuenta-corriente/ezequiel/acreditacion`, {
+      method: "POST",
+      headers: getAuthHeaders(key),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse<any>(res);
+  },
+
+  async registrarLiquidacionEzequiel(
+    payload: LiquidacionEzequielPayload,
+    idempotencyKey?: string,
+  ): Promise<any> {
+    const key = idempotencyKey || `liq_ezequiel_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const res = await fetch(`${getApiBaseUrl()}/cuenta-corriente/ezequiel/liquidacion`, {
+      method: "POST",
+      headers: getAuthHeaders(key),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse<any>(res);
+  },
+
+  async registrarReconocimientoDeudaHistoricaEzequiel(
+    payload: ReconocimientoDeudaHistoricaEzequielPayload,
+    idempotencyKey?: string,
+  ): Promise<any> {
+    const key = idempotencyKey || `his_ezequiel_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const res = await fetch(`${getApiBaseUrl()}/cuenta-corriente/ezequiel/reconocimiento-historico`, {
+      method: "POST",
+      headers: getAuthHeaders(key),
+      body: JSON.stringify(payload),
+    });
+    return handleResponse<any>(res);
+  },
+
+  // =====================================================================
+  // FONDEOS FÍSICOS PENDIENTES (DEC-02)
+  // =====================================================================
+
+  async getFondeosPendientes(estado: string = "PENDIENTE", tipoCircuito?: string): Promise<FondeoPendienteItem[]> {
+    const params = new URLSearchParams();
+    if (estado && estado !== "ALL") params.append("estado", estado);
+    if (tipoCircuito) params.append("tipo_circuito", tipoCircuito);
+    const query = params.toString() ? `?${params.toString()}` : "";
+    const res = await fetch(`${getApiBaseUrl()}/fondeos-pendientes${query}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<FondeoPendienteItem[]>(res);
+  },
+
+  async ejecutarFondeoPendiente(fondeoId: number, observaciones?: string, fondoOrigen?: string): Promise<any> {
+    const res = await fetch(`${getApiBaseUrl()}/fondeos-pendientes/${fondeoId}/ejecutar`, {
+      method: "POST",
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ observaciones, fondo_origen: fondoOrigen }),
+    });
+    return handleResponse<any>(res);
+  },
+
+  // =====================================================================
   // ANTICIPOS Y REPOSICIONES DE PREVENTISTAS (1130 -> 1120 / 1110)
   // =====================================================================
 
@@ -1419,7 +1156,7 @@ export const TesoreriaService = {
   async modificarSaldoInicial(payload: ModificarSaldoInicialPayload): Promise<any> {
     const res = await fetch(`${getApiBaseUrl()}/apertura/saldos-iniciales`, {
       method: "POST",
-      headers: getAuthHeaders(),
+      headers: getAuthHeaders(payload.idempotency_key || undefined),
       body: JSON.stringify(payload),
     });
     return handleResponse<any>(res);

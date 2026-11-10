@@ -63,6 +63,23 @@ def _obtener_saldo_disponible_1130(conn: sqlite3.Connection) -> int:
     return saldo_en_libros - reservado
 
 
+def _obtener_saldo_disponible_1220(conn: sqlite3.Connection) -> int:
+    """Retorna los centavos disponibles en el fondo digital 1220 (Prepay Digital) descontando reservas."""
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, saldo_centavos, permite_sobregiro FROM tesoreria_fondos WHERE codigo = '1220' AND estado = 'ACTIVO';"
+    )
+    row = cursor.fetchone()
+    cursor.close()
+    if not row:
+        return 0
+    fund_id, saldo_en_libros, permite_sobregiro = row
+    if permite_sobregiro == 1:
+        return saldo_en_libros
+    reservado = _obtener_saldo_reservado_fondo(conn, fund_id)
+    return max(0, saldo_en_libros - reservado)
+
+
 def registrar_acreditacion_david(
     conn: sqlite3.Connection,
     amount_cents: int,
@@ -616,8 +633,24 @@ def obtener_estado_cuenta_david(
 
     obligacion_pendiente = total_historica + total_acreditado - total_pagado
 
-    # Obtener disponibilidad actual del fondo 1130
+    # Obtener disponibilidad de fondos y desglose de capital consumido
     disp_1130 = _obtener_saldo_disponible_1130(conn)
+    disp_1220 = _obtener_saldo_disponible_1220(conn)
+
+    cur_cap = conn.cursor()
+    cur_cap.execute(
+        """
+        SELECT COALESCE(SUM(m.amount_cents), 0)
+        FROM tesoreria_movimientos m
+        JOIN tesoreria_fondos f ON m.fund_id = f.id
+        WHERE f.codigo = '1220'
+          AND m.movement_type = 'EXIT'
+          AND m.counterpart != 'COSTO_OPERATIVO_PREPAY'
+          AND m.status IN ('POSTED', 'CONFIRMED');
+        """
+    )
+    capital_consumido = cur_cap.fetchone()[0]
+    cur_cap.close()
 
     return {
         "obligacion_pendiente_cents": obligacion_pendiente,
@@ -630,6 +663,10 @@ def obtener_estado_cuenta_david(
         "total_deuda_historica_formatted": formatMoney(total_historica),
         "saldo_disponible_1130_cents": disp_1130,
         "saldo_disponible_1130_formatted": formatMoney(disp_1130),
+        "saldo_disponible_1220_cents": disp_1220,
+        "saldo_disponible_1220_formatted": formatMoney(disp_1220),
+        "capital_consumido_recargas_cents": capital_consumido,
+        "capital_consumido_recargas_formatted": formatMoney(capital_consumido),
         "fecha_corte": fecha_corte.strip() if fecha_corte and fecha_corte.strip() else None,
         "cantidad_movimientos": len(movimientos_formateados),
         "movimientos": movimientos_formateados,

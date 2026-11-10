@@ -128,6 +128,19 @@ from tesoreria.cuenta_corriente_david import (
     registrar_pago_david,
     registrar_reconocimiento_deuda_historica,
 )
+from tesoreria.cuenta_corriente_ezequiel import (
+    ErrorCuentaCorrienteEzequiel,
+    ErrorSaldoInsuficienteEzequiel,
+    ErrorValidacionEzequiel,
+    ErrorIdempotenciaEzequiel,
+    consultar_posicion_ezequiel,
+    ejecutar_fondeo_pendiente,
+    listar_fondeos_pendientes,
+    registrar_acreditacion_ezequiel,
+    registrar_fondeo_pendiente,
+    registrar_liquidacion_ezequiel,
+    registrar_reconocimiento_historico_ezequiel,
+)
 from tesoreria.anticipos_preventistas import (
     AnticipoNoEncontrado,
     ErrorAnticipoPreventista,
@@ -174,6 +187,14 @@ class SaldoInicialItem(BaseModel):
     saldo_actual_cents: int
     saldo_inicial_formateado: str
     saldo_actual_formateado: str
+    naturaleza: Optional[str] = None
+    estado_apertura: Optional[str] = "PENDING_OPENING"
+    subestado_apertura: Optional[str] = "SIN_MOVIMIENTOS"
+    disponibilidad_confirmada: Optional[bool] = False
+    fecha_corte: Optional[str] = None
+    naturaleza_saldo: Optional[str] = None
+    observaciones: Optional[str] = None
+    comprobante: Optional[str] = None
     configurado_por: Optional[str] = None
     configurado_en: Optional[str] = None
     tiene_movimientos: bool = False
@@ -188,6 +209,10 @@ class SaldosInicialesResponse(BaseModel):
     total_fondos_fisicos_cents: int
     total_cuentas_digitales_cents: int
     total_obligaciones_cents: int
+    conteo_abiertos: Optional[int] = 0
+    conteo_pendientes: Optional[int] = 0
+    apertura_completa: Optional[bool] = False
+    estado_general_apertura: Optional[str] = "DIFERIDO_PENDIENTE"
 
 
 class ModificarSaldoInicialRequest(BaseModel):
@@ -195,6 +220,11 @@ class ModificarSaldoInicialRequest(BaseModel):
     saldo_nuevo_cents: int = Field(..., ge=0, description="Nuevo saldo inicial en centavos (entero >= 0)")
     motivo: str = Field(..., min_length=3, description="Motivo obligatorio de la modificación")
     referencia_autorizacion: Optional[str] = Field(None, description="Referencia de autorización o acta")
+    fecha_corte: Optional[str] = Field(None, description="Fecha y hora de corte (ISO o texto)")
+    naturaleza_saldo: Optional[str] = Field(None, description="Naturaleza del saldo (EFECTIVO_CONTADO, SALDO_PLATAFORMA, OBLIGACION_EXIGIBLE)")
+    comprobante: Optional[str] = Field(None, description="Comprobante o evidencia")
+    idempotency_key: Optional[str] = Field(None, description="Clave de idempotencia única")
+    tipo_operacion: Optional[str] = Field("APERTURA_INICIAL", description="APERTURA_INICIAL o AJUSTE_COMPENSATORIO")
 
 
 class AuditoriaSaldoInicialItem(BaseModel):
@@ -211,6 +241,11 @@ class AuditoriaSaldoInicialItem(BaseModel):
     motivo: str
     referencia_autorizacion: Optional[str] = None
     es_apertura_inicial: bool = False
+    fecha_corte: Optional[str] = None
+    naturaleza_saldo: Optional[str] = None
+    idempotency_key: Optional[str] = None
+    tipo_operacion: Optional[str] = "APERTURA_INICIAL"
+    estado_apertura: Optional[str] = "OPENED"
 
 
 class ResumenTesoreriaResponse(BaseModel):
@@ -362,9 +397,11 @@ def get_resumen(user: AuthenticatedUser = Depends(get_current_user)):
     total_disponible = summary["fondos_propios"]["total_disponible_cents"]
 
     activos_count = sum(1 for f in fondos if f["estado"] == "ACTIVO")
+    ruta_lower = ruta.lower()
+    es_aislado = ("lab" in ruta_lower or ":memory:" in ruta_lower) and "prod" not in ruta_lower and "live" not in ruta_lower
 
     return ResumenTesoreriaResponse(
-        aislamiento_confirmado=True,
+        aislamiento_confirmado=es_aislado,
         db_path=ruta,
         total_saldo_registrado_centavos=total_registrado,
         total_saldo_registrado_formateado=formatMoney(total_registrado),
@@ -455,22 +492,29 @@ def get_saldos_iniciales(user: AuthenticatedUser = Depends(get_current_user)):
         conn.close()
 
 
-@router.post("/apertura/saldos-iniciales", summary="Modificar saldo inicial con auditoría (Alan y Yilda)")
+@router.post("/apertura/saldos-iniciales", summary="Modificar saldo inicial o registrar apertura con auditoría (Alan y Yilda)")
 def post_modificar_saldo_inicial(
     payload: ModificarSaldoInicialRequest,
     user: AuthenticatedUser = Depends(require_admin_or_socio),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
 ):
     conn = _get_lab_db()
     try:
         jornada = obtener_jornada_actual(conn)
         j_id = jornada["id"] if jornada else None
+        idem_key = payload.idempotency_key or idempotency_key
+        ref_comp = payload.comprobante or payload.referencia_autorizacion
         res = modificar_saldo_inicial(
             conn,
             codigo=payload.codigo,
             saldo_nuevo_cents=payload.saldo_nuevo_cents,
             usuario=user.username,
             motivo=payload.motivo,
-            referencia_autorizacion=payload.referencia_autorizacion,
+            referencia_autorizacion=ref_comp,
+            fecha_corte=payload.fecha_corte,
+            naturaleza_saldo=payload.naturaleza_saldo,
+            idempotency_key=idem_key,
+            tipo_operacion=payload.tipo_operacion or "APERTURA_INICIAL",
             jornada_id=j_id,
         )
         return res
@@ -1818,3 +1862,195 @@ def get_resumen_preventistas(
     finally:
         conn.close()
     return resumen
+
+
+# =============================================================================
+# CUENTA CORRIENTE CLARO COMERCIOS / EZEQUIEL Y FONDEOS PENDIENTES
+# =============================================================================
+
+class AcreditacionEzequielRequest(BaseModel):
+    monto_centavos: int = Field(..., gt=0, description="Monto en centavos a acreditar en 1230")
+    referencia: str = Field(..., min_length=1, description="Comprobante, lote o número de transferencia")
+    motivo: Optional[str] = Field(None, description="Observaciones o detalle de la acreditación")
+    fecha_referencia: Optional[str] = Field(None, description="Fecha de acreditación (YYYY-MM-DD)")
+
+
+class LiquidacionEzequielRequest(BaseModel):
+    monto_1150_cents: int = Field(0, ge=0, description="Efectivo en custodia Claro (1150)")
+    monto_drugstore_cents: int = Field(0, ge=0, description="Efectivo complementario Drugstore (1110 o 1120)")
+    fondo_drugstore: str = Field("1110", description="Código del fondo Drugstore utilizado (1110 o 1120)")
+    monto_transferencia_cents: int = Field(0, ge=0, description="Transferencia bancaria Mercado Pago (1210 -> 1230)")
+    referencia: str = Field(..., min_length=1, description="Comprobante o recibo emitido por el cobrador de Claro / Ezequiel")
+    motivo: Optional[str] = Field(None, description="Observaciones de la liquidación")
+    fecha_referencia: Optional[str] = Field(None, description="Fecha de liquidación (YYYY-MM-DD)")
+
+
+class ReconocimientoDeudaHistoricaEzequielRequest(BaseModel):
+    monto_centavos: int = Field(..., gt=0, description="Monto en centavos de deuda histórica reconocida")
+    fecha_referencia: str = Field(..., min_length=10, description="Fecha de origen de la deuda histórica (YYYY-MM-DD)")
+    motivo: str = Field(..., min_length=3, description="Justificación obligatoria de la deuda reconocida")
+    referencia_externa: Optional[str] = Field(None, description="Número de acta, expediente o referencia documental")
+    confirmacion_explicita: bool = Field(..., description="Confirmación explícita obligatoria del usuario")
+
+
+class EjecutarFondeoRequest(BaseModel):
+    observaciones: Optional[str] = Field(None, description="Notas de la ejecución del fondeo")
+    fondo_origen: Optional[str] = Field(None, description="Fondo origen alternativo autorizado ('1110' o '1120')")
+
+
+@router.get("/cuenta-corriente/ezequiel", summary="Consultar estado y movimientos de la Cuenta Corriente Claro / Ezequiel")
+def get_cuenta_corriente_ezequiel(
+    fecha_corte: Optional[str] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    conn = _get_lab_db()
+    try:
+        pos = consultar_posicion_ezequiel(conn, fecha_corte=fecha_corte)
+    finally:
+        conn.close()
+    return pos
+
+
+@router.post("/cuenta-corriente/ezequiel/acreditacion", summary="Registrar acreditación de saldo digital Claro provisto por Ezequiel")
+def post_acreditacion_ezequiel(
+    payload: AcreditacionEzequielRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+):
+    if not idempotency_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Se requiere cabecera 'Idempotency-Key' para registrar la acreditación.",
+        )
+    conn = _get_lab_db()
+    try:
+        res = registrar_acreditacion_ezequiel(
+            conn,
+            amount_cents=payload.monto_centavos,
+            referencia=payload.referencia,
+            actor=user.username,
+            idempotency_key=idempotency_key,
+            motivo=payload.motivo,
+            fecha_referencia=payload.fecha_referencia,
+        )
+    except ErrorValidacionEzequiel as e:
+        conn.close()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    conn.close()
+    return res
+
+
+@router.post("/cuenta-corriente/ezequiel/liquidacion", summary="Registrar liquidación (pago) a Ezequiel con soporte multi-fondo")
+def post_liquidacion_ezequiel(
+    payload: LiquidacionEzequielRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+):
+    if not idempotency_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Se requiere cabecera 'Idempotency-Key' para registrar la liquidación.",
+        )
+    conn = _get_lab_db()
+    try:
+        res = registrar_liquidacion_ezequiel(
+            conn,
+            monto_1150_cents=payload.monto_1150_cents,
+            monto_drugstore_cents=payload.monto_drugstore_cents,
+            fondo_drugstore=payload.fondo_drugstore,
+            monto_transferencia_cents=payload.monto_transferencia_cents,
+            referencia=payload.referencia,
+            actor=user.username,
+            idempotency_key=idempotency_key,
+            motivo=payload.motivo,
+            fecha_referencia=payload.fecha_referencia,
+        )
+    except ErrorSaldoInsuficienteEzequiel as e:
+        conn.close()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    except ErrorValidacionEzequiel as e:
+        conn.close()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    conn.close()
+    return res
+
+
+@router.post("/cuenta-corriente/ezequiel/reconocimiento-historico", summary="Reconocer deuda histórica previa con Ezequiel")
+def post_reconocimiento_historico_ezequiel(
+    payload: ReconocimientoDeudaHistoricaEzequielRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+):
+    if not idempotency_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Se requiere cabecera 'Idempotency-Key' para registrar el reconocimiento histórico.",
+        )
+    conn = _get_lab_db()
+    try:
+        res = registrar_reconocimiento_historico_ezequiel(
+            conn,
+            amount_cents=payload.monto_centavos,
+            fecha_referencia=payload.fecha_referencia,
+            motivo=payload.motivo,
+            actor=user.username,
+            idempotency_key=idempotency_key,
+            confirmacion_explicita=payload.confirmacion_explicita,
+            referencia_externa=payload.referencia_externa,
+        )
+    except ErrorValidacionEzequiel as e:
+        conn.close()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    conn.close()
+    return res
+
+
+@router.get("/fondeos-pendientes", summary="Listar obligaciones de fondeo físico pendientes de custodia (Claro/Prepay)")
+def get_fondeos_pendientes(
+    estado: Optional[str] = "PENDIENTE",
+    tipo_circuito: Optional[str] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    conn = _get_lab_db()
+    try:
+        res = listar_fondeos_pendientes(conn, estado=estado, tipo_circuito=tipo_circuito)
+    finally:
+        conn.close()
+    return res
+
+
+@router.post("/fondeos-pendientes/{fondeo_id}/ejecutar", summary="Ejecutar fondeo físico pendiente una vez disponible el efectivo")
+def post_ejecutar_fondeo(
+    fondeo_id: int,
+    payload: Optional[EjecutarFondeoRequest] = None,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    conn = _get_lab_db()
+    try:
+        res = ejecutar_fondeo_pendiente(
+            conn,
+            fondeo_id=fondeo_id,
+            actor=user.username,
+            fondo_origen=payload.fondo_origen if payload else None,
+        )
+    except ErrorSaldoInsuficienteEzequiel as e:
+        conn.close()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+    except ErrorValidacionEzequiel as e:
+        conn.close()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    conn.close()
+    return res
+

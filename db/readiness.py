@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
-MIGRACIONES_REQUERIDAS: List[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+MIGRACIONES_REQUERIDAS: List[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
 
 TABLAS_REQUERIDAS: List[str] = [
     "productos",
@@ -27,6 +27,10 @@ TABLAS_REQUERIDAS: List[str] = [
     "pedido_items",
     "pedidos_auditoria",
     "auth_scram_challenges",
+    "commercial_events_outbox",
+    "commercial_adicionales_arqueo_turno",
+    "tesoreria_prepay_cargo_diario",
+    "tesoreria_prepay_coordinacion",
 ]
 
 # Estructuras físicas requeridas por cada versión de migración
@@ -87,7 +91,34 @@ ESTRUCTURAS_POR_MIGRACION: Dict[int, Dict[str, Any]] = {
             ],
         },
     },
+    12: {
+        "tablas": ["commercial_events_outbox", "commercial_adicionales_arqueo_turno"],
+        "columnas": {},
+        "indices": {},
+    },
+    13: {
+        "tablas": [],
+        "columnas": {
+            "cargas_servicios": ["plataforma_origen", "servicio_destino"],
+        },
+        "indices": {},
+    },
+    14: {
+        "tablas": ["tesoreria_prepay_cargo_diario", "tesoreria_prepay_coordinacion"],
+        "columnas": {},
+        "indices": {},
+    },
 }
+
+FOREIGN_KEYS_REQUERIDAS = [
+    {"tabla": "ticket_items", "from": "ticket_id", "to_tabla": "tickets", "to_col": "id"},
+    {"tabla": "cargas_servicios_auditoria", "from": "carga_id", "to_tabla": "cargas_servicios", "to_col": "id"},
+    {"tabla": "gastos_auditoria", "from": "gasto_id", "to_tabla": "gastos_retiros", "to_col": "id"},
+    {"tabla": "ventas_auditoria", "from": "ticket_id", "to_tabla": "tickets", "to_col": "id"},
+    {"tabla": "productos_auditoria", "from": "producto_id", "to_tabla": "productos", "to_col": "id"},
+    {"tabla": "pedido_items", "from": "pedido_id", "to_tabla": "pedidos_proveedor", "to_col": "id"},
+    {"tabla": "tesoreria_prepay_coordinacion", "from": "jornada_id", "to_tabla": "tesoreria_jornadas", "to_col": "id"},
+]
 
 
 class ErrorEsquemaNoPreparado(Exception):
@@ -124,6 +155,15 @@ def _listar_columnas_tabla(conn: Any, tabla: str) -> Set[str]:
         return {str(r[1]) for r in cur.fetchall()}
     except Exception:
         return set()
+
+
+def _listar_foreign_keys_tabla(conn: Any, tabla: str) -> List[Dict[str, str]]:
+    """Obtiene metadatos de foreign keys de una tabla dada."""
+    try:
+        cur = conn.execute(f"PRAGMA foreign_key_list({tabla});")
+        return [{"from": str(r[3]), "to_tabla": str(r[2])} for r in cur.fetchall()]
+    except Exception:
+        return []
 
 
 def _listar_indices_tabla(conn: Any, tabla: str) -> Dict[str, Dict[str, Any]]:
@@ -192,6 +232,7 @@ def comprobar_preparacion_esquema(conn: Optional[Any] = None) -> Dict[str, Any]:
                     "gastos_retiros.uq_gastos_idempotency_key",
                 ],
                 "indices_incorrectos": [],
+                "foreign_keys_faltantes": [],
                 "inconsistencias": [],
                 "mensaje": "No se pudo conectar a la base de datos para verificar el esquema.",
             }
@@ -216,21 +257,30 @@ def comprobar_preparacion_esquema(conn: Optional[Any] = None) -> Dict[str, Any]:
                 versiones_aplicadas = []
         versiones_set = set(versiones_aplicadas)
 
-        # 3. Introspección agrupada de columnas con fallback individual memoizado
+        # 3. Introspección agrupada de columnas y foreign keys con fallback individual memoizado (E.1)
         columnas_por_tabla: Dict[str, Set[str]] = {t: set() for t in tablas_existentes}
+        fks_por_tabla: Dict[str, List[Dict[str, str]]] = {t: [] for t in tablas_existentes}
         agrupado_cols_ok = False
         try:
-            cur_cols = conn.execute(
-                "SELECT m.name, p.name FROM sqlite_master m, pragma_table_info(m.name) p "
+            cur_cols_fks = conn.execute(
+                "SELECT 'COL' as kind, m.name as tbl, p.name as detail, '' as extra "
+                "FROM sqlite_master m, pragma_table_info(m.name) p "
+                "WHERE m.type='table' AND m.name NOT LIKE 'sqlite_%' AND m.name NOT LIKE '__turso_%' "
+                "UNION ALL "
+                "SELECT 'FK' as kind, m.name as tbl, fk.[from] as detail, fk.[table] as extra "
+                "FROM sqlite_master m, pragma_foreign_key_list(m.name) fk "
                 "WHERE m.type='table' AND m.name NOT LIKE 'sqlite_%' AND m.name NOT LIKE '__turso_%';"
             )
-            for tbl, col in cur_cols.fetchall():
+            for kind, tbl, detail, extra in cur_cols_fks.fetchall():
                 tbl_s = str(tbl)
-                if tbl_s in columnas_por_tabla:
-                    columnas_por_tabla[tbl_s].add(str(col))
+                if tbl_s in tablas_existentes:
+                    if kind == "COL":
+                        columnas_por_tabla[tbl_s].add(str(detail))
+                    elif kind == "FK":
+                        fks_por_tabla[tbl_s].append({"from": str(detail), "to_tabla": str(extra)})
             agrupado_cols_ok = True
         except Exception as e:
-            logger.debug("Introspección agrupada de columnas no disponible (%s), usando fallback.", e)
+            logger.debug("Introspección agrupada de columnas y fks no disponible (%s), usando fallback.", e)
 
         # 4. Introspección agrupada de índices con fallback individual memoizado
         indices_por_tabla: Dict[str, Dict[str, Dict[str, Any]]] = {t: {} for t in tablas_existentes}
@@ -264,6 +314,13 @@ def comprobar_preparacion_esquema(conn: Optional[Any] = None) -> Dict[str, Any]:
             if tabla not in columnas_por_tabla or not agrupado_cols_ok:
                 columnas_por_tabla[tabla] = _listar_columnas_tabla(conn, tabla)
             return columnas_por_tabla[tabla]
+
+        def _obtener_fks(tabla: str) -> List[Dict[str, str]]:
+            if agrupado_cols_ok and tabla in fks_por_tabla:
+                return fks_por_tabla[tabla]
+            if tabla not in fks_por_tabla or not agrupado_cols_ok:
+                fks_por_tabla[tabla] = _listar_foreign_keys_tabla(conn, tabla)
+            return fks_por_tabla[tabla]
 
         def _obtener_indices(tabla: str) -> Dict[str, Dict[str, Any]]:
             if agrupado_idx_ok and tabla in indices_por_tabla:
@@ -317,8 +374,31 @@ def comprobar_preparacion_esquema(conn: Optional[Any] = None) -> Dict[str, Any]:
 
         migraciones_pendientes = [v for v in MIGRACIONES_REQUERIDAS if v not in versiones_set]
 
+        # Foreign keys faltantes e inspección referencial (E.1)
+        foreign_keys_faltantes = []
+        for fk_spec in FOREIGN_KEYS_REQUERIDAS:
+            child_tbl = fk_spec["tabla"]
+            parent_tbl = fk_spec["to_tabla"]
+            from_col = fk_spec["from"]
+            if child_tbl in tablas_existentes and parent_tbl in tablas_existentes:
+                actual_fks = _obtener_fks(child_tbl)
+                has_fk = any(
+                    str(f.get("from", "")).lower() == from_col.lower()
+                    and str(f.get("to_tabla", "")).lower() == parent_tbl.lower()
+                    for f in actual_fks
+                )
+                if not has_fk:
+                    fk_label = f"{child_tbl}.{from_col} -> {parent_tbl}"
+                    foreign_keys_faltantes.append(fk_label)
+
         # Inconsistencias
         inconsistencias: List[str] = []
+
+        if foreign_keys_faltantes:
+            for fk_faltante in foreign_keys_faltantes:
+                inconsistencias.append(
+                    f"Falta clave foránea requerida: {fk_faltante} (PRAGMA foreign_key_list)."
+                )
 
         # 1. Si hay tablas pero falta la tabla _schema_migrations
         if "_schema_migrations" not in tablas_existentes and len(tablas_existentes) > 0:
@@ -428,6 +508,23 @@ def comprobar_preparacion_esquema(conn: Optional[Any] = None) -> Dict[str, Any]:
                 "La tabla 'auth_scram_challenges' existe físicamente pero la versión 11 no está registrada en _schema_migrations."
             )
 
+        if "commercial_events_outbox" in tablas_existentes and 12 not in versiones_set:
+            inconsistencias.append(
+                "La tabla 'commercial_events_outbox' existe físicamente pero la versión 12 no está registrada en _schema_migrations."
+            )
+
+        if "cargas_servicios" in tablas_existentes:
+            cols_cs = _obtener_cols("cargas_servicios")
+            if "plataforma_origen" in cols_cs and 13 not in versiones_set:
+                inconsistencias.append(
+                    "La columna 'plataforma_origen' existe en 'cargas_servicios' pero la versión 13 no está registrada en _schema_migrations."
+                )
+
+        if "tesoreria_prepay_coordinacion" in tablas_existentes and 14 not in versiones_set:
+            inconsistencias.append(
+                "La tabla 'tesoreria_prepay_coordinacion' existe físicamente pero la versión 14 no está registrada en _schema_migrations."
+            )
+
         # Clasificación del estado global
         if inconsistencias:
             status = "ESQUEMA_INCONSISTENTE"
@@ -453,7 +550,7 @@ def comprobar_preparacion_esquema(conn: Optional[Any] = None) -> Dict[str, Any]:
             listo = True
             mensaje = (
                 "El esquema de base de datos está 100% preparado y verificado "
-                "con las migraciones 001–011 (incluyendo 001–010)."
+                "con las migraciones 001–014 (incluyendo 001–010 y 011–014)."
             )
 
         return {
@@ -466,6 +563,7 @@ def comprobar_preparacion_esquema(conn: Optional[Any] = None) -> Dict[str, Any]:
             "columnas_faltantes": sorted(columnas_faltantes),
             "indices_faltantes": sorted(indices_faltantes),
             "indices_incorrectos": sorted(indices_incorrectos),
+            "foreign_keys_faltantes": sorted(foreign_keys_faltantes),
             "inconsistencias": inconsistencias,
             "mensaje": mensaje,
         }

@@ -78,6 +78,29 @@ export function obtenerRangoUtcDiaJujuy(fechaStr = null) {
   return { desdeUtc, hastaUtc, fechaJujuy: `${y}-${pad(m)}-${pad(d)}` };
 }
 
+export function enqueueOutboxStatement({ eventType, entityType, entityId, actionType, idempotencyKey, payload, createdAt = null }) {
+  const eventId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `evt_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  const now = createdAt || new Date().toISOString();
+  return {
+    sql: `INSERT OR IGNORE INTO commercial_events_outbox (
+      event_id, event_type, entity_type, entity_id, action_type,
+      idempotency_key, payload_canonical_hash, payload, status,
+      retry_count, max_retries, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'cf_hash', ?, 'PENDING', 0, 5, ?, ?);`,
+    args: [
+      eventId,
+      eventType,
+      entityType,
+      String(entityId),
+      actionType,
+      idempotencyKey,
+      JSON.stringify(payload),
+      now,
+      now,
+    ],
+  };
+}
+
 // --- Módulo Catálogo ---
 export async function listarProductos(client, { includeInactive = false, search = null, category = null } = {}) {
   let sql = `
@@ -257,6 +280,109 @@ export async function cambiarEstadoProducto(client, id, activo, usuario) {
     }
   ], "write");
   return { id, activo: activo ? 1 : 0 };
+}
+
+export async function eliminarProductoInteligente(client, id, usuario) {
+  const nowUtc = new Date().toISOString();
+  const prodId = Number(id);
+
+  // 1. Obtener producto existente
+  const rs = await client.execute({
+    sql: "SELECT id, nombre, categoria, proveedor, unidad, costo, precio_dia, activo, fecha_actualizacion FROM productos WHERE id = ? OR nombre = ?;",
+    args: [isNaN(prodId) ? id : prodId, String(id)],
+  });
+
+  if (rs.rows.length === 0) {
+    throw new Error(`No existe ningún producto con ID ${id}.`);
+  }
+
+  const p = rs.rows[0];
+  const realId = Number(p.id);
+  const nombreProd = String(p.nombre).trim();
+
+  // 2. Verificar si posee ventas en ticket_items
+  let tieneVentas = false;
+  try {
+    const rsVentas = await client.execute({
+      sql: `SELECT 1 FROM ticket_items 
+            WHERE producto_id = ? OR (producto_id IS NULL AND LOWER(producto_nombre) = LOWER(?)) 
+            LIMIT 1;`,
+      args: [realId, nombreProd],
+    });
+    if (rsVentas.rows.length > 0) {
+      tieneVentas = true;
+    }
+  } catch (err) {
+    tieneVentas = false;
+  }
+
+  // 3. Smart Delete: Baja lógica si tiene ventas, borrado físico si no tiene
+  if (tieneVentas) {
+    const snapshotAnt = {
+      id_producto: realId,
+      nombre: nombreProd,
+      categoria: p.categoria || "Otro",
+      proveedor: p.proveedor || "General",
+      unidad: p.unidad || "Unidad",
+      costo: Number(p.costo || 0),
+      precio_venta: Number(p.precio_dia || 0),
+      activo: Boolean(p.activo),
+      fecha_act: String(p.fecha_actualizacion || ""),
+    };
+    const snapshotNuevo = { ...snapshotAnt, activo: false, fecha_act: nowUtc };
+
+    await client.batch([
+      {
+        sql: "UPDATE productos SET activo = 0, fecha_actualizacion = ? WHERE id = ?;",
+        args: [nowUtc, realId],
+      },
+      {
+        sql: `INSERT INTO productos_auditoria (producto_id, accion, valores_anteriores, valores_nuevos, fecha_utc, actor)
+              VALUES (?, 'DESACTIVAR', ?, ?, ?, ?);`,
+        args: [
+          realId,
+          JSON.stringify(snapshotAnt),
+          JSON.stringify(snapshotNuevo),
+          nowUtc,
+          usuario || "sistema",
+        ],
+      },
+    ], "write");
+
+    return {
+      id_producto: realId,
+      nombre: nombreProd,
+      status: "desactivado",
+      accion: "baja_logica",
+      eliminado_fisico: false,
+      activo: false,
+      tiene_ventas: true,
+      mensaje: `El producto '${nombreProd}' posee ventas registradas y fue desactivado lógicamente.`,
+    };
+  } else {
+    // Borrado físico limpio de auditoría y producto
+    await client.batch([
+      {
+        sql: "DELETE FROM productos_auditoria WHERE producto_id = ?;",
+        args: [realId],
+      },
+      {
+        sql: "DELETE FROM productos WHERE id = ?;",
+        args: [realId],
+      },
+    ], "write");
+
+    return {
+      id_producto: realId,
+      nombre: nombreProd,
+      status: "eliminado",
+      accion: "borrado_fisico",
+      eliminado_fisico: true,
+      activo: false,
+      tiene_ventas: false,
+      mensaje: `Producto '${nombreProd}' eliminado físicamente del catálogo.`,
+    };
+  }
 }
 
 // --- Módulo Ventas POS ---
@@ -498,6 +624,27 @@ export async function registrarVentaIdempotente(client, { ticket, items, usuario
     ],
   });
 
+  statements.push(
+    enqueueOutboxStatement({
+      eventType: "SALE_CONFIRMED",
+      entityType: "TICKET",
+      entityId: cabecera.id,
+      actionType: "CONFIRM",
+      idempotencyKey: `COMM_SALE_${cabecera.id}_CONFIRM`,
+      payload: {
+        ticket_id: cabecera.id,
+        fecha_hora_utc: cabecera.fecha_hora_utc,
+        total_venta_cents: Math.round(cabecera.total_venta * 100),
+        monto_efectivo_cents: Math.round(cabecera.monto_efectivo * 100),
+        monto_transferencia_cents: Math.round(cabecera.monto_transferencia * 100),
+        metodo_pago: cabecera.metodo_pago,
+        usuario: usuario || "sistema",
+        items_count: detalle.length,
+      },
+      createdAt: cabecera.fecha_hora_utc,
+    })
+  );
+
   await client.batch(statements, "write");
 
   return {
@@ -629,6 +776,25 @@ export async function anularVenta(client, ticketId, usuario, motivo) {
     throw new Error(`NOT_FOUND: El ticket '${ticketId}' no existe.`);
   }
   const nowUtc = new Date().toISOString();
+  const outboxStmt = enqueueOutboxStatement({
+    eventType: "SALE_VOIDED",
+    entityType: "TICKET",
+    entityId: ticketId,
+    actionType: "VOID",
+    idempotencyKey: `COMM_SALE_${ticketId}_VOID`,
+    payload: {
+      ticket_id: ticketId,
+      motivo,
+      usuario: usuario || "sistema",
+      total_venta_cents: Math.round(Number(existing.ticket?.total_venta || 0) * 100),
+      monto_efectivo_cents: Math.round(Number(existing.ticket?.monto_efectivo || 0) * 100),
+      monto_transferencia_cents: Math.round(Number(existing.ticket?.monto_transferencia || 0) * 100),
+      metodo_pago: existing.ticket?.metodo_pago,
+      reference_action: "CONFIRM",
+      reference_idempotency_key: `COMM_SALE_${ticketId}_CONFIRM`,
+    },
+    createdAt: nowUtc,
+  });
   await client.batch([
     {
       sql: "UPDATE tickets SET anulado = 1, motivo_anulacion = ? WHERE id = ?;",
@@ -639,6 +805,7 @@ export async function anularVenta(client, ticketId, usuario, motivo) {
             VALUES (?, NULL, 'ANULACION', ?, ?, ?);`,
       args: [ticketId, motivo, usuario, nowUtc],
     },
+    outboxStmt,
   ], "write");
   const updated = await obtenerDetalleVenta(client, ticketId);
   return {
@@ -799,6 +966,32 @@ export async function editarItemVenta(
     costo_unitario: iRow.costo_unitario !== null ? Number(iRow.costo_unitario) : null,
   };
 
+  const isMixedReduction = Boolean(diff > 0 && efvo > 0 && transf > 0);
+  const outboxStmt = enqueueOutboxStatement({
+    eventType: "SALE_ADJUSTED",
+    entityType: "TICKET",
+    entityId: ticketId,
+    actionType: "ADJUST",
+    idempotencyKey: `COMM_SALE_${ticketId}_ADJUST_${itemId}_${Date.now()}`,
+    payload: {
+      ticket_id: ticketId,
+      item_id: itemId,
+      usuario: usuario || "sistema",
+      old_total_venta_cents: Math.round(oldTotal * 100),
+      new_total_venta_cents: Math.round(newTotal * 100),
+      old_monto_efectivo_cents: Math.round(efvo * 100),
+      old_monto_transferencia_cents: Math.round(transf * 100),
+      monto_efectivo_cents: Math.round(newEfvo * 100),
+      monto_transferencia_cents: Math.round(newTransf * 100),
+      metodo_pago: newMetodo,
+      diff_cents: Math.round(diff * 100),
+      is_mixed_reduction: isMixedReduction,
+      reference_action: "CONFIRM",
+      reference_idempotency_key: `COMM_SALE_${ticketId}_CONFIRM`,
+    },
+    createdAt: nowUtc,
+  });
+
   await client.batch([
     {
       sql: "UPDATE ticket_items SET cantidad = ?, precio_unitario = ?, subtotal = ? WHERE id = ? AND ticket_id = ?;",
@@ -820,6 +1013,7 @@ export async function editarItemVenta(
         nowUtc,
       ],
     },
+    outboxStmt,
   ], "write");
 
   return obtenerDetalleVenta(client, ticketId);
@@ -969,16 +1163,143 @@ export async function registrarCargaIdempotente(client, { servicio, usuario, ide
   }
 
   let cargaId;
+  let tesoreriaMovementId = null;
+
   try {
     if (servicio._simulate_interrupt_after_reservation) {
       throw new Error("INTERRUPTED_AFTER_RESERVATION: Fallo simulado antes de confirmar carga comercial.");
     }
-    const res = await client.execute({
-      sql: `INSERT INTO cargas_servicios (fecha_hora_utc, servicio, monto_carga, monto_adicional, total_cobrado, pago_efectivo, pago_transferencia, anulado, idempotency_key, plataforma_origen, servicio_destino)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?);`,
-      args: [nowUtc, tipo, montoCarga, montoAdicional, totalCobrado, pagoEfvo, pagoTransf, key, plataformaOrigen, servicioDestino],
-    });
-    cargaId = Number(res.lastInsertRowid) || 1;
+
+    if (tesoreriaActiva && plataformaOrigen === "PREPAY") {
+      // PREPAY: lote atómico de commit comercial + auditoría
+      const batchStmts = [
+        {
+          sql: `INSERT INTO cargas_servicios (fecha_hora_utc, servicio, monto_carga, monto_adicional, total_cobrado, pago_efectivo, pago_transferencia, anulado, idempotency_key, plataforma_origen, servicio_destino)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?);`,
+          args: [nowUtc, tipo, montoCarga, montoAdicional, totalCobrado, pagoEfvo, pagoTransf, coordKey, plataformaOrigen, servicioDestino],
+        },
+        {
+          sql: `INSERT INTO cargas_servicios_auditoria (carga_id, accion, valores_nuevos, fecha_utc, actor)
+                VALUES ((SELECT id FROM cargas_servicios WHERE idempotency_key = ?), 'CREAR', ?, ?, ?);`,
+          args: [coordKey, JSON.stringify(servicio), nowUtc, usuario || "sistema"],
+        },
+      ];
+      await client.batch(batchStmts, "write");
+
+      const rs = await client.execute({
+        sql: "SELECT id FROM cargas_servicios WHERE idempotency_key = ?;",
+        args: [coordKey],
+      });
+      cargaId = Number(rs.rows[0]?.id) || 1;
+
+      await confirmarPreReservaComercialWorker(client, {
+        idempotencyKey: coordKey,
+        cargaId,
+        servicio: tipo,
+        plataformaOrigen,
+        servicioDestino: servicioDestino || tipo,
+        montoCarga,
+        montoAdicional,
+        totalCobrado,
+        pagoEfvo,
+        pagoTransf,
+        fechaOp: fechaOpJujuy,
+        usuario: usuario || "sistema",
+      });
+
+      if (!servicio._simulate_interrupt_after_commercial_commit) {
+        const applied = await aplicarLiquidacionPrepayOutboxWorker(client, {
+          idempotencyKey: coordKey,
+          usuario: usuario || "sistema",
+          simulateOutboxError: Boolean(servicio._simulate_outbox_error),
+        });
+        tesoreriaMovementId = applied?.primary_movement_id || null;
+      }
+    } else {
+      // Flujo comercial base / No-PREPAY: lote atómico de inserción de carga, auditoría y outbox
+      const outboxEventId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `evt_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const batchStmts = [
+        {
+          sql: `INSERT INTO cargas_servicios (fecha_hora_utc, servicio, monto_carga, monto_adicional, total_cobrado, pago_efectivo, pago_transferencia, anulado, idempotency_key, plataforma_origen, servicio_destino)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?);`,
+          args: [nowUtc, tipo, montoCarga, montoAdicional, totalCobrado, pagoEfvo, pagoTransf, coordKey, plataformaOrigen, servicioDestino],
+        },
+        {
+          sql: `INSERT INTO cargas_servicios_auditoria (carga_id, accion, valores_nuevos, fecha_utc, actor)
+                VALUES ((SELECT id FROM cargas_servicios WHERE idempotency_key = ?), 'CREAR', ?, ?, ?);`,
+          args: [coordKey, JSON.stringify(servicio), nowUtc, usuario || "sistema"],
+        },
+        {
+          sql: `INSERT OR IGNORE INTO commercial_events_outbox (
+                  event_id, event_type, entity_type, entity_id, action_type,
+                  idempotency_key, payload_canonical_hash, payload, status,
+                  tesoreria_movement_id, created_at, updated_at, published_at
+                ) VALUES (
+                  ?, 'SERVICE_CREATED', 'SERVICE_LOAD',
+                  (SELECT CAST(id AS TEXT) FROM cargas_servicios WHERE idempotency_key = ?),
+                  'CREATE',
+                  ?,
+                  ?,
+                  json_set(?, '$.id', (SELECT id FROM cargas_servicios WHERE idempotency_key = ?)),
+                  'PUBLISHED',
+                  NULL,
+                  ?,
+                  ?,
+                  ?
+                );`,
+          args: [
+            outboxEventId,
+            coordKey,
+            coordKey,
+            `HASH_SRV_${coordKey}`,
+            JSON.stringify({
+              servicio: tipo,
+              plataforma_origen: plataformaOrigen,
+              servicio_destino: servicioDestino,
+              monto_carga: montoCarga,
+              monto_adicional: montoAdicional,
+              total_cobrado: totalCobrado,
+            }),
+            coordKey,
+            nowUtc,
+            nowUtc,
+            nowUtc,
+          ],
+        },
+      ];
+
+      await client.batch(batchStmts, "write");
+
+      const rs = await client.execute({
+        sql: "SELECT id FROM cargas_servicios WHERE idempotency_key = ?;",
+        args: [coordKey],
+      });
+      cargaId = Number(rs.rows[0]?.id) || 1;
+
+      if (tesoreriaActiva && plataformaOrigen) {
+        tesoreriaMovementId = await ejecutarCircuitoServicioTesoreriaWorker(
+          client,
+          {
+            cargaId,
+            plataformaOrigen,
+            servicioDestino: servicioDestino || tipo,
+            montoCarga,
+            montoAdicional,
+            pagoEfvo,
+            pagoTransf,
+            fechaOp: fechaOpJujuy,
+          },
+          usuario || "sistema",
+          coordKey
+        );
+        if (tesoreriaMovementId) {
+          await client.execute({
+            sql: "UPDATE commercial_events_outbox SET tesoreria_movement_id = ? WHERE idempotency_key = ?;",
+            args: [tesoreriaMovementId, coordKey],
+          });
+        }
+      }
+    }
   } catch (err) {
     if (tesoreriaActiva && plataformaOrigen === "PREPAY" && !servicio._keep_orphan_reservation) {
       await cancelarPreReservaPrepayWorker(client, {
@@ -988,87 +1309,6 @@ export async function registrarCargaIdempotente(client, { servicio, usuario, ide
       }).catch(() => {});
     }
     throw err;
-  }
-
-  let tesoreriaMovementId = null;
-  if (tesoreriaActiva && plataformaOrigen === "PREPAY") {
-    await confirmarPreReservaComercialWorker(client, {
-      idempotencyKey: coordKey,
-      cargaId,
-      servicio: tipo,
-      plataformaOrigen,
-      servicioDestino: servicioDestino || tipo,
-      montoCarga,
-      montoAdicional,
-      totalCobrado,
-      pagoEfvo,
-      pagoTransf,
-      fechaOp: fechaOpJujuy,
-      usuario: usuario || "sistema",
-    });
-    if (!servicio._simulate_interrupt_after_commercial_commit) {
-      const applied = await aplicarLiquidacionPrepayOutboxWorker(client, {
-        idempotencyKey: coordKey,
-        usuario: usuario || "sistema",
-        simulateOutboxError: Boolean(servicio._simulate_outbox_error),
-      });
-      tesoreriaMovementId = applied?.primary_movement_id || null;
-    }
-  } else if (tesoreriaActiva && plataformaOrigen) {
-    tesoreriaMovementId = await ejecutarCircuitoServicioTesoreriaWorker(
-      client,
-      {
-        cargaId,
-        plataformaOrigen,
-        servicioDestino: servicioDestino || tipo,
-        montoCarga,
-        montoAdicional,
-        pagoEfvo,
-        pagoTransf,
-        fechaOp: fechaOpJujuy,
-      },
-      usuario || "sistema",
-      coordKey
-    );
-  }
-
-  await client
-    .execute({
-      sql: `INSERT INTO cargas_servicios_auditoria (carga_id, accion, valores_nuevos, fecha_utc, actor)
-          VALUES (?, 'CREAR', ?, ?, ?);`,
-      args: [cargaId, JSON.stringify(servicio), nowUtc, usuario || "sistema"],
-    })
-    .catch(() => {});
-
-  if (!(tesoreriaActiva && plataformaOrigen === "PREPAY")) {
-    await client
-      .execute({
-        sql: `INSERT OR IGNORE INTO commercial_events_outbox (
-                event_id, event_type, entity_type, entity_id, action_type,
-                idempotency_key, payload_canonical_hash, payload, status,
-                tesoreria_movement_id, created_at, updated_at, published_at
-              ) VALUES (?, 'SERVICE_CREATED', 'SERVICE_LOAD', ?, 'CREATE', ?, ?, ?, 'PUBLISHED', ?, ?, ?, ?);`,
-        args: [
-          crypto.randomUUID(),
-          String(cargaId),
-          coordKey,
-          `HASH_SRV_${cargaId}`,
-          JSON.stringify({
-            id: cargaId,
-            servicio: tipo,
-            plataforma_origen: plataformaOrigen,
-            servicio_destino: servicioDestino,
-            monto_carga: montoCarga,
-            monto_adicional: montoAdicional,
-            total_cobrado: totalCobrado,
-          }),
-          tesoreriaMovementId,
-          nowUtc,
-          nowUtc,
-          nowUtc,
-        ],
-      })
-      .catch(() => {});
   }
 
   return mapearFilaServicio(
@@ -1295,6 +1535,34 @@ export async function editarCargaServicio(client, cargaId, datos, usuario) {
     servicioFinal = matchDest;
   }
 
+  const outboxStmt = enqueueOutboxStatement({
+    eventType: "SERVICE_ADJUSTED",
+    entityType: "SERVICIO",
+    entityId: cargaId,
+    actionType: "ADJUST",
+    idempotencyKey: `COMM_SERVICE_${cargaId}_ADJUST_${Date.now()}`,
+    payload: {
+      servicio_id: cargaId,
+      servicio: servicioFinal,
+      old_monto_carga_cents: Math.round(Number(actual.monto_carga || 0) * 100),
+      old_monto_adicional_cents: Math.round(Number(actual.monto_adicional || 0) * 100),
+      old_total_cobrado_cents: Math.round(Number(actual.total_cobrado || 0) * 100),
+      old_pago_efectivo_cents: Math.round(Number(actual.pago_efvo || 0) * 100),
+      old_pago_transferencia_cents: Math.round(Number(actual.pago_transf || 0) * 100),
+      monto_carga_cents: Math.round(nuevoMontoCarga * 100),
+      monto_adicional_cents: Math.round(nuevoAdicional * 100),
+      total_cobrado_cents: Math.round(nuevoTotal * 100),
+      pago_efectivo_cents: Math.round(nuevoEfvo * 100),
+      pago_transferencia_cents: Math.round(nuevoTransf * 100),
+      plataforma_origen: nuevaPlat,
+      servicio_destino: nuevoDest,
+      actor: usuario || "sistema",
+      reference_action: "CONFIRM",
+      reference_idempotency_key: `COMM_SERVICE_${cargaId}_CONFIRM`,
+    },
+    createdAt: nowUtc,
+  });
+
   await client.batch([
     {
       sql: `UPDATE cargas_servicios
@@ -1306,7 +1574,8 @@ export async function editarCargaServicio(client, cargaId, datos, usuario) {
       sql: `INSERT INTO cargas_servicios_auditoria (carga_id, accion, valores_anteriores, valores_nuevos, fecha_utc, actor)
             VALUES (?, 'EDITAR', ?, ?, ?, ?);`,
       args: [cargaId, JSON.stringify(actual), JSON.stringify(datos), nowUtc, usuario || "sistema"],
-    }
+    },
+    outboxStmt,
   ], "write");
 
   return obtenerCargaPorId(client, cargaId);
@@ -1314,6 +1583,22 @@ export async function editarCargaServicio(client, cargaId, datos, usuario) {
 
 export async function anularCargaServicio(client, cargaId, usuario, motivo) {
   const nowUtc = new Date().toISOString();
+  const outboxStmt = enqueueOutboxStatement({
+    eventType: "SERVICE_VOIDED",
+    entityType: "SERVICIO",
+    entityId: cargaId,
+    actionType: "VOID",
+    idempotencyKey: `COMM_SERVICE_${cargaId}_VOID`,
+    payload: {
+      servicio_id: cargaId,
+      motivo,
+      actor: usuario || "sistema",
+      reference_action: "CONFIRM",
+      reference_idempotency_key: `COMM_SERVICE_${cargaId}_CONFIRM`,
+    },
+    createdAt: nowUtc,
+  });
+
   await client.batch([
     {
       sql: "UPDATE cargas_servicios SET anulado = 1 WHERE id = ?;",
@@ -1323,7 +1608,8 @@ export async function anularCargaServicio(client, cargaId, usuario, motivo) {
       sql: `INSERT INTO cargas_servicios_auditoria (carga_id, accion, valores_nuevos, fecha_utc, actor)
             VALUES (?, 'ANULAR', ?, ?, ?);`,
       args: [cargaId, JSON.stringify({ motivo }), nowUtc, usuario || "sistema"],
-    }
+    },
+    outboxStmt,
   ], "write");
   return { id: cargaId, anulado: true, motivo };
 }
@@ -1391,35 +1677,71 @@ export async function registrarGastoIdempotente(client, { gasto, usuario, idempo
     }
   }
 
-  const res = await client.execute({
-    sql: `INSERT INTO gastos_retiros (fecha_hora_utc, tipo, detalle, monto_salida, origen_fondos, metodo_pago, anulado, idempotency_key)
-          VALUES (?, ?, ?, ?, ?, ?, 0, ?);`,
-    args: [nowUtc, cat, concepto, monto, origenFondos, metodo, key],
+  const effectiveKey = key || `EXP_${typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `g_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`}`;
+  const eventId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `evt_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+  const batchStatements = [
+    {
+      sql: `INSERT INTO gastos_retiros (fecha_hora_utc, tipo, detalle, monto_salida, origen_fondos, metodo_pago, anulado, idempotency_key)
+            VALUES (?, ?, ?, ?, ?, ?, 0, ?);`,
+      args: [nowUtc, cat, concepto, monto, origenFondos, metodo, effectiveKey],
+    },
+    {
+      sql: `INSERT INTO gastos_auditoria (gasto_id, accion, valores_nuevos, fecha_utc, actor)
+            VALUES ((SELECT id FROM gastos_retiros WHERE idempotency_key = ?), 'CREAR', ?, ?, ?);`,
+      args: [
+        effectiveKey,
+        JSON.stringify({ tipo: cat, detalle: concepto, monto_salida: monto, origen_fondos: origenFondos, metodo_pago: metodo }),
+        nowUtc,
+        usuario || "sistema",
+      ],
+    },
+    {
+      sql: `INSERT OR IGNORE INTO commercial_events_outbox (
+              event_id, event_type, entity_type, entity_id, action_type,
+              idempotency_key, payload_canonical_hash, payload, status,
+              retry_count, max_retries, created_at, updated_at
+            ) VALUES (
+              ?, 'EXPENSE_CONFIRMED', 'GASTO',
+              (SELECT CAST(id AS TEXT) FROM gastos_retiros WHERE idempotency_key = ?),
+              'CONFIRM',
+              ?,
+              'cf_hash',
+              json_set(?, '$.gasto_id', (SELECT id FROM gastos_retiros WHERE idempotency_key = ?)),
+              'PENDING', 0, 5, ?, ?
+            );`,
+      args: [
+        eventId,
+        effectiveKey,
+        `COMM_EXPENSE_${effectiveKey}_CONFIRM`,
+        JSON.stringify({
+          tipo: cat,
+          categoria: cat,
+          detalle: concepto,
+          monto_salida_cents: Math.round(monto * 100),
+          origen_fondos: origenFondos,
+          metodo_pago: metodo,
+          usuario: usuario || "sistema",
+          fecha_hora_utc: nowUtc,
+          commercial_idempotency_key: effectiveKey,
+        }),
+        effectiveKey,
+        nowUtc,
+        nowUtc,
+      ],
+    },
+  ];
+
+  await client.batch(batchStatements, "write");
+
+  const selectRes = await client.execute({
+    sql: "SELECT * FROM gastos_retiros WHERE idempotency_key = ?;",
+    args: [effectiveKey],
   });
-  const gastoId = Number(res.lastInsertRowid) || 1;
+  const row = selectRes.rows[0];
 
-  await client.execute({
-    sql: `INSERT INTO gastos_auditoria (gasto_id, accion, valores_nuevos, fecha_utc, actor)
-          VALUES (?, 'CREAR', ?, ?, ?);`,
-    args: [gastoId, JSON.stringify({ tipo: cat, detalle: concepto, monto_salida: monto, origen_fondos: origenFondos, metodo_pago: metodo }), nowUtc, usuario || "sistema"],
-  }).catch(() => {});
-
-  const creado = await obtenerGastoPorId(client, gastoId);
   return {
-    ...(creado || {
-      id: gastoId,
-      fecha_hora_utc: nowUtc,
-      tipo: cat,
-      categoria: cat,
-      detalle: concepto,
-      concepto,
-      monto_salida: monto,
-      monto,
-      origen_fondos: origenFondos,
-      metodo_pago: metodo,
-      anulado: false,
-      idempotency_key: key,
-    }),
+    ...mapearFilaGasto(row),
     status: "registrado",
   };
 }
@@ -1579,6 +1901,21 @@ export async function editarGasto(client, gastoId, datos, usuario) {
 
 export async function anularGasto(client, gastoId, usuario, motivo) {
   const nowUtc = new Date().toISOString();
+  const outboxStmt = enqueueOutboxStatement({
+    eventType: "EXPENSE_VOIDED",
+    entityType: "GASTO",
+    entityId: gastoId,
+    actionType: "VOID",
+    idempotencyKey: `COMM_EXPENSE_${gastoId}_VOID`,
+    payload: {
+      gasto_id: gastoId,
+      motivo,
+      usuario: usuario || "sistema",
+      reference_action: "CONFIRM",
+      reference_idempotency_key: `COMM_EXPENSE_${gastoId}_CONFIRM`,
+    },
+    createdAt: nowUtc,
+  });
   await client.batch([
     {
       sql: "UPDATE gastos_retiros SET anulado = 1 WHERE id = ?;",
@@ -1588,7 +1925,8 @@ export async function anularGasto(client, gastoId, usuario, motivo) {
       sql: `INSERT INTO gastos_auditoria (gasto_id, accion, valores_nuevos, fecha_utc, actor)
             VALUES (?, 'ANULAR', ?, ?, ?);`,
       args: [gastoId, JSON.stringify({ motivo }), nowUtc, usuario || "sistema"],
-    }
+    },
+    outboxStmt,
   ], "write");
   return { id: gastoId, anulado: true, motivo };
 }
@@ -3414,6 +3752,8 @@ export async function obtenerSaldosInicialesWorker(client) {
   let totalDigitalesCents = 0;
   let totalActualFisicosCents = 0;
   let totalActualDigitalesCents = 0;
+  let conteoAbiertos = 0;
+  let conteoPendientes = 0;
 
   for (const row of resFondos.rows) {
     const cod = String(row.codigo);
@@ -3427,6 +3767,18 @@ export async function obtenerSaldosInicialesWorker(client) {
     } catch {}
     const sInit = Number(row.saldo_inicial_cents ?? 0);
     const sAct = Number(row.saldo_centavos ?? 0);
+    const rawConf = String(row.estado_configuracion || "");
+    const isOpen = (rawConf === "CONFIGURADO" || (sInit > 0 && row.saldo_inicial_configurado_en));
+    const estadoApertura = isOpen ? "OPENED" : "PENDING_OPENING";
+    if (estadoApertura === "OPENED") {
+      conteoAbiertos++;
+    } else {
+      conteoPendientes++;
+    }
+    const subestado = (estadoApertura === "OPENED")
+      ? "CONFIRMADO"
+      : (tieneMovs ? "MOVIMIENTOS_POSTERIORES_REGISTRADOS" : "SIN_MOVIMIENTOS");
+
     const item = {
       codigo: cod,
       nombre: String(row.nombre),
@@ -3435,12 +3787,15 @@ export async function obtenerSaldosInicialesWorker(client) {
       saldo_actual_cents: sAct,
       saldo_inicial_formateado: formatMoneyWorker(sInit),
       saldo_actual_formateado: formatMoneyWorker(sAct),
+      estado_apertura: estadoApertura,
+      subestado_apertura: subestado,
+      disponibilidad_confirmada: (estadoApertura === "OPENED"),
       configurado_en: row.saldo_inicial_configurado_en || null,
       configurado_por: row.saldo_inicial_configurado_por || null,
-      estado_configuracion: row.estado_configuracion || "INICIAL_CERO",
+      estado_configuracion: row.estado_configuracion || (isOpen ? "CONFIGURADO" : "INICIAL_CERO"),
       tiene_movimientos: tieneMovs,
-      puede_editar_apertura: !tieneMovs,
-      editable: !tieneMovs,
+      puede_editar_apertura: !tieneMovs || isOpen,
+      editable: !tieneMovs || isOpen,
     };
     if (item.categoria === "FONDO_FISICO") {
       fondosFisicos.push(item);
@@ -3478,6 +3833,10 @@ export async function obtenerSaldosInicialesWorker(client) {
         }
       } catch {}
     }
+    const rawConf = String(row.estado_configuracion || "");
+    const isOpen = (rawConf === "CONFIGURADO" || (sInit > 0 && row.configurado_en));
+    const estadoApertura = isOpen ? "OPENED" : "PENDING_OPENING";
+
     obligaciones.push({
       codigo: cod,
       nombre: String(row.nombre),
@@ -3486,16 +3845,20 @@ export async function obtenerSaldosInicialesWorker(client) {
       saldo_actual_cents: sAct,
       saldo_inicial_formateado: formatMoneyWorker(sInit),
       saldo_actual_formateado: formatMoneyWorker(sAct),
+      estado_apertura: estadoApertura,
+      disponibilidad_confirmada: (estadoApertura === "OPENED"),
       configurado_en: row.configurado_en || null,
       configurado_por: row.configurado_por || null,
-      estado_configuracion: row.estado_configuracion || "INICIAL_CERO",
+      estado_configuracion: row.estado_configuracion || (isOpen ? "CONFIGURADO" : "INICIAL_CERO"),
       tiene_movimientos: tieneMovs,
-      puede_editar_apertura: !tieneMovs,
-      editable: !tieneMovs,
+      puede_editar_apertura: !tieneMovs || isOpen,
+      editable: !tieneMovs || isOpen,
     });
     totalObligacionesCents += sInit;
     totalActualObligacionesCents += sAct;
   }
+
+  const aperturaCompleta = (conteoPendientes === 0);
 
   return {
     fondos_fisicos: fondosFisicos,
@@ -3507,6 +3870,10 @@ export async function obtenerSaldosInicialesWorker(client) {
     total_actual_fondos_fisicos_cents: totalActualFisicosCents,
     total_actual_cuentas_digitales_cents: totalActualDigitalesCents,
     total_actual_obligaciones_cents: totalActualObligacionesCents,
+    conteo_abiertos: conteoAbiertos,
+    conteo_pendientes: conteoPendientes,
+    apertura_completa: aperturaCompleta,
+    estado_general_apertura: aperturaCompleta ? "COMPLETO" : "DIFERIDO_PENDIENTE",
   };
 }
 

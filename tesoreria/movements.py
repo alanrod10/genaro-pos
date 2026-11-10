@@ -14,6 +14,7 @@ import sqlite3
 from typing import Any, Dict, List, Optional
 import uuid
 
+from tesoreria.aperturas import ErrorAperturaPendiente
 from tesoreria.catalog import obtener_fondo_por_codigo
 from tesoreria.idempotency import (
     ErrorIdempotencia,

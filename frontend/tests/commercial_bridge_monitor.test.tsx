@@ -227,11 +227,13 @@ describe("ETAPA 5 — Frontend: Commercial Bridge Monitor & Sync Indicator", () 
     // Forzar sincronización
     fireEvent.click(screen.getByTestId("btn-forzar-drenaje"));
     expect(TesoreriaService.triggerCommercialBridgeDrain).toHaveBeenCalled();
+    await screen.findByText("Ciclo completado con éxito");
 
     // Reprocesar evento evt-002
     const btnReprocesar = screen.getByTestId("btn-reprocesar-evt-002");
     expect(btnReprocesar).toBeInTheDocument();
     fireEvent.click(btnReprocesar);
     expect(TesoreriaService.reprocessCommercialEvent).toHaveBeenCalledWith("evt-002");
+    await screen.findByText(/Evento evt-002 reprocesado con éxito/i);
   });
 });

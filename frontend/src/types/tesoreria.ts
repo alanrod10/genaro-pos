@@ -572,6 +572,10 @@ export interface EstadoCuentaDavidResponse {
   total_deuda_historica_formatted: string;
   saldo_disponible_1130_cents: number;
   saldo_disponible_1130_formatted: string;
+  saldo_disponible_1220_cents?: number;
+  saldo_disponible_1220_formatted?: string;
+  capital_consumido_recargas_cents?: number;
+  capital_consumido_recargas_formatted?: string;
   fecha_corte?: string | null;
   cantidad_movimientos: number;
   movimientos: MovimientoCCDavid[];
@@ -597,6 +601,102 @@ export interface ReconocimientoDeudaHistoricaPayload {
   motivo: string;
   referencia_externa?: string;
   confirmacion_explicita: boolean;
+}
+
+// ============================================================================
+// CUENTA CORRIENTE CLARO COMERCIOS / EZEQUIEL Y FONDEOS PENDIENTES
+// ============================================================================
+
+export interface MovimientoCCEzequiel {
+  id: number;
+  operation_id: string;
+  idempotency_key: string;
+  tipo_movimiento: "ACREDITACION_SALDO" | "PAGO_LIQUIDACION" | "RECONOCIMIENTO_DEUDA_HISTORICA";
+  monto_cents: number;
+  monto_formatted: string;
+  fecha_referencia: string;
+  recorded_at_utc: string;
+  movement_id?: string | null;
+  fondo_afectado?: string | null;
+  referencia_externa?: string | null;
+  motivo: string;
+  actor: string;
+  jornada_id?: number | null;
+  detalle_liquidacion?: {
+    monto_1150_cents: number;
+    monto_drugstore_cents: number;
+    fondo_drugstore?: string | null;
+    monto_transferencia_cents: number;
+    total_cents: number;
+    movements: string[];
+  } | null;
+  created_at: string;
+  saldo_obligacion_resultante_cents: number;
+  saldo_obligacion_resultante_formatted: string;
+}
+
+export interface EstadoCuentaEzequielResponse {
+  obligacion_pendiente_cents: number;
+  obligacion_pendiente_formatted: string;
+  total_acreditaciones_cents: number;
+  total_acreditaciones_formatted: string;
+  total_pagos_cents: number;
+  total_pagos_formatted: string;
+  total_deuda_historica_cents: number;
+  total_deuda_historica_formatted: string;
+  saldo_disponible_1150_cents: number;
+  saldo_disponible_1150_formatted: string;
+  saldo_disponible_1230_cents: number;
+  saldo_disponible_1230_formatted: string;
+  saldo_disponible_1110_cents: number;
+  saldo_disponible_1110_formatted: string;
+  saldo_disponible_1120_cents: number;
+  saldo_disponible_1120_formatted: string;
+  fecha_corte?: string | null;
+  cantidad_movimientos: number;
+  movimientos: MovimientoCCEzequiel[];
+}
+
+export interface AcreditacionEzequielPayload {
+  monto_centavos: number;
+  referencia: string;
+  motivo?: string;
+  fecha_referencia?: string;
+}
+
+export interface LiquidacionEzequielPayload {
+  monto_1150_cents?: number;
+  monto_drugstore_cents?: number;
+  fondo_drugstore?: string;
+  monto_transferencia_cents?: number;
+  referencia: string;
+  motivo?: string;
+  fecha_referencia?: string;
+}
+
+export interface ReconocimientoDeudaHistoricaEzequielPayload {
+  monto_centavos: number;
+  fecha_referencia: string;
+  motivo: string;
+  referencia_externa?: string;
+  confirmacion_explicita: boolean;
+}
+
+export interface FondeoPendienteItem {
+  id: number;
+  tipo_circuito: "CLARO" | "PREPAY";
+  servicio_id: number;
+  idempotency_key: string;
+  monto_capital_cents: number;
+  monto_capital_formatted: string;
+  fondo_origen_esperado: string;
+  fondo_destino_custodia: string;
+  estado: "PENDIENTE" | "FONDEADO" | "CANCELADO";
+  movement_id_traslado?: string | null;
+  actor: string;
+  created_at_utc: string;
+  funded_at_utc?: string | null;
+  observaciones?: string | null;
 }
 
 // ============================================================================
@@ -682,15 +782,32 @@ export interface ReponerAnticipoPreventistaPayload {
 // --- APERTURAS Y SALDOS INICIALES (Saldos en $0 y Configuración Auditada) ---
 // ==========================================
 
+export type EstadoApertura =
+  | "NOT_CONFIGURED"
+  | "PENDING_OPENING"
+  | "OPENED"
+  | "RECONCILIATION_REQUIRED"
+  | "BLOCKED";
+
 export interface SaldoInicialItem {
   codigo: string;
   nombre: string;
   categoria: "FONDO_FISICO" | "CUENTA_DIGITAL" | "OBLIGACION";
+  naturaleza?: string;
   saldo_inicial_cents: number;
   saldo_actual_cents: number;
+  estado_apertura?: EstadoApertura;
+  subestado_apertura?: "SIN_MOVIMIENTOS" | "MOVIMIENTOS_POSTERIORES_REGISTRADOS" | "CONFIRMADO";
+  disponibilidad_confirmada?: boolean;
+  fecha_corte?: string | null;
+  naturaleza_saldo?: string | null;
+  observaciones?: string | null;
+  comprobante?: string | null;
   configurado_en: string | null;
   configurado_por: string | null;
-  estado_configuracion: "INICIAL_CERO" | "CONFIGURADO";
+  estado_configuracion: "INICIAL_CERO" | "CONFIGURADO" | string;
+  tiene_movimientos?: boolean;
+  puede_editar_apertura?: boolean;
   editable: boolean;
 }
 
@@ -701,6 +818,10 @@ export interface SaldosInicialesResponse {
   total_fondos_fisicos_cents: number;
   total_cuentas_digitales_cents: number;
   total_obligaciones_cents: number;
+  conteo_abiertos?: number;
+  conteo_pendientes?: number;
+  apertura_completa?: boolean;
+  estado_general_apertura?: "COMPLETO" | "DIFERIDO_PENDIENTE" | string;
 }
 
 export interface ModificarSaldoInicialPayload {
@@ -708,6 +829,11 @@ export interface ModificarSaldoInicialPayload {
   saldo_nuevo_cents: number;
   motivo: string;
   referencia_autorizacion?: string | null;
+  fecha_corte?: string | null;
+  naturaleza_saldo?: string | null;
+  comprobante?: string | null;
+  idempotency_key?: string | null;
+  tipo_operacion?: "APERTURA_INICIAL" | "AJUSTE_COMPENSATORIO" | string;
 }
 
 export interface AuditoriaSaldoInicialItem {
@@ -723,6 +849,11 @@ export interface AuditoriaSaldoInicialItem {
   referencia_autorizacion: string | null;
   jornada_id?: number | null;
   es_apertura_inicial: boolean;
+  fecha_corte?: string | null;
+  naturaleza_saldo?: string | null;
+  idempotency_key?: string | null;
+  tipo_operacion?: string;
+  estado_apertura?: string;
 }
 
 

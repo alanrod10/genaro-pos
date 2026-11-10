@@ -164,9 +164,7 @@ def obtener_catalogo_fondos(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, codigo, nombre, naturaleza, titularidad, moneda, estado,
-               saldo_centavos, permite_sobregiro, version, created_at, updated_at,
-               creado_por, actualizado_por
+        SELECT *
         FROM tesoreria_fondos
         ORDER BY codigo ASC
         """
@@ -196,9 +194,7 @@ def obtener_fondo_por_codigo(conn: sqlite3.Connection, codigo: str) -> Optional[
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT id, codigo, nombre, naturaleza, titularidad, moneda, estado,
-               saldo_centavos, permite_sobregiro, version, created_at, updated_at,
-               creado_por, actualizado_por
+        SELECT *
         FROM tesoreria_fondos
         WHERE codigo = ?
         """,

@@ -747,11 +747,12 @@ def test_escenario_30_31_32_33_34_35_prepay_transferencia_compensacion(env_fase2
     # 2. 1220 descuenta capital ($500) y fee ($350) = $850 descontados -> queda $1150
     assert tes_conn.execute("SELECT saldo_centavos FROM tesoreria_fondos WHERE codigo = '1220';").fetchone()[0] == 1150_00
 
-    # 3. 1120 compensa capital hacia 1130: 1500 - 500 = 1000
+    # 3. 1120 compensa capital hacia 1160 (Prepay Diario): 1500 - 500 = 1000
     assert tes_conn.execute("SELECT saldo_centavos FROM tesoreria_fondos WHERE codigo = '1120';").fetchone()[0] == 1000_00
 
-    # 4. 1130 recibe el efectivo compensado ($500)
-    assert tes_conn.execute("SELECT saldo_centavos FROM tesoreria_fondos WHERE codigo = '1130';").fetchone()[0] == 500_00
+    # 4. 1160 (Prepay Diario) recibe el efectivo compensado ($500) según regla canónica V4
+    assert tes_conn.execute("SELECT saldo_centavos FROM tesoreria_fondos WHERE codigo = '1160';").fetchone()[0] == 500_00
+    assert tes_conn.execute("SELECT saldo_centavos FROM tesoreria_fondos WHERE codigo = '1130';").fetchone()[0] == 0
 
     # 5. 1140 NO recibe efectivo ficticio (saldo = 0)
     assert tes_conn.execute("SELECT saldo_centavos FROM tesoreria_fondos WHERE codigo = '1140';").fetchone()[0] == 0

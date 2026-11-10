@@ -70,7 +70,7 @@ def ejecutar_apertura_dia_d(
             raise ErrorDiaD(f"Código de fondo desconocido o no canónico: {cod}")
 
     # 2. Control de no negatividad para fondos físicos
-    fondos_fisicos = {"1110", "1120", "1130", "1140", "1150"}
+    fondos_fisicos = {"1110", "1120", "1130", "1140", "1150", "1160"}
     for cod, monto in saldos_iniciales_cents.items():
         if cod in fondos_fisicos and monto < 0:
             raise ErrorDiaD(f"Prohibido saldo físico negativo en fondo {cod}: {monto}")

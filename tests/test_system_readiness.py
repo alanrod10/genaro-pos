@@ -123,7 +123,7 @@ def test_readiness_detecta_base_incompleta_solo_001_a_003():
     assert diag["status"] == "MIGRACIONES_PENDIENTES"
     assert diag["listo"] is False
     assert diag["versiones_aplicadas"] == [1, 2, 3]
-    assert diag["migraciones_pendientes"] == [4, 5, 6, 7, 8, 9, 10, 11]
+    assert diag["migraciones_pendientes"] == [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
     assert "productos_auditoria" in diag["tablas_faltantes"]
     assert "cargas_servicios_auditoria" in diag["tablas_faltantes"]
     assert "ventas_auditoria" in diag["tablas_faltantes"]
@@ -145,7 +145,7 @@ def test_readiness_detecta_base_incompleta_solo_001_a_007():
     assert diag["status"] == "MIGRACIONES_PENDIENTES"
     assert diag["listo"] is False
     assert diag["versiones_aplicadas"] == [1, 2, 3, 4, 5, 6, 7]
-    assert diag["migraciones_pendientes"] == [8, 9, 10, 11]
+    assert diag["migraciones_pendientes"] == [8, 9, 10, 11, 12, 13, 14]
     assert "pedidos_proveedor" in diag["tablas_faltantes"]
     assert "auth_scram_challenges" in diag["tablas_faltantes"]
     assert "ticket_items.costo_unitario" in diag["columnas_faltantes"]

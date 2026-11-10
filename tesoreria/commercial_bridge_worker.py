@@ -120,11 +120,17 @@ def process_single_commercial_event(
     elif event_type in ("SALE_VOIDED", "SALE_CANCELLED"):
         return _handle_sale_voided(tes_conn, event, payload)
 
+    elif event_type in ("SALE_ADJUSTED", "SALE_UPDATED"):
+        return _handle_sale_adjusted(tes_conn, event, payload)
+
     elif event_type in ("SERVICE_CONFIRMED", "SERVICE_INSERTED"):
         return _handle_service_confirmed(tes_conn, event, payload, comm_conn=comm_conn)
 
     elif event_type in ("SERVICE_VOIDED", "SERVICE_CANCELLED"):
         return _handle_service_voided(tes_conn, event, payload)
+
+    elif event_type in ("SERVICE_ADJUSTED", "SERVICE_UPDATED"):
+        return _handle_service_adjusted(tes_conn, event, payload, comm_conn=comm_conn)
 
     elif event_type in ("EXPENSE_CONFIRMED", "EXPENSE_INSERTED"):
         return _handle_expense_confirmed(tes_conn, event, payload)
@@ -414,54 +420,64 @@ def _handle_service_confirmed(
                 )
                 return f"PENDING_DEFINITION_MERCADO_PAGO_PREPAY_{servicio_id}"
 
-            elif dest_upper == "CLARO":
-                # Claro en custodia
-                if pago_efvo > 0:
-                    res_claro = registerEntry(
-                        conn=tes_conn,
-                        fund_code="1150",
-                        amount_cents=pago_efvo,
-                        counterpart="RECAUDACION_TERCEROS_CLARO",
-                        reason=f"Cobro Claro en efectivo custodia #{servicio_id}",
-                        created_by=actor,
-                        terminal_id="TERM-POS-01",
-                        idempotency_key=f"{event['idempotency_key']}_CLARO_CUSTODIA_ENTRY",
-                        evidence_reference=f"CLARO_{servicio_id}",
-                        occurred_at=fecha_utc,
-                    )
-                    movements.append(res_claro["movement_id"])
-
-                if pago_transf > 0:
-                    res_gen_transf = registerEntry(
+            else:
+                # ============================================================
+                # AISLAMIENTO ESTRICTO DE RECARGAS DESDE MERCADO PAGO (1210)
+                # Destinos: CLARO, PERSONAL, MOVISTAR, etc.
+                # • Disminuye saldo digital propio en 1210
+                # • Efectivo capital ingresa a Drugstore Diario (1110)
+                # • Efectivo adicional ingresa a Adicionales (1140)
+                # • Transferencia permanece dentro de 1210
+                # • Jamás toca 1220, 1230, 1160, 1130 ni 1150 (sin afectar David ni Ezequiel)
+                # ============================================================
+                if monto_carga > 0:
+                    res_debito_mp = registerExit(
                         conn=tes_conn,
                         fund_code="1210",
-                        amount_cents=pago_transf,
-                        counterpart="SERVICIO_CLARO_DIGITAL",
-                        reason=f"Cobro digital servicio CLARO #{servicio_id}",
+                        amount_cents=monto_carga,
+                        counterpart="MP_RECARGA_CAPITAL_DEBIT",
+                        reason=f"Consumo saldo Mercado Pago recarga {dest_upper} #{servicio_id}",
                         created_by=actor,
                         terminal_id="TERM-POS-01",
-                        idempotency_key=f"{event['idempotency_key']}_GEN_DIGITAL_ENTRY",
-                        evidence_reference=f"SRV_{servicio_id}",
+                        idempotency_key=f"{event['idempotency_key']}_MP_CAPITAL_EXIT",
+                        evidence_reference=f"MP_SRV_{servicio_id}",
                         occurred_at=fecha_utc,
                     )
-                    movements.append(res_gen_transf["movement_id"])
+                    movements.append(res_debito_mp["movement_id"])
 
-            else:
-                # Otros destinos bajo Mercado Pago (Personal, Movistar)
                 if pago_efvo > 0:
-                    res_gen_efvo = registerEntry(
-                        conn=tes_conn,
-                        fund_code="1110",
-                        amount_cents=pago_efvo,
-                        counterpart=f"SERVICIO_{dest_upper}_EFECTIVO",
-                        reason=f"Cobro servicio {dest_upper} #{servicio_id}",
-                        created_by=actor,
-                        terminal_id="TERM-POS-01",
-                        idempotency_key=f"{event['idempotency_key']}_GEN_CASH_ENTRY",
-                        evidence_reference=f"SRV_{servicio_id}",
-                        occurred_at=fecha_utc,
-                    )
-                    movements.append(res_gen_efvo["movement_id"])
+                    cap_efvo = min(monto_carga, pago_efvo) if monto_carga > 0 else pago_efvo
+                    adic_efvo = monto_adicional if monto_adicional > 0 else max(0, pago_efvo - cap_efvo)
+
+                    if cap_efvo > 0:
+                        res_cap_efvo = registerEntry(
+                            conn=tes_conn,
+                            fund_code="1110",
+                            amount_cents=cap_efvo,
+                            counterpart=f"MP_SERVICIO_{dest_upper}_CAPITAL_EFECTIVO",
+                            reason=f"Cobro capital recarga {dest_upper} vía Mercado Pago #{servicio_id} en cajón",
+                            created_by=actor,
+                            terminal_id="TERM-POS-01",
+                            idempotency_key=f"{event['idempotency_key']}_MP_CASH_CAP_ENTRY",
+                            evidence_reference=f"SRV_{servicio_id}",
+                            occurred_at=fecha_utc,
+                        )
+                        movements.append(res_cap_efvo["movement_id"])
+
+                    if adic_efvo > 0:
+                        res_adic_efvo = registerEntry(
+                            conn=tes_conn,
+                            fund_code="1140",
+                            amount_cents=adic_efvo,
+                            counterpart="SERVICIO_ADICIONAL_EFECTIVO",
+                            reason=f"Cobro adicional recarga {dest_upper} vía Mercado Pago #{servicio_id}",
+                            created_by=actor,
+                            terminal_id="TERM-POS-01",
+                            idempotency_key=f"{event['idempotency_key']}_MP_CASH_ADIC_ENTRY",
+                            evidence_reference=f"SRV_{servicio_id}",
+                            occurred_at=fecha_utc,
+                        )
+                        movements.append(res_adic_efvo["movement_id"])
 
                 if pago_transf > 0:
                     res_gen_transf = registerEntry(
@@ -469,7 +485,7 @@ def _handle_service_confirmed(
                         fund_code="1210",
                         amount_cents=pago_transf,
                         counterpart=f"SERVICIO_{dest_upper}_DIGITAL",
-                        reason=f"Cobro digital servicio {dest_upper} #{servicio_id}",
+                        reason=f"Cobro digital servicio {dest_upper} vía Mercado Pago #{servicio_id}",
                         created_by=actor,
                         terminal_id="TERM-POS-01",
                         idempotency_key=f"{event['idempotency_key']}_GEN_DIGITAL_ENTRY",
@@ -610,28 +626,69 @@ def _handle_service_confirmed(
         # CASO 3: PLATAFORMA CLARO COMERCIOS
         # --------------------------------------------------------------------
         elif plat == "CLARO COMERCIOS":
-            # Destino es Claro en custodia (1150)
-            if pago_efvo > 0:
-                res_claro = registerEntry(
+            # Consumo de saldo digital 1230 si hay saldo disponible
+            cur_1230 = tes_conn.cursor()
+            cur_1230.execute("SELECT saldo_centavos FROM tesoreria_fondos WHERE codigo = '1230' AND estado = 'ACTIVO';")
+            row_1230 = cur_1230.fetchone()
+            cur_1230.close()
+            saldo_1230 = row_1230[0] if row_1230 else 0
+            if saldo_1230 >= monto_carga and monto_carga > 0:
+                res_debito_1230 = registerExit(
                     conn=tes_conn,
-                    fund_code="1150",
-                    amount_cents=pago_efvo,
-                    counterpart="RECAUDACION_TERCEROS_CLARO",
-                    reason=f"Cobro Claro en efectivo custodia #{servicio_id}",
-                    created_by=actor,
+                    fund_code="1230",
+                    amount_cents=monto_carga,
+                    counterpart="CLARO_CAPITAL_DEBIT",
+                    reason=f"Consumo saldo digital Claro Comercios #{servicio_id}",
+                    performed_by=actor,
                     terminal_id="TERM-POS-01",
-                    idempotency_key=f"{event['idempotency_key']}_CLARO_CUSTODIA_ENTRY",
+                    idempotency_key=f"{event['idempotency_key']}_CLARO_1230_EXIT",
                     evidence_reference=f"CLARO_{servicio_id}",
                     occurred_at=fecha_utc,
                 )
-                movements.append(res_claro["movement_id"])
+                movements.append(res_debito_1230["movement_id"])
+
+            if pago_efvo > 0:
+                # Capital a 1150 Claro físico
+                capital_efvo = min(monto_carga, pago_efvo) if monto_carga > 0 else pago_efvo
+                if capital_efvo > 0:
+                    res_claro = registerEntry(
+                        conn=tes_conn,
+                        fund_code="1150",
+                        amount_cents=capital_efvo,
+                        counterpart="RECAUDACION_TERCEROS_CLARO",
+                        reason=f"Cobro Claro en efectivo custodia #{servicio_id}",
+                        created_by=actor,
+                        terminal_id="TERM-POS-01",
+                        idempotency_key=f"{event['idempotency_key']}_CLARO_CUSTODIA_ENTRY",
+                        evidence_reference=f"CLARO_{servicio_id}",
+                        occurred_at=fecha_utc,
+                    )
+                    movements.append(res_claro["movement_id"])
+
+                # Adicional a 1140
+                adicional_efvo = monto_adicional if monto_adicional > 0 else max(0, pago_efvo - capital_efvo)
+                if adicional_efvo > 0:
+                    res_adic = registerEntry(
+                        conn=tes_conn,
+                        fund_code="1140",
+                        amount_cents=adicional_efvo,
+                        counterpart="ADICIONAL_CLARO_EFECTIVO",
+                        reason=f"Cobro adicional servicio Claro #{servicio_id}",
+                        created_by=actor,
+                        terminal_id="TERM-POS-01",
+                        idempotency_key=f"{event['idempotency_key']}_CLARO_ADIC_ENTRY",
+                        evidence_reference=f"CLARO_{servicio_id}",
+                        occurred_at=fecha_utc,
+                    )
+                    movements.append(res_adic["movement_id"])
 
             if pago_transf > 0:
+                # Cobranza digital entra a 1210 Mercado Pago
                 res_gen_transf = registerEntry(
                     conn=tes_conn,
                     fund_code="1210",
                     amount_cents=pago_transf,
-                    counterpart="SERVICIO_CLARO_DIGITAL",
+                    counterpart="RECAUDACION_CLARO_TRANSFERENCIA",
                     reason=f"Cobro digital servicio CLARO #{servicio_id}",
                     created_by=actor,
                     terminal_id="TERM-POS-01",
@@ -640,6 +697,59 @@ def _handle_service_confirmed(
                     occurred_at=fecha_utc,
                 )
                 movements.append(res_gen_transf["movement_id"])
+
+                # Fondeo físico de custodia Claro (DEC-02) verificando disponibilidad y estado de apertura
+                cur_f = tes_conn.cursor()
+                cur_f.execute("SELECT codigo, saldo_centavos, estado_apertura FROM tesoreria_fondos WHERE codigo IN ('1110', '1120') AND estado = 'ACTIVO';")
+                fondos_drugstore = {r[0]: {"saldo": r[1], "apertura": r[2]} for r in cur_f.fetchall()}
+                cur_f.close()
+
+                f1110 = fondos_drugstore.get("1110", {})
+                f1120 = fondos_drugstore.get("1120", {})
+                disp_1110 = f1110.get("saldo", 0) if f1110.get("apertura") != "PENDING_OPENING" else 0
+                disp_1120 = f1120.get("saldo", 0) if f1120.get("apertura") != "PENDING_OPENING" else 0
+
+                origen_fondeo = None
+                if disp_1110 >= monto_carga and monto_carga > 0:
+                    origen_fondeo = "1110"
+                elif disp_1120 >= monto_carga and monto_carga > 0:
+                    origen_fondeo = "1120"
+
+                if origen_fondeo and monto_carga > 0:
+                    from tesoreria.transfers import transferFunds, confirmTransferReceipt
+                    res_trf = transferFunds(
+                        conn=tes_conn,
+                        origin_fund_code=origen_fondeo,
+                        destination_fund_code="1150",
+                        amount_cents=monto_carga,
+                        dispatched_by=actor,
+                        reason=f"Fondeo físico custodia Claro recarga #{servicio_id}",
+                        idempotency_key=f"{event['idempotency_key']}_CLARO_FONDEO_TRF",
+                        evidence_reference=f"SRV_{servicio_id}",
+                        context="FONDEO_CUSTODIA_CLARO",
+                        occurred_at=fecha_utc,
+                    )
+                    confirmTransferReceipt(
+                        conn=tes_conn,
+                        transfer_id=res_trf["transfer_id"],
+                        received_by=actor,
+                        idempotency_key=f"{event['idempotency_key']}_CLARO_FONDEO_CONF",
+                    )
+                    movements.append(f"TRANSFER_{res_trf['transfer_id']}")
+                elif monto_carga > 0:
+                    from tesoreria.cuenta_corriente_ezequiel import registrar_fondeo_pendiente
+                    registrar_fondeo_pendiente(
+                        conn=tes_conn,
+                        tipo_circuito="CLARO",
+                        servicio_id=int(servicio_id) if str(servicio_id).isdigit() else 0,
+                        monto_capital_cents=monto_carga,
+                        fondo_origen_esperado="1110",
+                        fondo_destino_custodia="1150",
+                        actor=actor,
+                        idempotency_key=f"FOND_PEND_CLARO_{event['idempotency_key']}",
+                        observaciones=f"Falta de efectivo transitoria o apertura pendiente en Drugstore para recarga Claro #{servicio_id} (Disp 1110: {disp_1110}, Disp 1120: {disp_1120})",
+                        auto_commit=False,
+                    )
 
     else:
         # ====================================================================
@@ -910,6 +1020,132 @@ def _handle_expense_adjusted(tes_conn: sqlite3.Connection, event: Dict[str, Any]
     # 2. Registrar nuevo egreso con los datos editados
     new_mov_id = _handle_expense_confirmed(tes_conn, event, payload)
     return f"{rev_id};{new_mov_id}" if rev_id else new_mov_id
+
+
+def _handle_sale_adjusted(tes_conn: sqlite3.Connection, event: Dict[str, Any], payload: Dict[str, Any]) -> str:
+    """Procesa el ajuste de un ticket de venta por edición de ítem."""
+    tkt_id = payload.get("ticket_id") or event.get("entity_id")
+    usuario = payload.get("usuario", "sistema")
+    ref_key = payload.get("reference_idempotency_key", f"COMM_SALE_{tkt_id}_CONFIRM")
+    is_mixed_reduction = payload.get("is_mixed_reduction", False)
+
+    if is_mixed_reduction:
+        logger.info(
+            "Ajuste de venta mixta #%s retenido: reducción de pago mixto sin distribución aprobada.",
+            tkt_id,
+        )
+        return f"PENDING_DEFINITION_MIXED_SALE_REDUCTION_{tkt_id}"
+
+    reversals_generated = []
+    # Revertir pierna efectivo
+    mov_orig_efvo = _buscar_movimiento_por_idempotency_key(tes_conn, f"{ref_key}_CASH")
+    if not mov_orig_efvo:
+        mov_orig_efvo = _buscar_movimiento_por_idempotency_key(tes_conn, f"idemp_{tkt_id}_CASH")
+    if mov_orig_efvo:
+        rev_efvo = reverseMovement(
+            conn=tes_conn,
+            movement_id=mov_orig_efvo["movement_id"],
+            user_id=usuario,
+            reason=f"Ajuste venta ticket #{tkt_id} (reversión pierna efectivo)",
+            evidence_reference=f"ADJUST_TICKET_{tkt_id}",
+            idempotency_key=f"{event['idempotency_key']}_REV_CASH",
+        )
+        reversals_generated.append(rev_efvo.get("counter_movement_id") or rev_efvo.get("reversal_id"))
+
+    # Revertir pierna digital
+    mov_orig_transf = _buscar_movimiento_por_idempotency_key(tes_conn, f"{ref_key}_DIGITAL")
+    if not mov_orig_transf:
+        mov_orig_transf = _buscar_movimiento_por_idempotency_key(tes_conn, f"idemp_{tkt_id}_DIGITAL")
+    if mov_orig_transf:
+        rev_transf = reverseMovement(
+            conn=tes_conn,
+            movement_id=mov_orig_transf["movement_id"],
+            user_id=usuario,
+            reason=f"Ajuste venta ticket #{tkt_id} (reversión pierna digital)",
+            evidence_reference=f"ADJUST_TICKET_{tkt_id}",
+            idempotency_key=f"{event['idempotency_key']}_REV_DIGITAL",
+        )
+        reversals_generated.append(rev_transf.get("counter_movement_id") or rev_transf.get("reversal_id"))
+
+    # Si el nuevo total es > 0, registrar los nuevos movimientos
+    new_total = payload.get("new_total_venta_cents", 0)
+    new_movements = []
+    if new_total > 0:
+        new_efvo = payload.get("monto_efectivo_cents", 0)
+        new_transf = payload.get("monto_transferencia_cents", 0)
+        fecha_utc = payload.get("fecha_hora_utc")
+
+        if new_efvo > 0:
+            res_c = registerEntry(
+                conn=tes_conn,
+                fund_code="1110",
+                amount_cents=new_efvo,
+                counterpart="VENTA_COMERCIAL_AJUSTADA",
+                reason=f"Cobro ajustado en efectivo ticket #{tkt_id}",
+                created_by=usuario,
+                terminal_id="TERM-POS-01",
+                idempotency_key=f"{event['idempotency_key']}_CASH",
+                evidence_reference=f"TICKET_{tkt_id}",
+                occurred_at=fecha_utc,
+            )
+            new_movements.append(res_c["movement_id"])
+
+        if new_transf > 0:
+            res_d = registerEntry(
+                conn=tes_conn,
+                fund_code="1210",
+                amount_cents=new_transf,
+                counterpart="VENTA_DIGITAL_AJUSTADA",
+                reason=f"Cobro digital ajustado ticket #{tkt_id}",
+                created_by=usuario,
+                terminal_id="TERM-POS-01",
+                idempotency_key=f"{event['idempotency_key']}_DIGITAL",
+                evidence_reference=f"TICKET_{tkt_id}",
+                occurred_at=fecha_utc,
+            )
+            new_movements.append(res_d["movement_id"])
+
+    all_ids = reversals_generated + new_movements
+    return ";".join(all_ids) if all_ids else "ZERO_ADJUSTMENT"
+
+
+def _handle_service_adjusted(
+    tes_conn: sqlite3.Connection,
+    event: Dict[str, Any],
+    payload: Dict[str, Any],
+    comm_conn: Optional[sqlite3.Connection] = None,
+) -> str:
+    """Procesa el ajuste de una carga de servicio por edición."""
+    servicio_id = payload.get("servicio_id") or event.get("entity_id")
+    actor = payload.get("actor", "sistema")
+
+    # 1. Revertir movimientos anteriores si existen
+    reversals_generated = []
+    cur = tes_conn.cursor()
+    cur.execute(
+        """
+        SELECT movement_id, amount_cents FROM tesoreria_movimientos
+        WHERE evidence_reference LIKE ? AND movement_type = 'ENTRY'
+        ORDER BY id ASC;
+        """,
+        (f"%{servicio_id}%",),
+    )
+    rows = cur.fetchall()
+    for idx, (m_id, amt) in enumerate(rows):
+        rev = reverseMovement(
+            conn=tes_conn,
+            movement_id=m_id,
+            user_id=actor,
+            reason=f"Ajuste por edición de servicio #{servicio_id}",
+            evidence_reference=f"ADJUST_SRV_{servicio_id}",
+            idempotency_key=f"{event['idempotency_key']}_REV_{idx}",
+        )
+        reversals_generated.append(rev.get("counter_movement_id") or rev.get("reversal_id"))
+
+    # 2. Registrar nuevos movimientos con datos actualizados
+    new_res = _handle_service_confirmed(tes_conn, event, payload, comm_conn=comm_conn)
+    all_res = reversals_generated + [new_res]
+    return ";".join(all_res)
 
 
 # ============================================================================
@@ -1289,9 +1525,10 @@ def get_commercial_bridge_status(comm_conn: sqlite3.Connection) -> Dict[str, Any
         """
         SELECT
             COUNT(*) as total,
-            COALESCE(SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END), 0) as pending,
+            COALESCE(SUM(CASE WHEN status = 'PENDING' AND (tesoreria_movement_id IS NULL OR (tesoreria_movement_id NOT LIKE 'PENDING_DEFINITION%' AND tesoreria_movement_id NOT LIKE 'UNSPECIFIED_PLATFORM%')) THEN 1 ELSE 0 END), 0) as pending,
             COALESCE(SUM(CASE WHEN status = 'PROCESSING' THEN 1 ELSE 0 END), 0) as processing,
-            COALESCE(SUM(CASE WHEN status = 'PUBLISHED' THEN 1 ELSE 0 END), 0) as published,
+            COALESCE(SUM(CASE WHEN status = 'PUBLISHED' AND (tesoreria_movement_id IS NULL OR (tesoreria_movement_id NOT LIKE 'PENDING_DEFINITION%' AND tesoreria_movement_id NOT LIKE 'UNSPECIFIED_PLATFORM%')) THEN 1 ELSE 0 END), 0) as published,
+            COALESCE(SUM(CASE WHEN (tesoreria_movement_id LIKE 'PENDING_DEFINITION%' OR tesoreria_movement_id LIKE 'UNSPECIFIED_PLATFORM%') THEN 1 ELSE 0 END), 0) as held_pending_definition,
             COALESCE(SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END), 0) as failed,
             COALESCE(SUM(CASE WHEN status = 'DEAD_LETTER' THEN 1 ELSE 0 END), 0) as dead_letter,
             COALESCE(SUM(retry_count), 0) as retry_count_total
@@ -1303,7 +1540,7 @@ def get_commercial_bridge_status(comm_conn: sqlite3.Connection) -> Dict[str, Any
     if not row:
         return {
             "total": 0, "pending": 0, "processing": 0, "published": 0,
-            "failed": 0, "dead_letter": 0, "retry_count_total": 0,
+            "held_pending_definition": 0, "failed": 0, "dead_letter": 0, "retry_count_total": 0,
         }
     return dict(row)
 
@@ -1313,11 +1550,14 @@ def get_simplified_sync_status(comm_conn: sqlite3.Connection) -> Dict[str, Any]:
     stats = get_commercial_bridge_status(comm_conn)
     sincronizadas = stats["published"]
     pendientes = stats["pending"] + stats["processing"]
+    retenidas = stats.get("held_pending_definition", 0)
     problemas = stats["failed"] + stats["dead_letter"]
-    requiere_atencion = problemas > 0
+    requiere_atencion = (problemas > 0) or (retenidas > 0)
 
-    if requiere_atencion:
+    if problemas > 0:
         mensaje = f"Atención requerida: {problemas} operación(es) con error de sincronización. Avise a Administración."
+    elif retenidas > 0:
+        mensaje = f"Atención: {retenidas} operación(es) retenida(s) pendiente(s) de definición de plataforma."
     elif pendientes > 0:
         mensaje = f"Sincronizando: {pendientes} operación(es) pendiente(s) de confirmación."
     else:
@@ -1326,6 +1566,7 @@ def get_simplified_sync_status(comm_conn: sqlite3.Connection) -> Dict[str, Any]:
     return {
         "sincronizadas": sincronizadas,
         "pendientes": pendientes,
+        "held_pending_definition": retenidas,
         "requiere_atencion": requiere_atencion,
         "mensaje_cajero": mensaje,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1361,11 +1602,14 @@ def list_commercial_events_detailed(
     params: List[Any] = []
 
     if status_filter:
-        if status_filter.upper() == "PENDING_DEFINITION":
+        sf = status_filter.upper()
+        if sf in ("PENDING_DEFINITION", "HELD", "HELD_PENDING_DEFINITION"):
             query += " AND (tesoreria_movement_id LIKE 'PENDING_DEFINITION%' OR tesoreria_movement_id LIKE 'UNSPECIFIED_PLATFORM%')"
+        elif sf == "PUBLISHED":
+            query += " AND status = 'PUBLISHED' AND (tesoreria_movement_id IS NULL OR (tesoreria_movement_id NOT LIKE 'PENDING_DEFINITION%' AND tesoreria_movement_id NOT LIKE 'UNSPECIFIED_PLATFORM%'))"
         else:
             query += " AND status = ?"
-            params.append(status_filter.upper())
+            params.append(sf)
 
     if event_type_filter:
         query += " AND event_type LIKE ?"

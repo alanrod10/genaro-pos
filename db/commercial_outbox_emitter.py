@@ -14,8 +14,16 @@ Garantiza:
 from datetime import datetime, timezone
 import hashlib
 import json
+import logging
 from typing import Any, Dict, Optional, Tuple, Union
 import uuid
+
+logger = logging.getLogger(__name__)
+
+
+class ErrorOutboxNoDisponible(RuntimeError):
+    """Lanzada cuando se intenta emitir un evento pero la tabla commercial_events_outbox no existe en la base de datos."""
+    pass
 
 
 def canonicalize_json(data: Any) -> str:
@@ -87,6 +95,10 @@ def enqueue_commercial_event(
     Lanza ValueError si la clave ya existe con un payload adulterado o conflictivo.
     """
     if not _tabla_existe(conn, "commercial_events_outbox"):
+        logger.warning(
+            "La tabla commercial_events_outbox no existe en la base de datos actual. "
+            "Omitiendo encolamiento de outbox para esquema parcial o de prueba."
+        )
         return None
 
     str_entity_id = str(entity_id).strip()

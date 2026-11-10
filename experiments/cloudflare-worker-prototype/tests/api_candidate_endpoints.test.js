@@ -135,6 +135,16 @@ test("API Candidata: Cobertura integral de endpoints, contratos y autenticación
   assert.equal(editProdRes.data.precio, 250);
   assert.equal(editProdRes.data.costo_unitario, 125);
 
+  // 09. DELETE /api/catalog/:id (Smart Delete: borrado físico si no tiene ventas)
+  const delProdRes = await dispatch("DELETE", `/api/catalog/${nuevoId}`, null, authHeaders);
+  assert.equal(delProdRes.status, 200);
+  assert.equal(delProdRes.data.eliminado_fisico, true);
+  assert.equal(delProdRes.data.accion, "borrado_fisico");
+
+  // Reintento de borrado de producto ya eliminado -> 404 Not Found
+  const del404Res = await dispatch("DELETE", `/api/catalog/${nuevoId}`, null, authHeaders);
+  assert.equal(del404Res.status, 404);
+
   // ==========================================
   // --- VENTAS POS ---
   // ==========================================

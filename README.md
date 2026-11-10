@@ -9,6 +9,9 @@
 
 Este README describe la arquitectura, las hojas de cálculo, los módulos web, las reglas contables, el Apps Script, la instalación, la operación y las limitaciones conocidas. La versión final conserva los flujos de trabajo existentes; la optimización funcional aplicada en esta revisión es evitar una limpieza global de todas las cachés cuando se corrige el historial de cargas, ya que solo es necesario invalidar la caché de cargas usada por el indicador PREPAY.
 
+> **DOCUMENTACIÓN MAESTRA INTEGRAL V4 (FastAPI + React + Tesorería Central + Turso Cloud):**  
+> Para la base de conocimiento exhaustiva de ingeniería, arquitectura, modelo de datos, circuito económico y manual operativo de GenaroPOS V4, consulte: [`docs/CONTEXTO_MAESTRO_GENAROPOS_V4.md`](file:///home/alanrod10/workspace/genaro-pos-turso-lab/docs/CONTEXTO_MAESTRO_GENAROPOS_V4.md).
+
 ---
 
 ## 1. ¿Qué es Genaro POS?

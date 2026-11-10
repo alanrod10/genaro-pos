@@ -312,12 +312,108 @@ describe("GenaroPOS — Módulo de Administración de Productos (Frontend / Inde
     fetchSpy.mockRestore();
   });
 
-  // 10. Preservación de registros en actualización de versión de IndexedDB
+    // 10. Preservación de registros en actualización de versión de IndexedDB
   it("10. La apertura de la base v2 preserva íntegros los registros de la cola de ventas", async () => {
     const db = await openDB();
     expect(db.version).toBeGreaterThanOrEqual(2);
     expect(db.objectStoreNames.contains("ventas_queue")).toBe(true);
     expect(db.objectStoreNames.contains("catalogo_cache")).toBe(true);
     expect(db.objectStoreNames.contains("catalogo_demo")).toBe(true);
+  });
+
+  // 11. Duplicación rápida (Clonado Rápido) con foco automático en Nombre y selector de Categoría Canónica
+  it("11. Permite duplicar un producto precargando ' (Copia)', enfocando el campo Nombre y creando un nuevo ID", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByTestId("nav-btn-productos"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("btn-duplicate-2")).toBeInTheDocument(); // Alfajor Triple Chocolate
+    });
+
+    // Clic en Duplicar del producto #2
+    fireEvent.click(screen.getByTestId("btn-duplicate-2"));
+
+    // Debe abrir el modal en modo Alta (no edición de ID #2)
+    expect(screen.getByTestId("product-modal")).toBeInTheDocument();
+    expect(screen.getByText("Alta de Producto")).toBeInTheDocument();
+
+    const inputNombre = screen.getByTestId("input-prod-nombre") as HTMLInputElement;
+    expect(inputNombre.value).toBe("Alfajor Triple Chocolate (Copia)");
+    // Verificar que el foco está en el campo Nombre y el helper text de nomenclatura está visible
+    expect(document.activeElement).toBe(inputNombre);
+    expect(screen.getByTestId("nombre-helper-text")).toHaveTextContent(
+      "[TIPO] + [MARCA] + [VARIEDAD/SABOR] + [CONTENIDO/PESO]"
+    );
+
+    // Verificar que Categoría es un <select> estricto con las categorías canónicas y datos copiados
+    const selectCat = screen.getByTestId("input-prod-categoria") as HTMLSelectElement;
+    expect(selectCat.tagName).toBe("SELECT");
+    expect(selectCat.value).toBe("Golosinas y Chocolates");
+
+    const inputCosto = screen.getByTestId("input-prod-costo") as HTMLInputElement;
+    const inputPrecio = screen.getByTestId("input-prod-precio") as HTMLInputElement;
+    expect(Number(inputCosto.value)).toBe(550);
+    expect(Number(inputPrecio.value)).toBe(850);
+
+    // Cambiar variante del nombre y guardar
+    fireEvent.change(inputNombre, { target: { value: "Alfajor Triple Blanco 70g" } });
+    fireEvent.click(screen.getByTestId("btn-save-product"));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("product-modal")).not.toBeInTheDocument();
+      expect(screen.getAllByText("Alfajor Triple Blanco 70g").length).toBeGreaterThan(0);
+    });
+
+    // Verificar que se asignó un nuevo ID distinto de 2 y el original sigue intacto
+    const prods = await listarProductosDemo(false);
+    const clon = prods.find((p) => p.nombre === "Alfajor Triple Blanco 70g");
+    const original = prods.find((p) => p.id_producto === 2);
+    expect(clon).toBeDefined();
+    expect(clon?.id_producto).toBeGreaterThan(10);
+    expect(clon?.categoria).toBe("Golosinas y Chocolates");
+    expect(original?.nombre).toBe("Alfajor Triple Chocolate");
+  });
+
+  // 12. Eliminación Inteligente (Smart Delete): Borrado físico sin ventas vs Baja lógica con ventas
+  it("12. Ejecuta Smart Delete: borrado físico si no tiene ventas y baja lógica si posee ventas históricas", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<App />);
+    fireEvent.click(screen.getByTestId("nav-btn-productos"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("btn-delete-4")).toBeInTheDocument(); // Fotocopia B/N simple faz (sin ventas en demo)
+      expect(screen.getByTestId("btn-delete-1")).toBeInTheDocument(); // Gaseosa Cola 500ml (con ventas en T-20261024-001)
+    });
+
+    // A) Eliminar producto SIN ventas (#4 Fotocopia B/N simple faz) -> Borrado físico
+    fireEvent.click(screen.getByTestId("btn-delete-4"));
+    expect(confirmSpy).toHaveBeenCalled();
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("admin-row-4")).not.toBeInTheDocument();
+    });
+    const prodsTrasFisico = await listarProductosDemo(false);
+    expect(prodsTrasFisico.find((p) => p.id_producto === 4)).toBeUndefined();
+
+    // B) Eliminar producto CON ventas (#1 Gaseosa Cola 500ml) -> Baja lógica (activo = false)
+    fireEvent.click(screen.getByTestId("btn-delete-1"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("btn-toggle-status-1")).toHaveTextContent("Activar");
+    });
+    const prodsTrasLogico = await listarProductosDemo(false);
+    const prod1 = prodsTrasLogico.find((p) => p.id_producto === 1);
+    expect(prod1).toBeDefined();
+    expect(prod1?.activo).toBe(false);
+
+    // En ambos casos desaparecen de la Caja Registradora
+    fireEvent.click(screen.getByTestId("nav-btn-caja"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("prod-card-4")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("prod-card-1")).not.toBeInTheDocument();
+    });
+
+    confirmSpy.mockRestore();
   });
 });

@@ -197,6 +197,7 @@ export const ServicesAdmin: React.FC<ServicesAdminProps> = ({
 
   const isMountedRef = useRef(true);
   const isRegisteringRef = useRef(false);
+  const isSavingEditRef = useRef(false);
   const isCancellingRef = useRef(false);
   const pendingIdempotencyKeyRef = useRef<string | null>(null);
   useEffect(() => {
@@ -484,7 +485,7 @@ export const ServicesAdmin: React.FC<ServicesAdminProps> = ({
   // Guardar edición
   const handleSaveEdit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!editingCarga) return;
+    if (!editingCarga || isSavingEditRef.current || isSavingEdit) return;
     setEditError(null);
 
     const dest = editServicioDestino.trim();
@@ -511,6 +512,7 @@ export const ServicesAdmin: React.FC<ServicesAdminProps> = ({
       return;
     }
 
+    isSavingEditRef.current = true;
     setIsSavingEdit(true);
     const api = getApiClient();
     try {
@@ -544,6 +546,7 @@ export const ServicesAdmin: React.FC<ServicesAdminProps> = ({
         setEditError(msg);
       }
     } finally {
+      isSavingEditRef.current = false;
       if (isMountedRef.current && typeof window !== "undefined") {
         setIsSavingEdit(false);
       }
@@ -1339,7 +1342,6 @@ export const ServicesAdmin: React.FC<ServicesAdminProps> = ({
                   type="submit"
                   className="btn-confirm-save"
                   disabled={isSavingEdit}
-                  onClick={handleSaveEdit}
                   data-testid="btn-save-charge-edit"
                 >
                   {isSavingEdit ? "Guardando..." : "Actualizar Carga"}

@@ -263,6 +263,7 @@ def solicitar_pre_reserva_prepay(
     comm_conn: Optional[sqlite3.Connection] = None,
     max_wait_seconds: float = 2.0,
     auto_commit: bool = True,
+    permitir_fondeo_pendiente: bool = False,
 ) -> Dict[str, Any]:
     """Ejecuta la pre-reserva síncrona de capital y cargo diario ($350) en tesoreria.db.
 
@@ -388,16 +389,17 @@ def solicitar_pre_reserva_prepay(
                     f"Requerido: ${formatMoney(total_a_debitar_1220)}."
                 )
 
-            # 5. Si paga con transferencia: validar saldo disponible en 1120 (Drugstore Acumulado)
-            # para compensar físicamente a 1130 (Prepay Efectivo)
+            # 5. Si paga con transferencia: validar saldo disponible en Drugstore (1120 o 1110)
+            # para compensar físicamente a 1160 (Prepay Diario), o registrar fondeo pendiente si se permite
             if pago_transf_cents > 0:
                 saldo_disp_1120 = _obtener_saldo_disponible_fondo(conn, "1120")
-                if saldo_disp_1120 < monto_carga_cents:
-                    raise ErrorReserva(
-                        f"Saldo insuficiente en Drugstore Acumulado (1120) para compensación física de PREPAY por transferencia. "
-                        f"Disponible: ${formatMoney(saldo_disp_1120)}, Requerido: ${formatMoney(monto_carga_cents)}. "
-                        f"No se permite utilizar 1110 como alternativa."
-                    )
+                if not permitir_fondeo_pendiente:
+                    if saldo_disp_1120 < monto_carga_cents:
+                        raise ErrorReserva(
+                            f"Saldo insuficiente en Drugstore Acumulado (1120) para compensación física de PREPAY por transferencia. "
+                            f"Disponible: ${formatMoney(saldo_disp_1120)}, Requerido: ${formatMoney(monto_carga_cents)}. "
+                            f"No se permite utilizar 1110 como alternativa."
+                        )
 
             # 6. Crear reserva de Capital en 1220
             res_capital = createReservation(
@@ -938,27 +940,58 @@ def aplicar_movimientos_prepay_worker(
             )
             movements_generated.append(res_mp["movement_id"])
 
-            # Compensación física obligatoria: traslado de capital 1120 -> 1130 con gobernanza explícita
-            t_comp = transferFunds(
-                conn=tes_conn,
-                origin_fund_code="1120",
-                destination_fund_code="1130",
-                amount_cents=monto_capital,
-                reason=f"Compensación física PREPAY transferencia ticket #{servicio_id}",
-                dispatched_by=actor,
-                idempotency_key=f"{idempotency_key}_TRANSF_1120_1130",
-                evidence_reference=f"TICKET_{servicio_id}",
-                context="PREPAY_COMPENSATION",
-                auto_commit=False,
-            )
-            confirmTransferReceipt(
-                conn=tes_conn,
-                transfer_id=t_comp["transfer_id"],
-                received_by=actor,
-                idempotency_key=f"{idempotency_key}_CONFIRM_1120_1130",
-                auto_commit=False,
-            )
-            movements_generated.append(f"TRANSFER_{t_comp['transfer_id']}")
+            # Compensación física obligatoria hacia 1160 (Prepay Diario) desde Drugstore (1120 o 1110)
+            disp_1120 = _obtener_saldo_disponible_fondo(tes_conn, "1120")
+            disp_1110 = _obtener_saldo_disponible_fondo(tes_conn, "1110")
+
+            origen_comp = None
+            if disp_1120 >= monto_capital:
+                origen_comp = "1120"
+            elif disp_1110 >= monto_capital:
+                origen_comp = "1110"
+
+            transfer_exitosa = False
+            if origen_comp is not None:
+                try:
+                    t_comp = transferFunds(
+                        conn=tes_conn,
+                        origin_fund_code=origen_comp,
+                        destination_fund_code="1160",
+                        amount_cents=monto_capital,
+                        reason=f"Compensación física PREPAY transferencia ticket #{servicio_id}",
+                        dispatched_by=actor,
+                        idempotency_key=f"{idempotency_key}_TRANSF_{origen_comp}_1160",
+                        evidence_reference=f"TICKET_{servicio_id}",
+                        context="PREPAY_COMPENSATION",
+                        auto_commit=False,
+                    )
+                    confirmTransferReceipt(
+                        conn=tes_conn,
+                        transfer_id=t_comp["transfer_id"],
+                        received_by=actor,
+                        idempotency_key=f"{idempotency_key}_CONFIRM_{origen_comp}_1160",
+                        auto_commit=False,
+                    )
+                    movements_generated.append(f"TRANSFER_{t_comp['transfer_id']}")
+                    transfer_exitosa = True
+                except Exception as e_trf:
+                    logger.info("Fallo al compensar físicamente a 1160 desde %s (%s). Se registrará fondeo pendiente.", origen_comp, e_trf)
+
+            if not transfer_exitosa:
+                from tesoreria.cuenta_corriente_ezequiel import registrar_fondeo_pendiente
+                registrar_fondeo_pendiente(
+                    conn=tes_conn,
+                    tipo_circuito="PREPAY",
+                    servicio_id=int(servicio_id) if str(servicio_id).isdigit() else 0,
+                    monto_capital_cents=monto_capital,
+                    fondo_origen_esperado="1120",
+                    fondo_destino_custodia="1160",
+                    actor=actor,
+                    idempotency_key=f"FOND_PEND_PREPAY_{idempotency_key}",
+                    observaciones=f"Compensación pendiente PREPAY por transferencia recarga #{servicio_id}",
+                    auto_commit=False,
+                )
+                movements_generated.append(f"FONDEO_PENDIENTE_PREPAY_{servicio_id}")
 
         mov_str = ";".join(movements_generated)
 
@@ -968,11 +1001,12 @@ def aplicar_movimientos_prepay_worker(
             """
             UPDATE tesoreria_prepay_coordinacion
             SET estado = 'FULLY_APPLIED',
+                commercial_ticket_id = COALESCE(commercial_ticket_id, ?),
                 worker_movement_ids = ?,
                 updated_at = ?
             WHERE coordination_id = ?;
             """,
-            (mov_str, ahora_utc, coord_id),
+            (str(servicio_id), mov_str, ahora_utc, coord_id),
         )
         tes_cur.close()
 

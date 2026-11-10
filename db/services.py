@@ -102,19 +102,17 @@ def clasificar_servicio(servicio: Optional[str], plataforma_origen: Optional[str
     """Clasifica de forma canónica el nombre de un servicio o carga.
 
     Retorna:
-    - 'CLARO': recargas y pagos de Claro ('Claro', 'CLARO', 'Claro Recarga', etc. o plataforma CLARO COMERCIOS).
-    - 'SUBE_MP': cargas SUBE abonadas vía MercadoPago ('SUBE (MP)', 'SUBE MP',
-      'SUBE MercadoPago', 'SUBE - Mercado Pago', o plataforma MERCADO PAGO con destino SUBE).
-    - 'PREPAY': resto de servicios prepagos ('SUBE', 'Personal', 'Movistar',
-      'Tuenti', 'DirecTV', 'PREPAY', etc.).
+    - 'CLARO': recargas y pagos de Claro Comercios.
+    - 'SUBE_MP': cargas emitidas directamente desde Mercado Pago Propio (saldo digital 1210).
+    - 'PREPAY': resto de servicios prepagos mayoristas (David / 1220).
     """
     plat_norm = str(plataforma_origen or "").strip().upper()
     normalizado = " ".join(str(servicio or "").strip().lower().split())
+    if plat_norm == "MERCADO PAGO":
+        return "SUBE_MP"
     if "claro" in normalizado or plat_norm == "CLARO COMERCIOS":
         return "CLARO"
-    if "sube" in normalizado and ("mp" in normalizado or "mercado" in normalizado or plat_norm == "MERCADO PAGO"):
-        return "SUBE_MP"
-    if plat_norm == "MERCADO PAGO" and "sube" in normalizado:
+    if "sube" in normalizado and ("mp" in normalizado or "mercado" in normalizado):
         return "SUBE_MP"
     return "PREPAY"
 
@@ -1020,6 +1018,37 @@ def guardar_ediciones_cargas_turso(
                             f"Error al registrar auditoría de servicio: {str(e)}. Se requiere la tabla 'cargas_servicios_auditoria' (migración 005)."
                         ) from e
                     raise
+
+                import time
+                adj_srv_ts = int(time.time() * 1000)
+                enqueue_commercial_event(
+                    conn=conexion,
+                    event_type="SERVICE_ADJUSTED",
+                    entity_type="SERVICIO",
+                    entity_id=identificador,
+                    action_type="ADJUST",
+                    idempotency_key=f"COMM_SERVICE_{identificador}_ADJUST_{adj_srv_ts}",
+                    payload={
+                        "servicio_id": identificador,
+                        "servicio": registro["servicio"],
+                        "old_monto_carga_cents": to_amount_cents(prev_dict.get("monto_carga")),
+                        "old_monto_adicional_cents": to_amount_cents(prev_dict.get("monto_adicional")),
+                        "old_total_cobrado_cents": to_amount_cents(prev_dict.get("total_cobrado")),
+                        "old_pago_efectivo_cents": to_amount_cents(prev_dict.get("pago_efectivo")),
+                        "old_pago_transferencia_cents": to_amount_cents(prev_dict.get("pago_transferencia")),
+                        "monto_carga_cents": to_amount_cents(registro["monto_carga"]),
+                        "monto_adicional_cents": to_amount_cents(registro["monto_adicional"]),
+                        "total_cobrado_cents": to_amount_cents(registro["total_cobrado"]),
+                        "pago_efectivo_cents": to_amount_cents(registro["pago_efectivo"]),
+                        "pago_transferencia_cents": to_amount_cents(registro["pago_transferencia"]),
+                        "plataforma_origen": registro.get("plataforma_origen"),
+                        "servicio_destino": registro.get("servicio_destino"),
+                        "fecha_hora_utc": registro["fecha_hora_utc"],
+                        "actor": actor,
+                        "reference_action": "CONFIRM",
+                        "reference_idempotency_key": f"COMM_SERVICE_{identificador}_CONFIRM",
+                    },
+                )
 
             for registro in preparados_nuevos:
                 nid = _insertar_carga(conexion, registro)
