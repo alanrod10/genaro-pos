@@ -434,3 +434,20 @@ def test_script_normalizar_catalogo_v4_heuristica():
         assert sugerir_categoria_canonica(cat, "Producto Genérico") == cat
 
 
+def test_script_normalizar_catalogo_v4_ortografia_y_unidades():
+    """Verifica Title Case, tildes de drugstore y unidades pegadas en minúscula."""
+    from scripts.normalizar_catalogo_v4 import formatear_nombre_producto
+
+    assert formatear_nombre_producto("coca cola 500 ML") == "Coca Cola 500ml"
+    assert formatear_nombre_producto("alfajor clasico 70 G") == "Alfajor Clásico 70g"
+    assert formatear_nombre_producto("cafe la morenita clasico 100gr") == "Café La Morenita Clásico 100g"
+    assert formatear_nombre_producto("mani pelado 70grs") == "Maní Pelado 70g"
+    assert formatear_nombre_producto("te clasico x 25 saquitos") == "Té Clásico X 25 Saquitos"
+    assert formatear_nombre_producto("bombom chocolate 15 G") == "Bombón Chocolate 15g"
+    assert formatear_nombre_producto("pure de tomate 520gr") == "Puré De Tomate 520g"
+    assert formatear_nombre_producto("sandwich jamon y queso") == "Sándwich Jamón Y Queso"
+    assert formatear_nombre_producto("azucar comun 1 KG") == "Azúcar Común 1kg"
+    assert formatear_nombre_producto("maiz pisingallo 400 gr") == "Maíz Pisingallo 400g"
+
+
+
