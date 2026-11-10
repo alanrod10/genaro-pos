@@ -5,9 +5,13 @@
   "description": "Prototipo aislado de arquitectura Cloudflare Workers + Turso (libSQL) para GenaroPOS",
   "type": "module",
   "scripts": {
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "deploy": "wrangler deploy --env live"
   },
   "dependencies": {
     "@libsql/client": "^0.14.0"
+  },
+  "devDependencies": {
+    "wrangler": "^4.159.0"
   }
 }
