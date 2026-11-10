@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ServicesAdmin, calcularRecargoAutomatico } from "../src/components/ServicesAdmin";
 import { resetDBInstance, listarServiciosDemo } from "../src/services/db";
 import { activarModoDemo } from "../src/services/api";
