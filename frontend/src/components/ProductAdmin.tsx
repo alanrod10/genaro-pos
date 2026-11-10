@@ -368,8 +368,12 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
         <table className="admin-table" data-testid="admin-table">
           <thead>
             <tr>
-              <th>ID</th>
-              <th>Producto</th>
+              <th className="sticky left-0 z-20 w-[80px] min-w-[80px] max-w-[80px] bg-[#F5EFE7] dark:bg-[#1D2026]">
+                ID
+              </th>
+              <th className="sticky left-[80px] z-20 min-w-[200px] max-w-[320px] bg-[#F5EFE7] dark:bg-[#1D2026] border-r border-[#E5D9CF] dark:border-[#3A3F48]">
+                Producto
+              </th>
               <th>Categoría</th>
               <th>Proveedor</th>
               <th>Unidad</th>
@@ -398,11 +402,25 @@ export const ProductAdmin: React.FC<ProductAdminProps> = ({
                 return (
                   <tr
                     key={prod.id_producto}
-                    className={prod.activo === false ? "row-inactive" : ""}
+                    className={`group ${prod.activo === false ? "row-inactive" : ""}`}
                     data-testid={`admin-row-${prod.id_producto}`}
                   >
-                    <td className="td-id">#{prod.id_producto}</td>
-                    <td className="td-name">
+                    <td
+                      className={`td-id sticky left-0 z-10 w-[80px] min-w-[80px] max-w-[80px] ${
+                        prod.activo === false
+                          ? "bg-[#F5EEE7] dark:bg-[#22252B]"
+                          : "bg-white dark:bg-[#25282E]"
+                      } group-hover:bg-[#F9F5EF] dark:group-hover:bg-[#2E333C]`}
+                    >
+                      #{prod.id_producto}
+                    </td>
+                    <td
+                      className={`td-name sticky left-[80px] z-10 min-w-[200px] max-w-[320px] ${
+                        prod.activo === false
+                          ? "bg-[#F5EEE7] dark:bg-[#22252B]"
+                          : "bg-white dark:bg-[#25282E]"
+                      } group-hover:bg-[#F9F5EF] dark:group-hover:bg-[#2E333C] border-r border-[#E5D9CF] dark:border-[#3A3F48]`}
+                    >
                       <strong>
                         {busqueda.trim() ? (
                           <>
