@@ -71,6 +71,10 @@ DICCIONARIO_ORTOGRAFICO: Dict[str, str] = {
     "bombones": "Bombones",
     "alfajor": "Alfajor",
     # Términos frecuentes adicionales del catálogo de drugstore
+    "higienico": "Higiénico",
+    "higienica": "Higiénica",
+    "higienicos": "Higiénicos",
+    "higienicas": "Higiénicas",
     "jabon": "Jabón",
     "jabo": "Jabón",
     "algodon": "Algodón",
@@ -314,8 +318,8 @@ HEURISTICA_KEYWORDS: List[Tuple[Tuple[str, ...], str]] = [
         (
             "cerveza", "vino", "fernet", "fernuco", "gancia", "vodka", "gin",
             "sidra", "champagne", "whisky", "smirnoff", "brahma", "quilmes",
-            "salta", "andes origen", "amstel", "budweiser", "corona", "heineken",
-            "imperial", "miller", "schneider", "stella artois", "anana fizz",
+            "salta", "andes origen", "andes", "amstel", "budweiser", "corona", "heineken",
+            "imperial", "miller", "schneider", "stella artois", "michelob", "anana fizz",
             "canciller", "viñas de balbo", "tres plumas", "dr lemon",
         ),
         "Bebidas con Alcohol",
