@@ -1,6 +1,6 @@
 // Service Worker para GenaroPOS PWA
 const CACHE_PREFIX = "genaropos-";
-const CACHE_NAME = "genaropos-static-v3";
+const CACHE_NAME = "genaropos-static-v4";
 const STATIC_ASSETS = [
   "/",
   "/index.html",
