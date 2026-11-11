@@ -2484,6 +2484,7 @@ textarea:focus-visible {
 .queue-item-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 0.5rem;
 }
 
 .btn-retry-single {
@@ -2495,6 +2496,30 @@ textarea:focus-visible {
   font-size: 0.8rem;
   font-weight: 600;
   cursor: pointer;
+}
+
+.btn-discard-single {
+  background: #dc2626;
+  border: 1px solid #b91c1c;
+  color: #ffffff;
+  padding: 0.35rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.btn-discard-single:hover:not(:disabled) {
+  background: #b91c1c;
+}
+
+.btn-discard-single:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .btn-sync-all {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { DemoSimulationMode, MockApiClient } from "../services/api";
-import { GastoColaLocal, ServicioColaLocal } from "../services/db";
+import { eliminarVentaLocal, GastoColaLocal, ServicioColaLocal } from "../services/db";
 import { EstadoSincronizacion, VentaLocal } from "../types/sales";
 
 interface SyncQueueModalProps {
@@ -13,10 +13,11 @@ interface SyncQueueModalProps {
   onClose: () => void;
   onSyncAll: () => Promise<void>;
   onSyncOne: (ticketId: string) => Promise<void>;
+  onDiscard?: (ticketId: string) => Promise<void> | void;
 }
 
 export const SyncQueueModal: React.FC<SyncQueueModalProps> = ({
-  ventas,
+  ventas: initialVentas,
   serviciosCola = [],
   gastosCola = [],
   isDemo,
@@ -25,12 +26,18 @@ export const SyncQueueModal: React.FC<SyncQueueModalProps> = ({
   onClose,
   onSyncAll,
   onSyncOne,
+  onDiscard,
 }) => {
+  const [ventas, setVentas] = useState<VentaLocal[]>(initialVentas);
   const [filtro, setFiltro] = useState<EstadoSincronizacion | "TODAS">("TODAS");
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [demoMode, setDemoMode] = useState<DemoSimulationMode>(
     mockClient?.getSimulationMode() || "exito_201"
   );
+
+  useEffect(() => {
+    setVentas(initialVentas);
+  }, [initialVentas]);
 
   // Cerrar modal con tecla Escape si no se está sincronizando
   useEffect(() => {
@@ -95,6 +102,18 @@ export const SyncQueueModal: React.FC<SyncQueueModalProps> = ({
       await onSyncOne(ticketId);
     } finally {
       setIsSyncing(false);
+    }
+  };
+
+  const handleDiscard = async (ticketId: string) => {
+    try {
+      await eliminarVentaLocal(ticketId);
+      setVentas((prev) => prev.filter((v) => v.ticket_id !== ticketId));
+      if (onDiscard) {
+        await onDiscard(ticketId);
+      }
+    } catch (err) {
+      console.error("Error al descartar venta local:", err);
     }
   };
 
@@ -303,6 +322,18 @@ export const SyncQueueModal: React.FC<SyncQueueModalProps> = ({
                             data-testid={`btn-retry-${venta.ticket_id}`}
                           >
                             🔄 Reintentar
+                          </button>
+                        )}
+                        {(venta.estado === "requiere_revision" || Boolean(venta.ultimo_error)) && (
+                          <button
+                            type="button"
+                            className="btn-discard-single"
+                            onClick={() => handleDiscard(venta.ticket_id)}
+                            disabled={isSyncing}
+                            title="Descartar ticket fallido de la cola local"
+                            data-testid={`btn-discard-${venta.ticket_id}`}
+                          >
+                            🗑️ Descartar
                           </button>
                         )}
                       </div>

@@ -411,6 +411,35 @@ export async function actualizarEstadoVenta(
   });
 }
 
+export async function eliminarVentaLocal(ticketId: string): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const stores: string[] = [];
+    if (db.objectStoreNames.contains(STORE_VENTAS)) {
+      stores.push(STORE_VENTAS);
+    }
+    if (db.objectStoreNames.contains("ventas_locales")) {
+      stores.push("ventas_locales");
+    }
+    if (db.objectStoreNames.contains(STORE_VENTAS_DEMO)) {
+      stores.push(STORE_VENTAS_DEMO);
+    }
+
+    if (stores.length === 0) {
+      resolve();
+      return;
+    }
+
+    const tx = db.transaction(stores, "readwrite");
+    for (const s of stores) {
+      tx.objectStore(s).delete(ticketId);
+    }
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+
 // ==============================================================================
 // OPERACIONES SOBRE VENTAS DEMO (STORE_VENTAS_DEMO)
 // ==============================================================================

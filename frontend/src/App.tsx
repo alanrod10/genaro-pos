@@ -951,6 +951,10 @@ export const App: React.FC = () => {
           onClose={() => setIsQueueOpen(false)}
           onSyncAll={ejecutarSincronizacion}
           onSyncOne={handleSyncOne}
+          onDiscard={async (ticketId) => {
+            await refrescarCola();
+            addToast(`Ticket ${ticketId} descartado de la cola`, "info");
+          }}
         />
       )}
 
